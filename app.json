@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "TaskPrime",
+    "slug": "TaskPrime",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/taskprime-icon.jpg",
+    "scheme": "taskprime",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/taskprime-splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "backgroundColor": "#ffffff",
+      "infoPlist": {
+        "UIViewControllerBasedStatusBarAppearance": true,
+        "UIStatusBarStyle": "UIStatusBarStyleLightContent"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/taskprime-icon.jpg",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.hafis2001.TaskPrime"
+    },
+    "web": {
+      "favicon": "./assets/images/taskprime-icon.jpg"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/taskprime-splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#000000"
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "03c1aed4-8c91-46a7-aefb-070729768c26"
+      }
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
