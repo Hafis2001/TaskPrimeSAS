@@ -14,6 +14,7 @@ import {
 import Icon from "react-native-vector-icons/Ionicons";
 import { LinearGradient } from "expo-linear-gradient";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import Animated, { FadeInUp } from "react-native-reanimated";
 
 const API_URL = "https://taskprime.app/api/get-ledger-details?account_code=";
 
@@ -29,7 +30,7 @@ export default function CustomerLedgerScreen() {
   const [totalDebit, setTotalDebit] = useState(0);
   const [totalCredit, setTotalCredit] = useState(0);
 
-  // 🗓️ New State for Date Range
+  // Date range states
   const [fromDate, setFromDate] = useState(null);
   const [toDate, setToDate] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -37,6 +38,7 @@ export default function CustomerLedgerScreen() {
 
   useEffect(() => {
     fetchLedger();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
 
   const fetchLedger = async () => {
@@ -148,7 +150,6 @@ export default function CustomerLedgerScreen() {
     return `${dd}-${mm}-${yyyy}`;
   };
 
-  // 🗓️ Filter ledger between two dates
   const filterByDateRange = (startDate, endDate) => {
     if (!startDate || !endDate) return;
     const from = new Date(startDate);
@@ -196,78 +197,93 @@ export default function CustomerLedgerScreen() {
   const renderItem = ({ item }) => {
     const isCredit = item.credit && item.credit > 0;
     const amount = isCredit ? item.credit : item.debit;
-    const color = isCredit ? "#ff4d4d" : "#00b894";
+    const color = isCredit ? "#ff4d4d" : "#00eaff"; // debit shows cyan, credit red
 
     return (
-      <View style={styles.transactionCard}>
-        <View style={styles.rowBetween}>
-          <View style={[styles.rowCenter, { flex: 1 }]}>
-            <View style={[styles.iconCircle, { backgroundColor: color + "20" }]}>
-              <Icon name={isCredit ? "arrow-down" : "arrow-up"} size={18} color={color} />
+      <Animated.View entering={FadeInUp.delay(20)}>
+        <View style={styles.transactionCard}>
+          <View style={styles.rowBetween}>
+            <View style={[styles.rowCenter, { flex: 1 }]}>
+              <View style={[styles.iconCircle, { backgroundColor: hexWithAlpha(color, 0.12) }]}>
+                <Icon name={isCredit ? "arrow-down" : "arrow-up"} size={18} color={color} />
+              </View>
+              <View style={{ flexShrink: 1 }}>
+                <Text style={styles.particulars} numberOfLines={1} ellipsizeMode="tail">
+                  {item.particulars}
+                </Text>
+                <Text style={styles.subText}>
+                  {formatDate(item.entry_date)} {item.narration ? `• ${item.narration}` : ""}
+                </Text>
+                <Text style={styles.voucherText}>Voucher ID: {item.voucher_no || "-"}</Text>
+              </View>
             </View>
-            <View style={{ flexShrink: 1 }}>
-              <Text style={styles.particulars} numberOfLines={1} ellipsizeMode="tail">
-                {item.particulars}
+            <View style={{ marginLeft: 10, minWidth: 90, alignItems: "flex-end" }}>
+              <Text style={[styles.amountText, { color }]}>
+                {Math.abs(amount || 0).toLocaleString("en-IN")}
               </Text>
-              <Text style={styles.subText}>
-                {formatDate(item.entry_date)} {item.narration ? `• ${item.narration}` : ""}
-              </Text>
-              <Text style={styles.voucherText}>Voucher ID: {item.voucher_no || "-"}</Text>
             </View>
-          </View>
-          <View style={{ marginLeft: 10, minWidth: 90, alignItems: "flex-end" }}>
-            <Text style={[styles.amountText, { color }]}>
-              {Math.abs(amount || 0).toLocaleString("en-IN")}
-            </Text>
           </View>
         </View>
-      </View>
+      </Animated.View>
     );
   };
 
   if (loading) {
     return (
       <View style={styles.loader}>
-        <ActivityIndicator size="large" color="#ff6600" />
+        <ActivityIndicator size="large" color="#00eaff" />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={["#fff0e0", "#ffffff"]} style={styles.headerCard}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Icon name="arrow-back" size={22} color="#ff6600" />
+      <LinearGradient colors={["#07182a", "#0b132b"]} style={styles.headerCard}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Icon name="arrow-back" size={22} color="#00eaff" />
         </TouchableOpacity>
 
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>{name || "Customer Ledger"}</Text>
-          <Text style={styles.dateText}>
+        <View style={{ flex: 1, paddingHorizontal: 8 }}>
+          <Animated.Text entering={FadeInUp} style={styles.title}>
+            {name || "Customer Ledger"}
+          </Animated.Text>
+          <Animated.Text entering={FadeInUp.delay(40)} style={styles.dateText}>
             {fromDate && toDate
               ? `${formatDate(fromDate)} → ${formatDate(toDate)}`
               : "All Transactions"}
-          </Text>
+          </Animated.Text>
         </View>
 
-        <View style={styles.rowCenter}>
-          <TouchableOpacity onPress={() => { setDatePickerMode("from"); setShowDatePicker(true); }}>
-            <Icon name="calendar-outline" size={22} color="#ff6600" />
-          </TouchableOpacity>
+        <View style={styles.actions}>
           <TouchableOpacity
-            onPress={() => { setDatePickerMode("to"); setShowDatePicker(true); }}
-            style={{ marginLeft: 10 }}
+            onPress={() => {
+              setDatePickerMode("from");
+              setShowDatePicker(true);
+            }}
+            style={styles.iconAction}
           >
-            <Icon name="calendar" size={22} color="#ff6600" />
+            <Icon name="calendar-outline" size={20} color="#00eaff" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={refreshAll} style={{ marginLeft: 10 }}>
-            <Icon name="refresh" size={22} color="#ff6600" />
+
+          <TouchableOpacity
+            onPress={() => {
+              setDatePickerMode("to");
+              setShowDatePicker(true);
+            }}
+            style={styles.iconAction}
+          >
+            <Icon name="calendar" size={20} color="#00eaff" />
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={refreshAll} style={styles.iconAction}>
+            <Icon name="refresh" size={20} color="#00eaff" />
           </TouchableOpacity>
         </View>
       </LinearGradient>
 
       {showDatePicker && (
         <DateTimePicker
-          value={new Date()}
+          value={datePickerMode === "from" ? (fromDate || new Date()) : (toDate || new Date())}
           mode="date"
           display="calendar"
           onChange={onDateChange}
@@ -292,26 +308,26 @@ export default function CustomerLedgerScreen() {
       <View style={styles.totalCard}>
         <View style={styles.totalItem}>
           <Text style={styles.totalLabel}>Total Credit</Text>
-          <Text style={[styles.totalValue, { color: "#ff4d4d" }]}>
-            {totalCredit.toLocaleString("en-IN")}
-          </Text>
+          <Text style={[styles.totalValue, { color: "#ff4d4d" }]}>{totalCredit.toLocaleString("en-IN")}</Text>
         </View>
+
         <View style={styles.divider} />
+
         <View style={styles.totalItem}>
           <Text style={styles.totalLabel}>Total Debit</Text>
-          <Text style={[styles.totalValue, { color: "#00b894" }]}>
-            {totalDebit.toLocaleString("en-IN")}
-          </Text>
+          <Text style={[styles.totalValue, { color: "#00eaff" }]}>{totalDebit.toLocaleString("en-IN")}</Text>
         </View>
       </View>
 
       <Text style={styles.transHeading}>TRANSACTIONS</Text>
+
       <FlatList
         data={filteredLedger}
         keyExtractor={(_, i) => i.toString()}
         renderItem={renderItem}
-        contentContainerStyle={{ paddingBottom: 80 }}
+        contentContainerStyle={{ paddingBottom: 110, paddingTop: 8 }}
         ListEmptyComponent={<Text style={styles.emptyText}>No transactions found.</Text>}
+        showsVerticalScrollIndicator={false}
       />
 
       <View style={styles.footerCard}>
@@ -326,92 +342,122 @@ export default function CustomerLedgerScreen() {
 
 // ----------------- Styles -----------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff", padding: 10 },
-  loader: { flex: 1, justifyContent: "center", alignItems: "center" },
+  container: { flex: 1, backgroundColor: "#0b132b", padding: 12 },
+  loader: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0b132b" },
+
   headerCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
     borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 3,
-    marginTop: 30,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginTop: Platform.OS === "ios" ? 50 : 16,
+    marginBottom: 12,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(0,230,255,0.08)",
   },
-  title: { fontSize: 18, fontWeight: "bold", color: "#ff6600", textAlign: "center" },
-  dateText: { fontSize: 13, color: "#888", textAlign: "center" },
+
+  backBtn: { paddingRight: 8 },
+
+  title: { fontSize: 18, fontWeight: "700", color: "#00eaff" },
+  dateText: { fontSize: 13, color: "#93b4c9", marginTop: 2 },
+
+  actions: { flexDirection: "row", alignItems: "center" },
+  iconAction: { marginLeft: 10, padding: 6, borderRadius: 8 },
+
   balanceRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   balanceBox: {
-    backgroundColor: "#f9f3ed",
+    backgroundColor: "#0f2030",
     flex: 1,
     marginHorizontal: 4,
     borderRadius: 10,
-    padding: 10,
+    padding: 12,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(0,230,255,0.06)",
   },
-  balanceLabel: { color: "#6b7280", fontWeight: "600", fontSize: 13 },
-  balanceValue: { fontSize: 17, fontWeight: "bold", color: "#1e293b" },
+  balanceLabel: { color: "#9aa4b2", fontWeight: "600", fontSize: 13 },
+  balanceValue: { fontSize: 17, fontWeight: "700", color: "#e8faff", marginTop: 4 },
+
   totalCard: {
     flexDirection: "row",
-    backgroundColor: "#fffaf5",
+    backgroundColor: "#0f2030",
     padding: 10,
     borderRadius: 10,
     marginBottom: 10,
     alignItems: "center",
-    justifyContent: "space-evenly",
-    elevation: 2,
+    justifyContent: "space-between",
+    borderWidth: 1,
+    borderColor: "rgba(0,230,255,0.04)",
   },
   totalItem: { flex: 1, alignItems: "center" },
-  divider: { width: 1, height: 30, backgroundColor: "#ddd" },
-  totalLabel: { color: "#6b7280", fontWeight: "600", fontSize: 14 },
-  totalValue: { fontSize: 16, fontWeight: "bold" },
-  transHeading: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#6b7280",
-    marginBottom: 6,
-    marginLeft: 4,
-  },
+  divider: { width: 1, height: 36, backgroundColor: "rgba(255,255,255,0.03)" },
+  totalLabel: { color: "#9aa4b2", fontWeight: "600", fontSize: 13 },
+  totalValue: { fontSize: 16, fontWeight: "700" },
+
+  transHeading: { fontSize: 13, fontWeight: "700", color: "#8fbfe9", marginBottom: 6, marginTop: 6 },
+
   transactionCard: {
-    backgroundColor: "#fff",
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 8,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    backgroundColor: "#0f2030",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "rgba(0,230,255,0.03)",
+    shadowColor: "#00eaff",
+    shadowOpacity: 0.02,
+    shadowRadius: 6,
     elevation: 1,
   },
+
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   rowCenter: { flexDirection: "row", alignItems: "center" },
+
   iconCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 8,
+    marginRight: 10,
   },
-  particulars: { fontWeight: "600", color: "#1e293b", maxWidth: 180 },
-  subText: { color: "#6b7280", fontSize: 12 },
-  voucherText: { color: "#9ca3af", fontSize: 12, marginTop: 2 },
-  amountText: { fontSize: 16, fontWeight: "bold", textAlign: "right" },
+
+  particulars: { fontWeight: "700", color: "#e8faff", maxWidth: 220 },
+  subText: { color: "#94b7cc", fontSize: 12 },
+  voucherText: { color: "#7f98a9", fontSize: 12, marginTop: 4 },
+
+  amountText: { fontSize: 16, fontWeight: "700", textAlign: "right" },
+
   footerCard: {
     position: "absolute",
-    bottom: 0,
-    left: 15,
-    right: 0,
-    backgroundColor: "#ff6600",
-    padding: 16,
+    bottom: 18,
+    left: 12,
+    right: 12,
+    backgroundColor: "linear-gradient(90deg, #082733, #06304a)", // fallback visual; LinearGradient used above in header; style kept for shape
+    padding: 14,
     alignItems: "center",
-    borderRadius: 20,
-    width: "95%",
-    marginBottom: 45,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(0,230,255,0.12)",
   },
-  footerLabel: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  footerValue: { color: "#fff", fontSize: 20, fontWeight: "bold" },
-  emptyText: { textAlign: "center", color: "#999", marginTop: 20 },
+  footerLabel: { color: "#bfeeff", fontSize: 14, fontWeight: "700" },
+  footerValue: { color: "#00eaff", fontSize: 20, fontWeight: "900", marginTop: 6 },
+
+  emptyText: { textAlign: "center", color: "#9aa4b2", marginTop: 20 },
 });
+
+// ----------------- Helpers -----------------
+function hexWithAlpha(hexColor, alpha) {
+  // hexColor like '#00eaff' -> returns rgba string with alpha
+  try {
+    const c = hexColor.replace("#", "");
+    const bigint = parseInt(c, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  } catch {
+    return `rgba(0,230,255,${alpha})`;
+  }
+}
