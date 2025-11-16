@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "TaskPrime",
-    "slug": "TaskPrime",
+    "name": "TaskPrimeSAS",
+    "slug": "TaskPrimeSAS",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/taskprime-icon.jpg",
@@ -26,7 +26,7 @@
         "foregroundImage": "./assets/images/taskprime-icon.jpg",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.hafis2001.TaskPrime"
+      "package": "com.hafis2001.TaskPrimeSAS"
     },
     "web": {
       "favicon": "./assets/images/taskprime-icon.jpg"
