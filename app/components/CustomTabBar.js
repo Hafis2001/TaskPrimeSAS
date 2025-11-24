@@ -8,11 +8,12 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
+
 const tabs = [
-  { name: "company-info", icon: "business", label: "Company" },
-  { name: "customers", icon: "people", label: "Customers" },
-  { name: "area-assign", icon: "map", label: "Area" },
-  { name: "user-management", icon: "person", label: "Users" },
+  { name: "Company", icon: "business", label: "Company" },
+  { name: "Home", icon: "people", label: "Home" }, 
+  { name: "Dashboard", icon: "grid-sharp", label: "Dashboard" },
+ 
 ];
 
 export default function CustomTabBar({ state, descriptors, navigation }) {

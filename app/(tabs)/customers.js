@@ -15,6 +15,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import Animated, { FadeInUp } from "react-native-reanimated";
 import { useRouter, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 
 const API_URL = "https://taskprime.app/api/debtors/get-debtors/";
 
@@ -184,9 +185,14 @@ export default function DebtorsScreen() {
       colors={["#07182a", "#0b132b", "#0b132b"]}
       style={styles.container}
     >
+      <View style={styles.backbutton}>
+        <TouchableOpacity onPress={() => router.back()}>
+  <Ionicons name="arrow-back" size={23} color="#fff" style={styles.arrow}/>
+</TouchableOpacity>
       <Animated.Text entering={FadeInUp} style={styles.title}>
         Customers Statement
       </Animated.Text>
+      </View>
 
       {/* Summary */}
       <Animated.View entering={FadeInUp.delay(80)} style={styles.summaryCard}>
@@ -255,8 +261,9 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "700",
     textAlign: "center",
-    marginBottom: 13,
-    marginTop:12,
+    marginBottom: 11,
+    marginTop:18,
+    marginLeft:70
   },
 
   summaryCard: {
@@ -323,4 +330,10 @@ const styles = StyleSheet.create({
     marginTop: 40,
     fontSize: 16,
   },
+  backbutton:{
+    flexDirection:"row",
+  },
+  arrow:{
+marginTop:18
+  }
 });

@@ -91,7 +91,7 @@ export default function LoginScreen() {
   console.log("✅ User data saved:", userData);
 
   // Navigate to the new bottom tabs company-info screen
-  router.replace("/(tabs)/company-info");
+  router.replace("/(tabs)/Company");
       } else {
         Alert.alert("Login Failed", "No token received from server.");
       }

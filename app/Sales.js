@@ -1,21 +1,16 @@
 // app/dashboard.js (or app/dashboard/index.js)
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
-import { useRouter } from "expo-router";
+
 
 export default function DashboardScreen() {
-  const router = useRouter();
+  
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Welcome to your Dashboard 🎯</Text>
+      <Text style={styles.title}>Welcome to your Sales 🎯</Text>
 
-      <TouchableOpacity
-        style={styles.button}
-        onPress={() => router.replace("/")}
-      >
-        <Text style={styles.buttonText}>Logout</Text>
-      </TouchableOpacity>
+      
     </View>
   );
 }
@@ -26,16 +21,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
-    backgroundColor: "#fff",
+    backgroundColor: "#1c173aff",
   },
   title: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#ff6600",
+    color: "#f9f4f0ff",
     marginBottom: 30,
   },
   button: {
-    backgroundColor: "#ff6600",
+    backgroundColor: "#f6f1eeff",
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,

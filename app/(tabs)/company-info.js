@@ -71,9 +71,13 @@ export default function CompanyInfoScreen() {
       <ScrollView 
         contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 50 }}
       >
-        
+        <View style={{ flexDirection: "row", marginLeft:10 }}>
+         <TouchableOpacity onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={23} color="#fff" style={styles.arrow}/>
+        </TouchableOpacity>
         {/* ----- Title ----- */}
         <Text style={styles.title}>Company Info</Text>
+        </View>
 
         {/* ----- Company Details Card ----- */}
         <View style={styles.card}>
@@ -111,7 +115,7 @@ export default function CompanyInfoScreen() {
               style={styles.logoutBtn}
               onPress={() => setLogoutVisible(true)}
             >
-              <Ionicons name="log-out-outline" size={26} color="#6bf3ffff" />
+              <Ionicons name="log-out-outline" size={26} color="#68c0cfff" />
             </TouchableOpacity>
           </View>
 
@@ -170,7 +174,8 @@ const styles = StyleSheet.create({
 
   title: {
     color: '#fff', fontSize: 24, fontWeight: '700',
-    marginBottom: 16, marginTop: 15, textAlign: "center"
+    marginBottom: 16, marginTop: 15, textAlign: "center",
+    marginLeft:60
   },
 
   card: {
@@ -258,5 +263,8 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "700"
+  },
+   arrow:{
+marginTop:18
   }
 });

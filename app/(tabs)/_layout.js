@@ -10,10 +10,10 @@ export default function TabsLayout() {
         headerShown: false,
       }}
     >
-      <Tabs.Screen name="company-info" />
-      <Tabs.Screen name="customers" />
-      <Tabs.Screen name="area-assign" />
-      <Tabs.Screen name="user-management" />
+      <Tabs.Screen name="Company" />
+      <Tabs.Screen name="Home" />
+      <Tabs.Screen name="Dashboard" />
+      
     </Tabs>
   );
 }
