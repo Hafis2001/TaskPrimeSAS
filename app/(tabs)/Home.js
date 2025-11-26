@@ -38,7 +38,7 @@ const router = useRouter();
       icon: 'cube-outline',
       title: 'ORDER',
       description: 'Place a new stock order',
-      onPress: () => router.push("/Order"),
+      onPress: () => router.push("/Order/Entry"),
     },
 
   ];
