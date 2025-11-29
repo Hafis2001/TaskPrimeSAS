@@ -1,15 +1,14 @@
 // Company.js
-import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import {
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 const Home = ({ navigation }) => {
 
@@ -20,7 +19,7 @@ const router = useRouter();
       icon: 'wallet-outline',
       title: 'COLLECTION',
       description: 'Record customer payments',
-      onPress: () => router.push("/Collection") ,
+      onPress: () => router.push("/Collection"),
     },
     {
       icon: 'cart-outline',
@@ -40,7 +39,13 @@ const router = useRouter();
       description: 'Place a new stock order',
       onPress: () => router.push("/Order/Entry"),
     },
-
+    {
+      icon: 'receipt-outline',
+      title: 'VIEW ORDERS',
+      description: 'View all placed orders',
+      onPress: () => router.push("/Order/PlaceOrder"),
+      highlight: true,
+    },
   ];
 
   const getCurrentDate = () => {
@@ -55,7 +60,6 @@ const router = useRouter();
       <View style={styles.content}>
         {/* Greeting Section */}
         <View style={styles.greetingSection}>
-          
           <Text style={styles.date}>{getCurrentDate()}</Text>
         </View>
 
@@ -64,12 +68,22 @@ const router = useRouter();
           {quickActions.map((action, index) => (
             <TouchableOpacity
               key={index}
-              style={styles.actionCard}
+              style={[
+                styles.actionCard,
+                action.highlight && styles.highlightCard
+              ]}
               onPress={action.onPress}
               activeOpacity={0.7}
             >
-              <View style={styles.iconContainer}>
-                <Ionicons name={action.icon} size={24} color="#3b82f6" />
+              <View style={[
+                styles.iconContainer,
+                action.highlight && styles.highlightIconContainer
+              ]}>
+                <Ionicons 
+                  name={action.icon} 
+                  size={24} 
+                  color={action.highlight ? "#303cacff" : "#3b82f6"} 
+                />
               </View>
               <Text style={styles.actionTitle}>{action.title}</Text>
               <Text style={styles.actionDescription}>{action.description}</Text>
@@ -82,7 +96,7 @@ const router = useRouter();
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.punchButton}
-          onPress={() => router.push("/Punch-In") }
+          onPress={() => router.push("/Punch-In")}
           activeOpacity={0.8}
         >
           <Ionicons name="finger-print-outline" size={20} color="#ffffff" />
@@ -115,7 +129,7 @@ const styles = StyleSheet.create({
   date: {
     fontSize: 18,
     color: '#a7a7afff',
-    marginTop:15
+    marginTop: 15,
   },
   actionsGrid: {
     flexDirection: 'row',
@@ -131,6 +145,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#27272a',
   },
+  highlightCard: {
+    borderColor: '#22204eff',
+    borderWidth: 1.5,
+  },
   iconContainer: {
     width: 48,
     height: 48,
@@ -139,6 +157,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
+  },
+  highlightIconContainer: {
+    backgroundColor: '#2a265aff',
   },
   actionTitle: {
     fontSize: 12,
@@ -157,7 +178,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   punchButton: {
-    backgroundColor: '#16a34a',
+    backgroundColor: '#3155c2ff',
     borderRadius: 8,
     paddingVertical: 18,
     flexDirection: 'row',
