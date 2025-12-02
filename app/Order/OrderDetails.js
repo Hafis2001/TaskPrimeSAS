@@ -175,7 +175,7 @@ export default function OrderDetails() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.smallLabel}>Customer</Text>
-            <Text style={styles.customerName}>{customer || "Unknown Customer"}</Text>
+            <Text style={styles.customerName}>{customer  || "Unknown Customer"}</Text>
             <Text style={styles.muted}>{area ? `${area} • ${type} • ${payment}` : ""}</Text>
           </View>
         </View>

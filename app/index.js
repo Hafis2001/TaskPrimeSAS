@@ -1,17 +1,26 @@
+// app/index.js
 import { useEffect, useState } from "react";
 import { View, Image, StyleSheet, Animated } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import { LinearGradient } from "expo-linear-gradient";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import LoginScreen from "../src/screens/LoginScreen";
+import LicenseActivationScreen from "../src/screens/LicenseActivationScreen";
 
 SplashScreen.preventAutoHideAsync(); // Keep splash visible
 
 export default function Index() {
   const [appReady, setAppReady] = useState(false);
+  const [licenseActivated, setLicenseActivated] = useState(false);
+  const [checkingLicense, setCheckingLicense] = useState(true);
   const [fadeAnim] = useState(new Animated.Value(0)); // For fade animation
 
   useEffect(() => {
     const prepare = async () => {
+      // Check if license is already activated
+      const isActivated = await AsyncStorage.getItem("licenseActivated");
+      setLicenseActivated(isActivated === "true");
+
       // Simulate loading tasks (fonts, auth, etc.)
       await new Promise(resolve => setTimeout(resolve, 1500));
 
@@ -23,13 +32,18 @@ export default function Index() {
       }).start(() => {
         SplashScreen.hideAsync();
         setAppReady(true);
+        setCheckingLicense(false);
       });
     };
 
     prepare();
   }, []);
 
-  if (!appReady) {
+  const handleActivationSuccess = () => {
+    setLicenseActivated(true);
+  };
+
+  if (!appReady || checkingLicense) {
     // Show gradient splash with fade
     return (
       <LinearGradient
@@ -47,6 +61,11 @@ export default function Index() {
         </Animated.View>
       </LinearGradient>
     );
+  }
+
+  // Show License screen if not activated, otherwise show Login
+  if (!licenseActivated) {
+    return <LicenseActivationScreen onActivationSuccess={handleActivationSuccess} />;
   }
 
   return <LoginScreen />;

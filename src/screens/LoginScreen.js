@@ -46,6 +46,23 @@ export default function LoginScreen() {
     elevation: glow.value * 10,
   }));
 
+  // Load client_id from AsyncStorage when component mounts
+  useEffect(() => {
+    loadClientId();
+  }, []);
+
+  const loadClientId = async () => {
+    try {
+      const storedClientId = await AsyncStorage.getItem("clientId");
+      if (storedClientId) {
+        setClientId(storedClientId);
+        console.log("✅ Loaded client_id from storage:", storedClientId);
+      }
+    } catch (error) {
+      console.error("Error loading client_id:", error);
+    }
+  };
+
   const handleLogin = async () => {
     if (!clientId || !username || !password) {
       Alert.alert("Missing Details", "Please fill all fields before logging in.");
@@ -54,7 +71,7 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      const response = await fetch("https://taskprime.app/api/login/", {
+      const response = await fetch("https://tasksas.com/api/login/", {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -86,12 +103,12 @@ export default function LoginScreen() {
           token: data.token,
         };
 
-  await AsyncStorage.setItem("user", JSON.stringify(userData));
-  await AsyncStorage.setItem("authToken", userData.token);
-  console.log("✅ User data saved:", userData);
+        await AsyncStorage.setItem("user", JSON.stringify(userData));
+        await AsyncStorage.setItem("authToken", userData.token);
+        console.log("✅ User data saved:", userData);
 
-  // Navigate to the new bottom tabs company-info screen
-  router.replace("/(tabs)/Company");
+        // Navigate to the new bottom tabs company-info screen
+        router.replace("/(tabs)/Company");
       } else {
         Alert.alert("Login Failed", "No token received from server.");
       }
@@ -203,7 +220,7 @@ const styles = StyleSheet.create({
     padding: 25,
     alignItems: "center",
     shadowColor: "#4fd1c5",
-    height:650,
+    height: 650,
   },
   title: {
     fontSize: 30,
@@ -228,7 +245,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 40,
     backgroundColor: "rgba(255,255,255,0.1)",
-    padding:10,
+    padding: 10,
   },
   icon: {
     marginRight: 10,

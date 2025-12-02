@@ -89,6 +89,7 @@ const router = useRouter();
               <Text style={styles.actionDescription}>{action.description}</Text>
             </TouchableOpacity>
           ))}
+        
         </View>
       </View>
 

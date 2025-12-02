@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-const API_URL = 'https://taskprime.app/api/get-misel-data/';
+const API_URL = 'https://tasksas.com/api/get-misel-data/';
 
 export default function CompanyInfoScreen() {
   const insets = useSafeAreaInsets();
