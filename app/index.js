@@ -4,12 +4,14 @@ import { View, Image, StyleSheet, Animated } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router";
 import LoginScreen from "../src/screens/LoginScreen";
 import LicenseActivationScreen from "../src/screens/LicenseActivationScreen";
 
 SplashScreen.preventAutoHideAsync(); // Keep splash visible
 
 export default function Index() {
+  const router = useRouter();
   const [appReady, setAppReady] = useState(false);
   const [licenseActivated, setLicenseActivated] = useState(false);
   const [checkingLicense, setCheckingLicense] = useState(true);

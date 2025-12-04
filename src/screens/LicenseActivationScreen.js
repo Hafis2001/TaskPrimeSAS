@@ -13,11 +13,13 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Application from "expo-application";
+import * as Device from "expo-device";
 
 export default function LicenseActivationScreen({ onActivationSuccess }) {
   const [licenseKey, setLicenseKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [deviceId, setDeviceId] = useState("");
+  const [deviceName, setDeviceName] = useState("");
   const [checking, setChecking] = useState(true); // Initial check
 
   useEffect(() => {
@@ -46,6 +48,30 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
     }
   };
 
+  const getDeviceName = async () => {
+    try {
+      let name = "";
+      
+      if (Platform.OS === "android") {
+        // Get device brand and model for Android
+        const brand = Device.brand || "";
+        const modelName = Device.modelName || "";
+        name = `${brand} ${modelName}`.trim() || "Android Device";
+      } else if (Platform.OS === "ios") {
+        // Get device model for iOS
+        const modelName = Device.modelName || "";
+        name = modelName || "iOS Device";
+      } else {
+        name = "Unknown Device";
+      }
+      
+      return name;
+    } catch (error) {
+      console.error("Error getting device name:", error);
+      return "Unknown Device";
+    }
+  };
+
   const initializeApp = async () => {
     try {
       setChecking(true);
@@ -54,8 +80,13 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       const id = await getDeviceId();
       setDeviceId(id);
       
+      // Get device name
+      const name = await getDeviceName();
+      setDeviceName(name);
+      
       console.log("Checking if device is already registered...");
       console.log("Device ID:", id);
+      console.log("Device Name:", name);
       
       // Check if device is already registered in the API
       const isRegistered = await checkDeviceRegistration(id);
@@ -244,6 +275,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       console.log("Registering new device...");
       console.log("License Key:", licenseKey.trim());
       console.log("Device ID:", deviceId);
+      console.log("Device Name:", deviceName);
 
       const deviceResponse = await fetch(POST_DEVICE_API, {
         method: "POST",
@@ -253,6 +285,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         body: JSON.stringify({
           license_key: licenseKey.trim(),
           device_id: deviceId,
+          device_name: deviceName,
         }),
       });
 
@@ -362,6 +395,10 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
           <Text style={styles.deviceInfoLabel}>Device ID</Text>
           <Text style={styles.deviceInfoText} numberOfLines={1}>
             {deviceId || "Loading..."}
+          </Text>
+          <Text style={styles.deviceInfoLabel} >Device Name</Text>
+          <Text style={styles.deviceInfoText} numberOfLines={1}>
+            {deviceName || "Loading..."}
           </Text>
         </View>
 

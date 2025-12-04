@@ -26,7 +26,10 @@
         "foregroundImage": "./assets/images/taskprime-icon.jpg",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.hafis2001.TaskPrimeSAS"
+      "package": "com.hafis2001.TaskPrimeSAS",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/images/taskprime-icon.jpg"
@@ -44,13 +47,13 @@
             "backgroundColor": "#000000"
           }
         }
-      ],
-      "expo-barcode-scanner"
+      ]
+      
     ],
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "03c1aed4-8c91-46a7-aefb-070729768c26"
+        "projectId": "7c88ba1f-670c-4ab8-8c79-277250f17498"
       }
     },
     "experiments": {

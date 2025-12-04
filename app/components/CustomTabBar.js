@@ -69,6 +69,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
     alignItems: "flex-end",
     paddingBottom: 12,
+    marginBottom: 34,
   },
 
   tabBackground: {

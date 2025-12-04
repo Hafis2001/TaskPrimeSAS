@@ -17,7 +17,7 @@ import Animated, { FadeInUp } from "react-native-reanimated";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-const API_URL = "https://taskprime.app/api/debtors/get-debtors/";
+const API_URL = "https://tasksas.com/api/debtors/get-debtors/";
 
 export default function DebtorsScreen() {
   const [data, setData] = useState([]);
