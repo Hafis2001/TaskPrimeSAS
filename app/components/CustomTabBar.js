@@ -46,7 +46,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
             {/* Floating active icon */}
             {isFocused ? (
               <View style={styles.activeBubble}>
-                <Ionicons name={tab.icon} size={26} color="#4fd1c5" />
+                <Ionicons name={tab.icon} size={26} color="#f4f8f7ff" />
               </View>
             ) : (
               <Ionicons name={tab.icon} size={22} color="#9aa4b2" />
@@ -64,12 +64,12 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
 const styles = StyleSheet.create({
   container: {
     height: 80,
-    backgroundColor: "#232244ff",
+    backgroundColor: "#79b0fcff",
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "flex-end",
     paddingBottom: 12,
-    marginBottom: 34,
+    marginBottom: 56,
   },
 
   tabBackground: {
@@ -77,13 +77,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: "100%",
     height: 70,
-    backgroundColor: "#232244ff",
+    backgroundColor: "#e9e4ceff",
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
     shadowColor: "#000",
     shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 6,
+    
   },
 
   tabButton: {
@@ -95,12 +96,12 @@ const styles = StyleSheet.create({
     width: 55,
     height: 55,
     borderRadius: 40,
-    backgroundColor: "#232244ff",
+    backgroundColor: "#78c0f8ff",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 4,
     elevation: 8,
-    shadowColor: "#4fd1c5",
+    shadowColor: "#b1b6b6ff",
     shadowOpacity: 0.3,
     shadowRadius: 10,
   },

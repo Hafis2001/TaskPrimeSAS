@@ -47,8 +47,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
-      
+      ],
+      "expo-sqlite"
     ],
     "extra": {
       "router": {},

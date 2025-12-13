@@ -26,119 +26,79 @@ const { width } = Dimensions.get("window");
 export default function LoginScreen() {
   const router = useRouter();
 
-  const [clientId, setClientId] = useState(""); // loaded hidden ID from previous page
+  const [clientId, setClientId] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Glow animation (unchanged)
+  // Glow animation
   const glow = useSharedValue(0);
   useEffect(() => {
     glow.value = withRepeat(withTiming(1, { duration: 2500 }), -1, true);
   }, []);
   const animatedGlow = useAnimatedStyle(() => ({
-    shadowColor: "#4fd1c5",
+    shadowColor: "#FF8C42",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: glow.value,
     shadowRadius: glow.value * 15,
     elevation: glow.value * 10,
   }));
 
-  // Load clientId once on mount (kept for quick access)
+  // Load clientId
   useEffect(() => {
     (async () => {
       try {
         const stored = await AsyncStorage.getItem("clientId");
-        console.log("Initial loaded clientId:", stored);
         if (stored) setClientId(stored.trim().toUpperCase());
-      } catch (e) {
-        console.warn("Error reading clientId from storage on mount:", e);
-      }
+      } catch (e) {}
     })();
   }, []);
 
-  /**
-   * validateLicense()
-   *
-   * - Loads the latest clientId from AsyncStorage (ensures freshest value)
-   * - Fetches the license API (adds timestamp to prevent caching)
-   * - Finds the matching customer by client_id (case-insensitive, trimmed)
-   * - Returns:
-   *    { ok: true, customer }  -> license active and matched
-   *    { ok: false, reason: 'missing_client' / 'not_found' / 'inactive' / 'network' / 'invalid_response' }
-   */
+  // LICENSE VALIDATION
   const validateLicense = async () => {
     try {
-      // 1) ensure we have the most recent clientId from storage
       const stored = await AsyncStorage.getItem("clientId");
       const usedClientId = (stored || clientId || "").toString().trim().toUpperCase();
-      console.log("VALIDATE: using clientId from storage:", usedClientId);
 
       if (!usedClientId) {
         return { ok: false, reason: "missing_client" };
       }
 
-      // 2) fetch license API with timestamp to avoid stale/cached responses
       const url = "https://activate.imcbs.com/mobileapp/api/project/sastest/";
-      const fetchUrl = `${url}?t=${Date.now()}`; // prevent caching
+      const fetchUrl = `${url}?t=${Date.now()}`;
+
       let res;
       try {
         res = await fetch(fetchUrl, {
           method: "GET",
-          headers: {
-            Accept: "application/json",
-            "Cache-Control": "no-cache",
-          },
+          headers: { Accept: "application/json", "Cache-Control": "no-cache" },
         });
       } catch (networkErr) {
-        console.error("Network error when calling license API:", networkErr);
-        return { ok: false, reason: "network", error: networkErr };
+        return { ok: false, reason: "network" };
       }
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        console.error("License API non-ok response:", res.status, text);
-        return { ok: false, reason: "network", status: res.status, body: text };
-      }
+      if (!res.ok) return { ok: false, reason: "network" };
 
       let data;
       try {
         data = await res.json();
-      } catch (parseErr) {
-        console.error("Failed to parse license API JSON:", parseErr);
-        return { ok: false, reason: "invalid_response", error: parseErr };
-      }
-
-      console.log("License API response (truncated):", {
-        customersLength: Array.isArray(data.customers) ? data.customers.length : 0,
-      });
-
-      if (!Array.isArray(data.customers)) {
-        console.error("License API response missing customers array:", data);
+      } catch {
         return { ok: false, reason: "invalid_response" };
       }
 
-      // 3) find matching customer (case-insensitive, trimmed)
-      const normalizedClient = usedClientId;
-      const matched = data.customers.find((c) => {
-        const cid = (c?.client_id ?? "").toString().trim().toUpperCase();
-        return cid === normalizedClient;
-      });
+      if (!Array.isArray(data.customers))
+        return { ok: false, reason: "invalid_response" };
 
-      console.log("Matched customer:", matched);
+      const matched = data.customers.find(
+        (c) => (c?.client_id ?? "").toString().trim().toUpperCase() === usedClientId
+      );
 
-      if (!matched) {
-        return { ok: false, reason: "not_found" };
-      }
+      if (!matched) return { ok: false, reason: "not_found" };
 
-      // 4) check status
       const status = (matched.status ?? "").toString().trim().toUpperCase();
-      if (status !== "ACTIVE") {
-        return { ok: false, reason: "inactive", customer: matched };
-      }
+      if (status !== "ACTIVE") return { ok: false, reason: "inactive" };
 
-      // 5) success - optionally store license info
       try {
         await AsyncStorage.setItem(
           "licenseInfo",
@@ -149,18 +109,15 @@ export default function LoginScreen() {
             package: matched.package ?? "",
           })
         );
-      } catch (e) {
-        console.warn("Failed to save licenseInfo:", e);
-      }
+      } catch {}
 
       return { ok: true, customer: matched };
-    } catch (err) {
-      console.error("Unexpected error validating license:", err);
-      return { ok: false, reason: "network", error: err };
+    } catch {
+      return { ok: false, reason: "network" };
     }
   };
 
-  // handleLogin: validates license first, blocks if inactive / not found, only then calls login API
+  // LOGIN
   const handleLogin = async () => {
     if (!username || !password) {
       Alert.alert("Missing Details", "Please enter username and password.");
@@ -169,63 +126,38 @@ export default function LoginScreen() {
 
     setLoading(true);
 
-    // Ensure we refresh clientId from storage to avoid stale value
     try {
       const stored = await AsyncStorage.getItem("clientId");
       if (stored) setClientId(stored.trim().toUpperCase());
-    } catch (e) {
-      console.warn("Failed to refresh clientId from storage before login:", e);
-    }
+    } catch {}
 
-    // Validate license
     const licenseResult = await validateLicense();
-
-    console.log("License validation result:", licenseResult);
 
     if (!licenseResult.ok) {
       setLoading(false);
 
-      // Friendly, explicit messages for each failure reason
       switch (licenseResult.reason) {
         case "missing_client":
-          Alert.alert(
-            "Client ID Missing",
-            "Client ID not available. Please go back and select the customer / client first."
-          );
+          Alert.alert("Client ID Missing", "Please select the client first.");
           break;
         case "network":
-          Alert.alert(
-            "Network Error",
-            "Unable to validate license. Check your internet connection and try again."
-          );
+          Alert.alert("Network Error", "Check your internet connection.");
           break;
         case "invalid_response":
-          Alert.alert(
-            "Server Error",
-            "License server returned unexpected data. Contact administrator."
-          );
+          Alert.alert("Server Error", "Unexpected server response.");
           break;
         case "not_found":
-          Alert.alert(
-            "Invalid License",
-            "Your client ID is not registered. Contact administrator."
-          );
+          Alert.alert("Invalid License", "Client not registered.");
           break;
         case "inactive":
-          Alert.alert(
-            "License Inactive",
-            "Your license is inactive. Contact your administrator."
-          );
+          Alert.alert("License Inactive", "Contact administrator.");
           break;
         default:
           Alert.alert("License Error", "Unable to validate license.");
       }
-
-      return; // HARD STOP — do not proceed to login
+      return;
     }
 
-    // At this point licenseResult.ok === true and license is active
-    // Proceed to login API call
     try {
       const loginResp = await fetch("https://tasksas.com/api/login/", {
         method: "POST",
@@ -241,42 +173,35 @@ export default function LoginScreen() {
       });
 
       if (!loginResp.ok) {
-        const body = await loginResp.text().catch(() => "");
-        console.error("Login API non-ok:", loginResp.status, body);
         Alert.alert("Login Failed", "Invalid username or password.");
         setLoading(false);
         return;
       }
 
-      const loginData = await loginResp.json().catch((e) => {
-        console.error("Failed parsing login response:", e);
-        return null;
-      });
-
-      if (!loginData) {
-        Alert.alert("Login Failed", "Invalid response from login server.");
+      const loginData = await loginResp.json().catch(() => null);
+      if (!loginData || !loginData.token) {
+        Alert.alert("Login Failed", "Invalid response from server.");
         setLoading(false);
         return;
       }
 
-      if (loginData?.token) {
-        const userData = {
-          name: loginData?.username || username,
-          clientId,
-          token: loginData.token,
-        };
+      // Save allowed modules
+      await AsyncStorage.setItem(
+        "allowedMenuIds",
+        JSON.stringify(loginData?.user?.allowedMenuIds || [])
+      );
 
-        await AsyncStorage.setItem("user", JSON.stringify(userData));
-        await AsyncStorage.setItem("authToken", userData.token);
+      await AsyncStorage.setItem("role", loginData?.user?.role ?? "");
+      await AsyncStorage.setItem("accountcode", loginData?.user?.accountcode ?? "");
+      await AsyncStorage.setItem("client_id", loginData?.user?.client_id ?? "");
+      await AsyncStorage.setItem("username", loginData?.user?.username ?? "");
 
-        // navigate to app
-        router.replace("/(tabs)/Company");
-      } else {
-        Alert.alert("Login Failed", "No token received from server.");
-      }
+      await AsyncStorage.setItem("authToken", loginData.token);
+      await AsyncStorage.setItem("user", JSON.stringify(loginData.user));
+
+      router.replace("/(tabs)/Home");
     } catch (err) {
-      console.error("Network error during login:", err);
-      Alert.alert("Network Error", "Unable to reach login server. Try again.");
+      Alert.alert("Network Error", "Unable to reach login server.");
     } finally {
       setLoading(false);
     }
@@ -284,7 +209,7 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient
-      colors={["#0b132b", "#1c2541", "#3a506b"]}
+      colors={["#FFF7F0", "#FFEDE0", "#FFF2E5"]} // VERY PALE WHITE + ORANGE
       style={styles.container}
     >
       <Animated.View style={[styles.formContainer, animatedGlow]}>
@@ -293,28 +218,24 @@ export default function LoginScreen() {
         </Text>
         <Text style={styles.subtitle}>Login</Text>
 
-        {/* Client ID intentionally hidden — loaded from storage */}
-
         <View style={styles.inputContainer}>
-          <Ionicons name="person-outline" size={20} color="#aaa" style={styles.icon} />
+          <Ionicons name="person-outline" size={20} color="#555" style={styles.icon} />
           <TextInput
             style={styles.input}
             placeholder="Username"
-            placeholderTextColor="#aaa"
+            placeholderTextColor="#777"
             value={username}
             autoCapitalize="characters"
-            onChangeText={(text) =>
-              setUsername(text.toUpperCase().replace(/\s/g, ""))
-            }
+            onChangeText={(text) => setUsername(text.toUpperCase().replace(/\s/g, ""))}
           />
         </View>
 
         <View style={styles.inputContainer}>
-          <Ionicons name="lock-closed-outline" size={20} color="#aaa" style={styles.icon} />
+          <Ionicons name="lock-closed-outline" size={20} color="#555" style={styles.icon} />
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor="#aaa"
+            placeholderTextColor="#777"
             secureTextEntry={!showPassword}
             value={password}
             onChangeText={setPassword}
@@ -327,7 +248,7 @@ export default function LoginScreen() {
             <Ionicons
               name={showPassword ? "eye-off-outline" : "eye-outline"}
               size={20}
-              color="#aaa"
+              color="#555"
             />
           </TouchableOpacity>
         </View>
@@ -338,7 +259,11 @@ export default function LoginScreen() {
             onPress={handleLogin}
             disabled={loading}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Login</Text>}
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Login</Text>
+            )}
           </TouchableOpacity>
         </Animated.View>
 
@@ -352,38 +277,49 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: "center", alignItems: "center" },
+
   formContainer: {
     width: width * 0.95,
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
     borderRadius: 25,
     padding: 25,
     alignItems: "center",
     height: 650,
   },
-  title: { fontSize: 30, fontWeight: "700", color: "#fff" },
-  titleAccent: { color: "#4fd1c5" },
-  subtitle: { fontSize: 24, color: "#fff", marginBottom: 40 },
+
+  title: { fontSize: 30, fontWeight: "700", color: "#333" },
+  titleAccent: { color: "#FF8C42" },
+  subtitle: { fontSize: 24, color: "#444", marginBottom: 40 },
+
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.3)",
+    borderColor: "rgba(0,0,0,0.15)",
     borderRadius: 15,
     paddingHorizontal: 15,
     marginBottom: 40,
-    backgroundColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.8)",
     padding: 10,
   },
+
   icon: { marginRight: 10 },
-  input: { flex: 1, color: "#fff", fontSize: 16, paddingVertical: Platform.OS === "ios" ? 12 : 10 },
+  input: {
+    flex: 1,
+    color: "#333",
+    fontSize: 16,
+    paddingVertical: Platform.OS === "ios" ? 12 : 10,
+  },
   eyeIcon: { padding: 5 },
+
   buttonWrapper: { width: "100%", marginTop: 20, borderRadius: 15 },
   button: {
-    backgroundColor: "#4fd1c5",
+    backgroundColor: "#FF8C42",
     paddingVertical: 14,
     borderRadius: 15,
     alignItems: "center",
   },
   buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  forgotText: { color: "#aaa", marginTop: 20, fontSize: 14 },
+
+  forgotText: { color: "#555", marginTop: 20, fontSize: 14 },
 });

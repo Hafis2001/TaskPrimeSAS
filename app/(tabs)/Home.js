@@ -8,101 +8,148 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Animated,
 } from 'react-native';
+import { useEffect, useRef } from 'react';
+
 
 const Home = ({ navigation }) => {
+  const router = useRouter();
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
 
-const router = useRouter();
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   const quickActions = [
     {
       icon: 'wallet-outline',
       title: 'COLLECTION',
       description: 'Record customer payments',
-      onPress: () => router.push("/Collection"),
+      onPress: () => router.push("/Collection/Collection"),
+      bgColor: '#FFF5F0',
+      iconBg: '#FFE8DD',
+      titleColor: '#D2916B',
+      borderColor: '#F4D4C4',
     },
     {
       icon: 'cart-outline',
       title: 'SALES',
       description: 'Create a new sales entry',
       onPress: () => router.push("/Sales"),
+      bgColor: '#F0FFF5',
+      iconBg: '#DDF5E8',
+      titleColor: '#7AB89A',
+      borderColor: '#C4E8D4',
     },
     {
       icon: 'return-up-back-outline',
       title: 'SALES RETURN',
       description: 'Process a return',
       onPress: () => router.push("/Sales-Return"),
+      bgColor: '#F8F0FF',
+      iconBg: '#EBE0FF',
+      titleColor: '#A88BC4',
+      borderColor: '#D9CCE8',
     },
     {
       icon: 'cube-outline',
       title: 'ORDER',
       description: 'Place a new stock order',
       onPress: () => router.push("/Order/Entry"),
+      bgColor: '#F0F8FF',
+      iconBg: '#DDE8F5',
+      titleColor: '#7A9BB8',
+      borderColor: '#C4D4E8',
     },
     {
       icon: 'receipt-outline',
       title: 'VIEW ORDERS',
       description: 'View all placed orders',
       onPress: () => router.push("/Order/PlaceOrder"),
+      bgColor: '#FFF8F0',
+      iconBg: '#FFE8DD',
+      titleColor: '#D2A16B',
+      borderColor: '#F4D9C4',
       highlight: true,
     },
   ];
 
   const getCurrentDate = () => {
-    const options = { weekday: 'long', day: 'numeric', month: 'long' };
+    const options = { weekday: 'long', month: 'long', day: 'numeric' };
     return new Date().toLocaleDateString('en-US', options);
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0f" />
+      <StatusBar barStyle="dark-content" backgroundColor="#F5F5FF" />
       
       <View style={styles.content}>
-        {/* Greeting Section */}
-        <View style={styles.greetingSection}>
+        {/* Header Section */}
+        <Animated.View 
+          style={[
+            styles.headerSection,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }]
+            }
+          ]}
+        >
           <Text style={styles.date}>{getCurrentDate()}</Text>
-        </View>
+          {/* <Text style={styles.mainTitle}>HOME DASHBOARD</Text> */}
+        </Animated.View>
 
         {/* Quick Actions Grid */}
-        <View style={styles.actionsGrid}>
+        <Animated.View 
+          style={[
+            styles.actionsGrid,
+            {
+              opacity: fadeAnim,
+            }
+          ]}
+        >
           {quickActions.map((action, index) => (
             <TouchableOpacity
               key={index}
               style={[
                 styles.actionCard,
-                action.highlight && styles.highlightCard
+                { 
+                  backgroundColor: action.bgColor,
+                  borderColor: action.borderColor,
+                }
               ]}
               onPress={action.onPress}
               activeOpacity={0.7}
             >
               <View style={[
                 styles.iconContainer,
-                action.highlight && styles.highlightIconContainer
+                { backgroundColor: action.iconBg }
               ]}>
                 <Ionicons 
                   name={action.icon} 
-                  size={24} 
-                  color={action.highlight ? "#303cacff" : "#3b82f6"} 
+                  size={32} 
+                  color={action.titleColor}
                 />
               </View>
-              <Text style={styles.actionTitle}>{action.title}</Text>
+              <Text style={[styles.actionTitle, { color: action.titleColor }]}>
+                {action.title}
+              </Text>
               <Text style={styles.actionDescription}>{action.description}</Text>
             </TouchableOpacity>
           ))}
-        
-        </View>
-      </View>
-
-      {/* Punch In Button - Fixed at bottom */}
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity
-          style={styles.punchButton}
-          onPress={() => router.push("/Punch-In")}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="finger-print-outline" size={20} color="#ffffff" />
-          <Text style={styles.punchButtonText}>PUNCH IN</Text>
-        </TouchableOpacity>
+        </Animated.View>
       </View>
     </SafeAreaView>
   );
@@ -111,26 +158,27 @@ const router = useRouter();
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0f',
+    backgroundColor: '#F5F5FF',
   },
   content: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingTop: 24,
   },
-  greetingSection: {
-    marginBottom: 40,
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 4,
+  headerSection: {
+    marginBottom: 32,
   },
   date: {
-    fontSize: 18,
-    color: '#a7a7afff',
-    marginTop: 15,
+    fontSize: 16,
+    color: '#9B9BA5',
+    marginBottom: 8,
+    fontWeight: '400',
+  },
+  mainTitle: {
+    fontSize: 36,
+    fontWeight: '700',
+    color: '#A8B8E0',
+    letterSpacing: 1,
   },
   actionsGrid: {
     flexDirection: 'row',
@@ -139,59 +187,47 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   actionCard: {
-    width: '47%',
-    backgroundColor: '#18181b',
-    borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#27272a',
-  },
-  highlightCard: {
-    borderColor: '#22204eff',
-    borderWidth: 1.5,
+    width: '47.5%',
+    height: 170,
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 2,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
   iconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 10,
-    backgroundColor: '#1e3a8a',
+    width: 64,
+    height: 64,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 12,
-  },
-  highlightIconContainer: {
-    backgroundColor: '#2a265aff',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
   actionTitle: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 4,
-    letterSpacing: 0.5,
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 6,
+    letterSpacing: 0.8,
   },
   actionDescription: {
-    fontSize: 11,
-    color: '#71717a',
-    lineHeight: 16,
-  },
-  buttonContainer: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
-  },
-  punchButton: {
-    backgroundColor: '#3155c2ff',
-    borderRadius: 8,
-    paddingVertical: 18,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-  },
-  punchButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    fontSize: 13,
+    color: '#1A1A1A',
+    lineHeight: 18,
+    fontWeight: '400',
   },
 });
 

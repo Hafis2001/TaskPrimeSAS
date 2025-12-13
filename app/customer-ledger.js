@@ -197,7 +197,7 @@ export default function CustomerLedgerScreen() {
   const renderItem = ({ item }) => {
     const isCredit = item.credit && item.credit > 0;
     const amount = isCredit ? item.credit : item.debit;
-    const color = isCredit ? "#ff4d4d" : "#00eaff"; // debit shows cyan, credit red
+    const color = isCredit ? "#ff3b30" : "#0b8a2f"; // credit red, debit green
 
     return (
       <Animated.View entering={FadeInUp.delay(20)}>
@@ -231,16 +231,16 @@ export default function CustomerLedgerScreen() {
   if (loading) {
     return (
       <View style={styles.loader}>
-        <ActivityIndicator size="large" color="#00eaff" />
+        <ActivityIndicator size="large" color="#0d3b6c" />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <LinearGradient colors={["#07182a", "#0b132b"]} style={styles.headerCard}>
+      <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.headerCard}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Icon name="arrow-back" size={22} color="#00eaff" />
+          <Icon name="arrow-back" size={22} color="#0d3b6c" />
         </TouchableOpacity>
 
         <View style={{ flex: 1, paddingHorizontal: 8 }}>
@@ -262,7 +262,7 @@ export default function CustomerLedgerScreen() {
             }}
             style={styles.iconAction}
           >
-            <Icon name="calendar-outline" size={20} color="#00eaff" />
+            <Icon name="calendar-outline" size={20} color="#0d3b6c" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -272,11 +272,11 @@ export default function CustomerLedgerScreen() {
             }}
             style={styles.iconAction}
           >
-            <Icon name="calendar" size={20} color="#00eaff" />
+            <Icon name="calendar" size={20} color="#0d3b6c" />
           </TouchableOpacity>
 
           <TouchableOpacity onPress={refreshAll} style={styles.iconAction}>
-            <Icon name="refresh" size={20} color="#00eaff" />
+            <Icon name="refresh" size={20} color="#0d3b6c" />
           </TouchableOpacity>
         </View>
       </LinearGradient>
@@ -308,14 +308,14 @@ export default function CustomerLedgerScreen() {
       <View style={styles.totalCard}>
         <View style={styles.totalItem}>
           <Text style={styles.totalLabel}>Total Credit</Text>
-          <Text style={[styles.totalValue, { color: "#ff4d4d" }]}>{totalCredit.toLocaleString("en-IN")}</Text>
+          <Text style={[styles.totalValue, { color: "#ff3b30" }]}>{totalCredit.toLocaleString("en-IN")}</Text>
         </View>
 
         <View style={styles.divider} />
 
         <View style={styles.totalItem}>
           <Text style={styles.totalLabel}>Total Debit</Text>
-          <Text style={[styles.totalValue, { color: "#00eaff" }]}>{totalDebit.toLocaleString("en-IN")}</Text>
+          <Text style={[styles.totalValue, { color: "#0b8a2f" }]}>{totalDebit.toLocaleString("en-IN")}</Text>
         </View>
       </View>
 
@@ -342,8 +342,8 @@ export default function CustomerLedgerScreen() {
 
 // ----------------- Styles -----------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0b132b", padding: 12 },
-  loader: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0b132b" },
+  container: { flex: 1, backgroundColor: "#FFF7F0", padding: 12 },
+  loader: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#FFF7F0" },
 
   headerCard: {
     flexDirection: "row",
@@ -355,57 +355,57 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: "rgba(0,230,255,0.08)",
+    borderColor: "rgba(13,59,108,0.08)",
   },
 
   backBtn: { paddingRight: 8 },
 
-  title: { fontSize: 18, fontWeight: "700", color: "#00eaff" },
-  dateText: { fontSize: 13, color: "#93b4c9", marginTop: 2 },
+  title: { fontSize: 18, fontWeight: "700", color: "#0d3b6c" },
+  dateText: { fontSize: 13, color: "#55606a", marginTop: 2 },
 
   actions: { flexDirection: "row", alignItems: "center" },
   iconAction: { marginLeft: 10, padding: 6, borderRadius: 8 },
 
   balanceRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
   balanceBox: {
-    backgroundColor: "#0f2030",
+    backgroundColor: "rgba(255,255,255,0.9)",
     flex: 1,
     marginHorizontal: 4,
     borderRadius: 10,
     padding: 12,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(0,230,255,0.06)",
+    borderColor: "rgba(13,59,108,0.06)",
   },
-  balanceLabel: { color: "#9aa4b2", fontWeight: "600", fontSize: 13 },
-  balanceValue: { fontSize: 17, fontWeight: "700", color: "#e8faff", marginTop: 4 },
+  balanceLabel: { color: "#55606a", fontWeight: "600", fontSize: 13 },
+  balanceValue: { fontSize: 17, fontWeight: "700", color: "#0d3b6c", marginTop: 4 },
 
   totalCard: {
     flexDirection: "row",
-    backgroundColor: "#0f2030",
+    backgroundColor: "rgba(255,255,255,0.9)",
     padding: 10,
     borderRadius: 10,
     marginBottom: 10,
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: "rgba(0,230,255,0.04)",
+    borderColor: "rgba(13,59,108,0.06)",
   },
   totalItem: { flex: 1, alignItems: "center" },
-  divider: { width: 1, height: 36, backgroundColor: "rgba(255,255,255,0.03)" },
-  totalLabel: { color: "#9aa4b2", fontWeight: "600", fontSize: 13 },
+  divider: { width: 1, height: 36, backgroundColor: "rgba(13,59,108,0.08)" },
+  totalLabel: { color: "#55606a", fontWeight: "600", fontSize: 13 },
   totalValue: { fontSize: 16, fontWeight: "700" },
 
-  transHeading: { fontSize: 13, fontWeight: "700", color: "#8fbfe9", marginBottom: 6, marginTop: 6 },
+  transHeading: { fontSize: 13, fontWeight: "700", color: "#0d3b6c", marginBottom: 6, marginTop: 6 },
 
   transactionCard: {
-    backgroundColor: "#0f2030",
+    backgroundColor: "#ffffff",
     padding: 12,
     borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "rgba(0,230,255,0.03)",
-    shadowColor: "#00eaff",
+    borderColor: "#eef6ff",
+    shadowColor: "#0d3b6c",
     shadowOpacity: 0.02,
     shadowRadius: 6,
     elevation: 1,
@@ -423,9 +423,9 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
 
-  particulars: { fontWeight: "700", color: "#e8faff", maxWidth: 220 },
-  subText: { color: "#94b7cc", fontSize: 12 },
-  voucherText: { color: "#7f98a9", fontSize: 12, marginTop: 4 },
+  particulars: { fontWeight: "700", color: "#0b2a44", maxWidth: 220 },
+  subText: { color: "#6b7c8a", fontSize: 12 },
+  voucherText: { color: "#7c8899", fontSize: 12, marginTop: 4 },
 
   amountText: { fontSize: 16, fontWeight: "700", textAlign: "right" },
 
@@ -434,15 +434,15 @@ const styles = StyleSheet.create({
     bottom: 18,
     left: 12,
     right: 12,
-    backgroundColor: "linear-gradient(90deg, #082733, #06304a)", // fallback visual; LinearGradient used above in header; style kept for shape
+    backgroundColor: "rgba(255,255,255,0.95)",
     padding: 14,
     alignItems: "center",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "rgba(0,230,255,0.12)",
+    borderColor: "rgba(13,59,108,0.12)",
   },
-  footerLabel: { color: "#bfeeff", fontSize: 14, fontWeight: "700" },
-  footerValue: { color: "#00eaff", fontSize: 20, fontWeight: "900", marginTop: 6 },
+  footerLabel: { color: "#55606a", fontSize: 14, fontWeight: "700" },
+  footerValue: { color: "#0d3b6c", fontSize: 20, fontWeight: "900", marginTop: 6 },
 
   emptyText: { textAlign: "center", color: "#9aa4b2", marginTop: 20 },
 });
@@ -458,6 +458,6 @@ function hexWithAlpha(hexColor, alpha) {
     const b = bigint & 255;
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   } catch {
-    return `rgba(0,230,255,${alpha})`;
+    return `rgba(13,59,108,${alpha})`;
   }
 }
