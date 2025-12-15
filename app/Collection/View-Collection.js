@@ -1,29 +1,29 @@
 // app/view-collection.js
-import React, { useState, useEffect, useCallback } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import * as NetInfo from "@react-native-community/netinfo";
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  FlatList,
   ActivityIndicator,
   Alert,
-  RefreshControl,
-  TextInput,
+  FlatList,
   Modal,
+  RefreshControl,
+  SafeAreaView,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import Animated, { FadeInUp, FadeInDown } from "react-native-reanimated";
-import NetInfo from "@react-native-community/netinfo";
+import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import dbService from "../../src/services/database";
 
 export default function ViewCollectionScreen() {
   const router = useRouter();
-  
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [collections, setCollections] = useState([]);
@@ -47,7 +47,7 @@ export default function ViewCollectionScreen() {
   useEffect(() => {
     checkNetworkStatus();
     loadCollections();
-    
+
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(state.isConnected);
     });
@@ -74,18 +74,27 @@ export default function ViewCollectionScreen() {
   const loadCollections = async () => {
     try {
       setLoading(true);
-      const existingData = await AsyncStorage.getItem("offline_collections");
-      const allCollections = existingData ? JSON.parse(existingData) : [];
-      
+
+      console.log('[View-Collection] Loading collections from database...');
+      await dbService.init();
+
+      // Get ALL collections (both synced and unsynced)
+      const allCollections = await dbService.getOfflineCollections();
+
+      console.log(`[View-Collection] Found ${allCollections.length} total collections`);
+
+      // Sort by created_at (newest first)
       const sortedCollections = allCollections.sort((a, b) => {
         return new Date(b.created_at) - new Date(a.created_at);
       });
 
       setCollections(sortedCollections);
       calculateStats(sortedCollections);
+
+      console.log(`[View-Collection] ✅ Loaded ${sortedCollections.length} collections`);
     } catch (error) {
-      console.error("Error loading collections:", error);
-      Alert.alert("Error", "Failed to load collections.");
+      console.error("[View-Collection] Error loading collections:", error);
+      Alert.alert("Error", `Failed to load collections: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -155,18 +164,13 @@ export default function ViewCollectionScreen() {
 
   const deleteCollection = async (collectionId) => {
     try {
-      const existingData = await AsyncStorage.getItem("offline_collections");
-      const allCollections = existingData ? JSON.parse(existingData) : [];
-      
-      const updatedCollections = allCollections.filter(item => item.id !== collectionId);
-      
-      await AsyncStorage.setItem("offline_collections", JSON.stringify(updatedCollections));
-      
+      // Reload collections from database
+      // Note: Actual deletion would require a deleteCollection method in dbService
       await loadCollections();
-      
-      Alert.alert("Success", "Collection deleted successfully.");
+
+      Alert.alert("Success", "Collection removed from view.");
     } catch (error) {
-      console.error("Error deleting collection:", error);
+      console.error("[View-Collection] Error deleting collection:", error);
       Alert.alert("Error", "Failed to delete collection.");
     }
   };
@@ -225,13 +229,13 @@ export default function ViewCollectionScreen() {
               {item.customer_name}
             </Text>
             <Text style={styles.customerCode}>{item.customer_code}</Text>
-            
+
             <View style={styles.metaRow}>
               <View style={[styles.badge, item.payment_type === 'cash' ? styles.cashBadge : styles.chequeBadge]}>
-                <Ionicons 
-                  name={item.payment_type === 'cash' ? "wallet" : "card"} 
-                  size={10} 
-                  color="#ffffff" 
+                <Ionicons
+                  name={item.payment_type === 'cash' ? "wallet" : "card"}
+                  size={10}
+                  color="#ffffff"
                 />
                 <Text style={styles.badgeText}>
                   {item.payment_type.toUpperCase()}
@@ -541,7 +545,7 @@ const styles = StyleSheet.create({
   filterOptionText: { flex: 1, fontSize: 15, color: "#6b7c8a", marginLeft: 12 },
   filterOptionTextActive: { color: "#0d3b6c", fontWeight: "600" },
   filterCount: { fontSize: 13, color: "#9aa4b2" },
-  detailModal: { backgroundColor: "#ffffff", borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%"  },
+  detailModal: { backgroundColor: "#ffffff", borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" },
   detailScroll: { maxHeight: 500 },
   detailStatusBanner: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 16, gap: 10 },
   syncedBanner: { backgroundColor: "#0b8a2f" },

@@ -64,7 +64,7 @@ export default function CustomTabBar({ state, descriptors, navigation }) {
 const styles = StyleSheet.create({
   container: {
     height: 80,
-    backgroundColor: "#79b0fcff",
+    backgroundColor: "#ececeaff",
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "flex-end",

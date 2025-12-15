@@ -1,29 +1,26 @@
 // app/Order/Entry.js
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Animated,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-  TextInput,
-  Platform,
-  KeyboardAvoidingView,
-  StatusBar,
-  SafeAreaView,
-} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
-
-const CACHE_KEY = "debtors_cache";
-const CACHE_TIMESTAMP_KEY = "debtors_cache_timestamp";
-const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import dbService from "../../src/services/database";
 
 export default function EntryScreen() {
   const typeList = ["Order", "Sales", "Return"];
@@ -56,7 +53,7 @@ export default function EntryScreen() {
   const initializeScreen = async () => {
     try {
       const token = await AsyncStorage.getItem("authToken");
-      
+
       if (!token) {
         Alert.alert("Session Expired", "Please login again.");
         router.replace("/login");
@@ -64,21 +61,73 @@ export default function EntryScreen() {
       }
 
       setAuthToken(token);
-      
-      // Check network status
-      const netInfo = await NetInfo.fetch();
-      
-      if (netInfo.isConnected) {
-        // Online: fetch fresh data
-        await fetchDebtors(token);
-      } else {
-        // Offline: load from cache
-        await loadFromCache();
-      }
+
+      // Initialize database
+      await dbService.init();
+
+      // Load from database
+      await loadFromDatabase();
     } catch (error) {
       console.error("Initialize error:", error);
-      // Try to load from cache as fallback
-      await loadFromCache();
+      Alert.alert("Error", "Failed to initialize. Please try again.");
+      setLoading(false);
+    }
+  };
+
+  const loadFromDatabase = async () => {
+    try {
+      setLoading(true);
+
+      console.log('[Entry] Initializing database...');
+      await dbService.init();
+
+      console.log('[Entry] Loading customers from database...');
+      const allCustomers = await dbService.getCustomers();
+
+      console.log(`[Entry] Found ${allCustomers.length} total customers`);
+
+      // Filter DEBTO customers
+      const filteredDebtors = allCustomers.filter((debtor) => debtor.super_code === "DEBTO");
+
+      console.log(`[Entry] Found ${filteredDebtors.length} DEBTO customers`);
+
+      if (filteredDebtors.length === 0) {
+        setLoading(false);
+        Alert.alert(
+          "No Customer Data",
+          "No customer data found in local database. Please go to Home screen and click 'Download Data' button to download customer data for offline use.",
+          [
+            { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
+            { text: "Close", style: "cancel", onPress: () => router.back() }
+          ]
+        );
+        return;
+      }
+
+      setDebtorsData(filteredDebtors);
+
+      // Extract unique areas
+      const uniqueAreas = [...new Set(filteredDebtors.map((debtor) => {
+        return debtor.area && debtor.area.trim() !== "" ? debtor.area : debtor.place;
+      }))].filter(Boolean).sort();
+
+      setAreaList(uniqueAreas);
+      setUsingCache(false);
+
+      console.log(`[Entry] ✅ Successfully loaded ${filteredDebtors.length} customers with ${uniqueAreas.length} unique areas`);
+    } catch (error) {
+      console.error('[Entry] Database load error:', error);
+      setLoading(false);
+      Alert.alert(
+        "Error",
+        `Failed to load customer data: ${error.message}. Please try again or download data from Home screen.`,
+        [
+          { text: "Retry", onPress: () => loadFromDatabase() },
+          { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") }
+        ]
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -86,24 +135,24 @@ export default function EntryScreen() {
     try {
       const cachedData = await AsyncStorage.getItem(CACHE_KEY);
       const cachedTimestamp = await AsyncStorage.getItem(CACHE_TIMESTAMP_KEY);
-      
+
       if (cachedData) {
         const parsedData = JSON.parse(cachedData);
         setDebtorsData(parsedData);
-        
+
         // Extract areas
         const uniqueAreas = [...new Set(parsedData.map((debtor) => {
           return debtor.area && debtor.area.trim() !== "" ? debtor.area : debtor.place;
         }))].filter(Boolean).sort();
         setAreaList(uniqueAreas);
-        
+
         setUsingCache(true);
-        
+
         // Check if cache is old
         if (cachedTimestamp) {
           const timestamp = parseInt(cachedTimestamp);
           const isExpired = Date.now() - timestamp > CACHE_EXPIRY;
-          
+
           if (isExpired) {
             Alert.alert(
               "Offline Mode",
@@ -130,7 +179,7 @@ export default function EntryScreen() {
   const fetchDebtors = async (token) => {
     try {
       setLoading(true);
-      
+
       const response = await fetch("https://tasksas.com/api/debtors/get-debtors/", {
         method: "GET",
         headers: {
@@ -166,7 +215,7 @@ export default function EntryScreen() {
       }
 
       const filteredDebtors = data.filter((debtor) => debtor.super_code === "DEBTO");
-      
+
       if (filteredDebtors.length === 0) {
         Alert.alert("No Data", "No debtors found with DEBTO super code");
       }
@@ -186,7 +235,7 @@ export default function EntryScreen() {
 
     } catch (error) {
       console.error("Fetch error:", error);
-      
+
       // Try to load from cache on error
       const cachedData = await AsyncStorage.getItem(CACHE_KEY);
       if (cachedData) {
@@ -270,7 +319,7 @@ export default function EntryScreen() {
       Alert.alert("Offline", "Cannot refresh while offline");
       return;
     }
-    
+
     if (authToken) {
       await fetchDebtors(authToken);
     }
@@ -292,7 +341,7 @@ export default function EntryScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: "#1a237e" }}>
       <StatusBar barStyle="light-content" backgroundColor="#1a237e" />
       <LinearGradient colors={["#1a237e", "#0d47a1"]} style={{ flex: 1 }}>
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={{ flex: 1 }}
         >
@@ -310,22 +359,22 @@ export default function EntryScreen() {
                 </View>
               )}
             </View>
-            <TouchableOpacity 
-              onPress={handleRefresh} 
+            <TouchableOpacity
+              onPress={handleRefresh}
               style={styles.backButton}
               activeOpacity={0.7}
               disabled={!isOnline}
             >
-              <Ionicons 
-                name="refresh" 
-                size={24} 
-                color={isOnline ? "#fff" : "#999"} 
+              <Ionicons
+                name="refresh"
+                size={24}
+                color={isOnline ? "#fff" : "#999"}
               />
             </TouchableOpacity>
           </View>
 
-          <ScrollView 
-            style={styles.container} 
+          <ScrollView
+            style={styles.container}
             contentContainerStyle={{ paddingBottom: 100 }}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
@@ -417,8 +466,8 @@ export default function EntryScreen() {
               </View>
             )}
 
-            <TouchableOpacity 
-              style={styles.proceedButton} 
+            <TouchableOpacity
+              style={styles.proceedButton}
               onPress={validateAndProceed}
               activeOpacity={0.8}
             >
@@ -432,14 +481,14 @@ export default function EntryScreen() {
   );
 }
 
-const SearchableDropdown = ({ 
-  label, 
-  placeholder, 
-  data, 
-  selectedValue, 
-  onSelect, 
-  open, 
-  setOpen, 
+const SearchableDropdown = ({
+  label,
+  placeholder,
+  data,
+  selectedValue,
+  onSelect,
+  open,
+  setOpen,
   disabled,
   isCustomerDropdown = false,
   onClear,
@@ -508,18 +557,18 @@ const SearchableDropdown = ({
     <View style={styles.dropdownContainer}>
       <Text style={styles.label}>{label}</Text>
 
-      <TouchableOpacity 
-        disabled={disabled} 
-        onPress={setOpen} 
+      <TouchableOpacity
+        disabled={disabled}
+        onPress={setOpen}
         style={[styles.dropdownBox, disabled && styles.disabledBox]}
         activeOpacity={0.7}
       >
         <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
-          <Text 
+          <Text
             style={[
               styles.dropdownBoxText,
               { color: selectedValue ? "#fff" : "#B0BEC5" }
-            ]} 
+            ]}
             numberOfLines={1}
           >
             {selectedValue || placeholder}
@@ -527,7 +576,7 @@ const SearchableDropdown = ({
         </View>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           {selectedValue && onClear && (
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={(e) => {
                 e.stopPropagation();
                 onClear();
@@ -538,10 +587,10 @@ const SearchableDropdown = ({
               <Ionicons name="close-circle" size={20} color="#fff" />
             </TouchableOpacity>
           )}
-          <Ionicons 
-            name={open ? "chevron-up" : "chevron-down"} 
-            size={20} 
-            color="#fff" 
+          <Ionicons
+            name={open ? "chevron-up" : "chevron-down"}
+            size={20}
+            color="#fff"
           />
         </View>
       </TouchableOpacity>
@@ -562,7 +611,7 @@ const SearchableDropdown = ({
               returnKeyType="search"
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setSearchQuery("")}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
@@ -578,7 +627,7 @@ const SearchableDropdown = ({
             </View>
           )}
 
-          <ScrollView 
+          <ScrollView
             style={styles.dropdownScrollView}
             nestedScrollEnabled={true}
             keyboardShouldPersistTaps="handled"
@@ -591,9 +640,9 @@ const SearchableDropdown = ({
               </View>
             ) : (
               filteredData.map((item, i) => (
-                <TouchableOpacity 
-                  key={i} 
-                  style={styles.dropdownItem} 
+                <TouchableOpacity
+                  key={i}
+                  style={styles.dropdownItem}
                   onPress={() => onSelect(isCustomerDropdown ? item : item)}
                   activeOpacity={0.7}
                 >
@@ -640,15 +689,15 @@ const SearchableDropdown = ({
   );
 };
 
-const Dropdown = ({ 
-  label, 
-  placeholder, 
-  data, 
-  selectedValue, 
-  onSelect, 
-  open, 
-  setOpen, 
-  disabled 
+const Dropdown = ({
+  label,
+  placeholder,
+  data,
+  selectedValue,
+  onSelect,
+  open,
+  setOpen,
+  disabled
 }) => {
   const animatedHeight = useRef(new Animated.Value(0)).current;
 
@@ -670,13 +719,13 @@ const Dropdown = ({
     <View style={styles.dropdownContainer}>
       <Text style={styles.label}>{label}</Text>
 
-      <TouchableOpacity 
-        disabled={disabled} 
-        onPress={setOpen} 
+      <TouchableOpacity
+        disabled={disabled}
+        onPress={setOpen}
         style={[styles.dropdownBox, disabled && styles.disabledBox]}
         activeOpacity={0.7}
       >
-        <Text 
+        <Text
           style={[
             styles.dropdownBoxText,
             { color: selectedValue ? "#fff" : "#B0BEC5" }
@@ -685,24 +734,24 @@ const Dropdown = ({
         >
           {selectedValue || placeholder}
         </Text>
-        <Ionicons 
-          name={open ? "chevron-up" : "chevron-down"} 
-          size={20} 
-          color="#fff" 
+        <Ionicons
+          name={open ? "chevron-up" : "chevron-down"}
+          size={20}
+          color="#fff"
         />
       </TouchableOpacity>
 
       {open && (
         <Animated.View style={[styles.dropdownList, { maxHeight }]}>
-          <ScrollView 
+          <ScrollView
             nestedScrollEnabled={true}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={true}
           >
             {data.map((item, i) => (
-              <TouchableOpacity 
-                key={i} 
-                style={styles.dropdownItem} 
+              <TouchableOpacity
+                key={i}
+                style={styles.dropdownItem}
                 onPress={() => onSelect(item)}
                 activeOpacity={0.7}
               >
@@ -722,8 +771,8 @@ const Dropdown = ({
 };
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
+  container: {
+    flex: 1,
     paddingHorizontal: 20,
     paddingTop: 10,
   },
@@ -743,10 +792,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  header: { 
-    fontSize: 20, 
-    fontWeight: "700", 
-    color: "#fff", 
+  header: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#fff",
     textAlign: "center",
   },
   offlineBadge: {
@@ -802,21 +851,21 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     zIndex: 1,
   },
-  label: { 
-    fontSize: 15, 
-    fontWeight: "600", 
-    color: "#E3F2FD", 
+  label: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#E3F2FD",
     marginBottom: 8,
   },
-  dropdownBox: { 
-    backgroundColor: "rgba(255,255,255,0.15)", 
+  dropdownBox: {
+    backgroundColor: "rgba(255,255,255,0.15)",
     paddingVertical: 14,
-    paddingHorizontal: 16, 
-    borderRadius: 14, 
-    borderWidth: 1.5, 
-    borderColor: "rgba(255,255,255,0.25)", 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.25)",
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
     minHeight: 54,
     ...Platform.select({
@@ -838,10 +887,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "500",
   },
-  dropdownList: { 
-    backgroundColor: "#fff", 
-    borderRadius: 14, 
-    marginTop: 10, 
+  dropdownList: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    marginTop: 10,
     overflow: "hidden",
     ...Platform.select({
       ios: {
@@ -894,10 +943,10 @@ const styles = StyleSheet.create({
     marginLeft: 6,
     fontWeight: "600",
   },
-  dropdownItem: { 
+  dropdownItem: {
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderBottomWidth: 1, 
+    borderBottomWidth: 1,
     borderBottomColor: "#f0f0f0",
   },
   dropdownItemContent: {
@@ -919,8 +968,8 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
-  dropdownText: { 
-    fontSize: 15, 
+  dropdownText: {
+    fontSize: 15,
     color: "#000",
     fontWeight: "600",
   },
@@ -970,11 +1019,11 @@ const styles = StyleSheet.create({
     color: "#fff",
     marginLeft: 10,
   },
-  proceedButton: { 
+  proceedButton: {
     marginTop: 10,
     marginBottom: 20,
-    backgroundColor: "#4CAF50", 
-    paddingVertical: 16, 
+    backgroundColor: "#4CAF50",
+    paddingVertical: 16,
     borderRadius: 14,
     flexDirection: "row",
     justifyContent: "center",
@@ -992,9 +1041,9 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  proceedText: { 
-    color: "#fff", 
-    fontWeight: "700", 
+  proceedText: {
+    color: "#fff",
+    fontWeight: "700",
     fontSize: 18,
   },
 });

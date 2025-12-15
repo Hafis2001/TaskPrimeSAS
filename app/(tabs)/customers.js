@@ -1,22 +1,21 @@
-// DebtorsScreen.js
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState, useCallback } from "react";
+// DebtorsScreen.js - Updated to use main database service
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   BackHandler,
   FlatList,
+  StyleSheet,
   Text,
   TextInput,
-  View,
   TouchableOpacity,
-  StyleSheet,
+  View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import Animated, { FadeInUp } from "react-native-reanimated";
-import { useRouter, useFocusEffect } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { initDB, getCustomers, getCustomersSummary } from "../components/db"; // adjust path if needed
+import dbService from "../../src/services/database";
 
 export default function DebtorsScreen() {
   const [data, setData] = useState([]);
@@ -42,9 +41,28 @@ export default function DebtorsScreen() {
   const loadLocalCustomers = async () => {
     try {
       setLoading(true);
-      await initDB();
-      const rows = await getCustomers();
-      
+
+      console.log('[Customers] Initializing database...');
+      await dbService.init();
+
+      console.log('[Customers] Loading customers...');
+      const rows = await dbService.getCustomers();
+
+      console.log(`[Customers] Found ${rows.length} customers`);
+
+      if (rows.length === 0) {
+        setLoading(false);
+        Alert.alert(
+          "No Customer Data",
+          "No customer data found. Please download data from Home screen first.",
+          [
+            { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
+            { text: "Cancel", style: "cancel" }
+          ]
+        );
+        return;
+      }
+
       // Filter out customers with zero balance and sort alphabetically
       const filteredRows = rows
         .filter((item) => (item.balance ?? 0) !== 0)
@@ -53,16 +71,26 @@ export default function DebtorsScreen() {
           const nameB = (b.name ?? "").toLowerCase();
           return nameA.localeCompare(nameB);
         });
-      
+
       setData(filteredRows);
       setFiltered(filteredRows);
 
-      const summary = await getCustomersSummary();
-      setTotalStores(summary.totalStores ?? filteredRows.length);
-      setTotalBalance(Math.round(summary.totalBalance ?? 0));
+      // Calculate totals
+      const totalBal = rows.reduce((sum, item) => sum + (item.balance || 0), 0);
+      setTotalStores(filteredRows.length);
+      setTotalBalance(Math.round(totalBal));
+
+      console.log(`[Customers] ✅ Loaded ${filteredRows.length} customers with non-zero balance`);
     } catch (err) {
-      console.warn("loadLocalCustomers error", err);
-      Alert.alert("Error", "Unable to load local customers.");
+      console.error("[Customers] Error loading customers:", err);
+      Alert.alert(
+        "Error",
+        `Unable to load customers: ${err.message}. Please download data from Home screen.`,
+        [
+          { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
+          { text: "Retry", onPress: () => loadLocalCustomers() }
+        ]
+      );
     } finally {
       setLoading(false);
     }
@@ -102,13 +130,14 @@ export default function DebtorsScreen() {
     return (
       <View style={styles.loadingScreen}>
         <ActivityIndicator size="large" color="#0d3b6c" />
+        <Text style={{ marginTop: 10, color: "#0d3b6c" }}>Loading customers...</Text>
       </View>
     );
   }
 
   const renderCard = ({ item, index }) => {
     const balance = item.balance ?? 0;
-    
+
     return (
       <Animated.View entering={FadeInUp.delay(index * 40)}>
         <TouchableOpacity

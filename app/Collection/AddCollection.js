@@ -1,43 +1,42 @@
 // app/add-collection.js
-import React, { useState, useEffect } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import NetInfo from "@react-native-community/netinfo";
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  ScrollView,
-  TextInput,
   ActivityIndicator,
   Alert,
-  Platform,
   FlatList,
   Modal,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Animated, { FadeInUp } from "react-native-reanimated";
-import NetInfo from "@react-native-community/netinfo";
-import { getCustomers } from "../components/db"; // adjust path if needed
+import dbService from "../../src/services/database";
 
 const API_CUSTOMERS = "https://tasksas.com/api/debtors/get-debtors/";
 const API_SAVE_COLLECTION = "https://tasksas.com/api/collections/save/"; // Add your save collection API
 
 export default function AddCollectionScreen() {
   const router = useRouter();
-  
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [isOnline, setIsOnline] = useState(true);
-  
+
   // Customer selection modal
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredCustomers, setFilteredCustomers] = useState([]);
-  
+
   // Form fields
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [selectedCustomerName, setSelectedCustomerName] = useState("");
@@ -49,7 +48,7 @@ export default function AddCollectionScreen() {
   useEffect(() => {
     checkNetworkStatus();
     fetchCustomers();
-    
+
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(state.isConnected);
     });
@@ -79,12 +78,12 @@ export default function AddCollectionScreen() {
       setLoading(true);
 
       const localCustomers = await loadCustomersFromDB();
-      
+
       if (localCustomers.length > 0) {
         setCustomers(localCustomers);
         setFilteredCustomers(localCustomers);
         setLoading(false);
-        
+
         if (isOnline) {
           fetchCustomersFromAPI().catch(err => {
             console.log("Background API fetch failed:", err);
@@ -109,7 +108,7 @@ export default function AddCollectionScreen() {
   const fetchCustomersFromAPI = async () => {
     try {
       const token = await AsyncStorage.getItem("authToken");
-      
+
       if (!token) {
         Alert.alert("Session Expired", "Please login again.");
         router.replace("/LoginScreen");
@@ -130,7 +129,7 @@ export default function AddCollectionScreen() {
       }
 
       const data = await response.json();
-      
+
       let customersArray = [];
       if (Array.isArray(data)) {
         customersArray = data;
@@ -159,16 +158,45 @@ export default function AddCollectionScreen() {
 
   const loadCustomersFromDB = async () => {
     try {
-      const allCustomers = await getCustomers();
-      
-      const filteredCustomers = allCustomers.filter(customer => {
-        return true;
+      console.log('[AddCollection] Initializing database...');
+      await dbService.init();
+
+      console.log('[AddCollection] Loading customers from database...');
+      const allCustomers = await dbService.getCustomers();
+
+      console.log(`[AddCollection] Found ${allCustomers.length} total customers`);
+
+      if (allCustomers.length === 0) {
+        setLoading(false); // Assuming setLoadingCustomers is meant to be setLoading
+        Alert.alert(
+          "No Customer Data",
+          "No customer data available. Please download customer data from Home screen first.",
+          [
+            { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
+            { text: "Cancel", style: "cancel" }
+          ]
+        );
+        return [];
+      }
+
+      const sortedCustomers = allCustomers.sort((a, b) => {
+        const nameA = (a.name || "").toLowerCase();
+        const nameB = (b.name || "").toLowerCase();
+        return nameA.localeCompare(nameB);
       });
 
-      console.log(`Loaded ${filteredCustomers.length} customers from local DB`);
-      return filteredCustomers;
+      console.log(`[AddCollection] ✅ Loaded ${sortedCustomers.length} customers from local database`);
+      return sortedCustomers;
     } catch (error) {
-      console.error("Error loading customers from DB:", error);
+      console.error("[AddCollection] Error loading customers from database:", error);
+      Alert.alert(
+        "Error",
+        `Failed to load customers: ${error.message}. Please download data from Home screen.`,
+        [
+          { text: "Retry", onPress: () => fetchCustomers() },
+          { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") }
+        ]
+      );
       return [];
     }
   };
@@ -223,7 +251,7 @@ export default function AddCollectionScreen() {
       resetForm();
     } catch (error) {
       console.error("Save error:", error);
-      
+
       if (isOnline) {
         Alert.alert(
           "Network Error",
@@ -263,69 +291,44 @@ export default function AddCollectionScreen() {
 
   const saveToAPI = async (collectionData) => {
     const token = await AsyncStorage.getItem("authToken");
-    
-    // UNCOMMENT AND UPDATE THIS WHEN YOUR API IS READY
-    /*
-    const response = await fetch(API_SAVE_COLLECTION, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(collectionData),
-    });
 
-    if (!response.ok) {
-      throw new Error("Failed to save collection");
-    }
-
-    const result = await response.json();
-    */
-
-    // Simulate API call for now
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    
-    // FIXED: Save as NOT synced (false) so it appears in Upload.js for upload
+    // Save to SQLite database (offline-first approach)
     await saveToLocalStorage(collectionData, false); // false = needs to be uploaded
-    
+
     Alert.alert(
-      "Success", 
-      "Collection saved successfully!", 
+      "Collection Saved!",
+      "Your collection has been saved offline. What would you like to do next?",
       [
-        { 
-          text: "Add Another", 
+        {
+          text: "Add Another",
           onPress: () => {
             // Stay on page, form is already reset
           }
         },
-        { 
-          text: "Done", 
+        {
+          text: "Done",
           onPress: () => router.push("/Collection/Collection")
-        }
+        },
+        // {
+        //   text: "Upload Now",
+        //   onPress: () => router.push("/Collection/Upload")
+        // }
       ]
     );
   };
 
   const saveToLocalStorage = async (collectionData, isSynced = false) => {
     try {
-      const existingData = await AsyncStorage.getItem("offline_collections");
-      const collections = existingData ? JSON.parse(existingData) : [];
-      
-      const newCollection = {
+      // Save to SQLite database
+      await dbService.init();
+      const localId = await dbService.saveOfflineCollection({
         ...collectionData,
-        id: Date.now().toString(),
-        synced: isSynced,
-        created_at: new Date().toISOString(),
-        synced_at: isSynced ? new Date().toISOString() : null,
-      };
-      
-      collections.push(newCollection);
-      
-      await AsyncStorage.setItem("offline_collections", JSON.stringify(collections));
-      
-      console.log("Collection saved to local storage");
+        synced: isSynced ? 1 : 0
+      });
+
+      console.log("Collection saved to database:", localId);
     } catch (error) {
-      console.error("Error saving to local storage:", error);
+      console.error("Error saving to database:", error);
       throw error;
     }
   };

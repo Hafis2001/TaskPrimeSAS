@@ -1,6 +1,7 @@
 // app/Order/OrderDetails.js
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -20,6 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import dbService from "../../src/services/database";
 
 const { width, height } = Dimensions.get("window");
 
@@ -39,7 +41,8 @@ export default function OrderDetails() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  
+  const [isOnline, setIsOnline] = useState(true);
+
   const sheetAnim = useRef(new Animated.Value(height)).current;
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -48,21 +51,21 @@ export default function OrderDetails() {
     try {
       const authToken = await AsyncStorage.getItem('authToken');
       const token = authToken;
-      
+
       if (!token) {
         Alert.alert(
-          "Login Required", 
+          "Login Required",
           "Please login to access products",
           [
-            { 
-              text: "Go to Login", 
-              onPress: () => router.replace('/LoginScreen') 
+            {
+              text: "Go to Login",
+              onPress: () => router.replace('/LoginScreen')
             }
           ]
         );
         return null;
       }
-      
+
       return token;
     } catch (error) {
       console.error('Error getting token:', error);
@@ -94,31 +97,31 @@ export default function OrderDetails() {
       const productName = productData.name || productData.productname || productData.PRODUCTNAME || 'Unknown Product';
       const brand = productData.brand || productData.BRAND || '';
       const unit = productData.unit || productData.packing || productData.PACKING || '';
-      
+
       // Get pricing and stock
       let price = 0;
       let mrp = 0;
       let stock = 0;
       let batchBarcode = productCode;
-      
+
       // Try different price fields
       if (productData['NET RATE'] !== undefined) price = parseFloat(productData['NET RATE']);
       else if (productData.netrate !== undefined) price = parseFloat(productData.netrate);
       else if (productData.price !== undefined) price = parseFloat(productData.price);
       else if (productData.PRICE !== undefined) price = parseFloat(productData.PRICE);
-      
+
       // Try MRP fields
       if (productData.MRP !== undefined) mrp = parseFloat(productData.MRP);
       else if (productData.mrp !== undefined) mrp = parseFloat(productData.mrp);
-      
+
       // Try stock fields
       if (productData.stock !== undefined) stock = parseFloat(productData.stock);
       else if (productData.STOCK !== undefined) stock = parseFloat(productData.STOCK);
-      
+
       // Get barcode
       if (productData.barcode) batchBarcode = productData.barcode;
       else if (productData.BARCODE) batchBarcode = productData.BARCODE;
-      
+
       // Process photos
       let photos = [];
       if (Array.isArray(productData.photos)) {
@@ -126,37 +129,37 @@ export default function OrderDetails() {
       } else if (productData.photo) {
         photos = [{ url: productData.photo }];
       }
-      
+
       // Fix photo URLs
       const fixedPhotos = photos.map(photo => {
         let url = photo.url || photo;
-        
+
         // Ensure url is a string before processing
         if (!url || typeof url !== 'string') {
           return null;
         }
-        
+
         url = url.replace(/\\/g, '/');
         url = url.trim();
-        
+
         if (url === '') {
           return null;
         }
-        
+
         if (url.startsWith('/')) {
           url = `https://tasksas.com${url}`;
         } else if (!url.startsWith('http')) {
           url = `https://tasksas.com/${url}`;
         }
-        
+
         return {
           ...photo,
           url: url
         };
       }).filter(photo => photo !== null && photo.url);
-      
+
       const productId = productData.id || productData.ID || `${productCode}_${Date.now()}`;
-      
+
       return {
         id: productId,
         code: productCode,
@@ -172,225 +175,144 @@ export default function OrderDetails() {
         productCategory: productData.product || productData.PRODUCT || '',
         createdAt: productData.createdAt || new Date().toISOString(),
       };
-      
+
     } catch (error) {
       console.error('Error extracting product data:', error);
       return null;
     }
   }
 
-  // Fetch all products from API - SIMPLIFIED VERSION
+  // Load all products from SQLite database (OFFLINE-FIRST)
   async function fetchAllProducts(isRefresh = false) {
     if (!isRefresh) {
       setLoading(true);
     }
-    
+
     try {
-      const token = await getToken();
-      const clientId = await getClientId();
-      
-      if (!token) {
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
+      console.log('[OrderDetails] Initializing database...');
+      await dbService.init();
 
-      // Try multiple endpoints
-      const endpoints = [
-        `https://tasksas.com/api/product/get-product-details`,
-        `https://tasksas.com/api/products`,
-        `https://tasksas.com/api/product`,
-        `https://tasksas.com/api/stock`,
-        `https://tasksas.com/api/inventory`,
-      ];
-      
-      let productsData = [];
-      
-      for (let endpoint of endpoints) {
-        try {
-          console.log(`Trying: ${endpoint}`);
-          const response = await fetch(endpoint, {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-            },
-          });
+      console.log('[OrderDetails] Loading products from database...');
+      const productsFromDB = await dbService.getProducts();
 
-          if (response.ok) {
-            const data = await response.json();
-            
-            // Extract products from different response formats
-            if (Array.isArray(data)) {
-              productsData = data;
-              break;
-            } else if (data && Array.isArray(data.data)) {
-              productsData = data.data;
-              break;
-            } else if (data && Array.isArray(data.products)) {
-              productsData = data.products;
-              break;
-            } else if (data && Array.isArray(data.stock)) {
-              productsData = data.stock;
-              break;
-            } else if (data && Array.isArray(data.inventory)) {
-              productsData = data.inventory;
-              break;
-            }
-          }
-        } catch (error) {
-          console.log(`Endpoint ${endpoint} failed:`, error.message);
-        }
-      }
-      
-      if (productsData.length === 0) {
-        // Try to load from cache
-        const cachedProducts = await AsyncStorage.getItem('cached_products');
-        if (cachedProducts) {
-          const parsedProducts = JSON.parse(cachedProducts);
-          setAllProducts(parsedProducts);
-          setFilteredProducts(parsedProducts);
-          
-          Alert.alert(
-            "Using Cached Data", 
-            `Showing ${parsedProducts.length} cached products.`
-          );
-          return;
-        }
-        
+      console.log(`[OrderDetails] Found ${productsFromDB.length} products in database`);
+
+      if (productsFromDB.length === 0) {
         Alert.alert(
-          "No Products", 
-          "Could not fetch products. Use scanner to add products individually."
+          "No Products Available",
+          "No product data found. Please download products from Home screen first.",
+          [
+            { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
+            { text: "Cancel", style: "cancel" }
+          ]
         );
-        
         setAllProducts([]);
         setFilteredProducts([]);
         return;
       }
-      
-      // Extract product data
-      const extractedProducts = productsData
-        .map(productData => extractProductData(productData))
-        .filter(product => product !== null);
-      
-      // Set products
-      setAllProducts(extractedProducts);
-      setFilteredProducts(extractedProducts);
-      
-      // Cache products
-      await AsyncStorage.setItem('cached_products', JSON.stringify(extractedProducts));
-      
+
+      // Map database products to expected format
+      const formattedProducts = productsFromDB.map(product => ({
+        id: product.id || product.code,
+        code: product.code,
+        name: product.name,
+        barcode: product.barcode || product.code,
+        price: product.price || 0,
+        mrp: product.mrp || 0,
+        stock: product.stock || 0,
+        brand: product.brand || '',
+        unit: product.unit || '',
+        photos: [],
+        taxcode: product.taxcode || '',
+        productCategory: product.category || '',
+        createdAt: product.created_at || new Date().toISOString(),
+      }));
+
+      setAllProducts(formattedProducts);
+      setFilteredProducts(formattedProducts);
+
+      console.log(`[OrderDetails] ✅ Loaded ${formattedProducts.length} products from database`);
+
     } catch (error) {
-      console.error('Error fetching products:', error);
-      
-      // Try to load from cache
-      try {
-        const cachedProducts = await AsyncStorage.getItem('cached_products');
-        if (cachedProducts) {
-          const parsedProducts = JSON.parse(cachedProducts);
-          setAllProducts(parsedProducts);
-          setFilteredProducts(parsedProducts);
-          return;
-        }
-      } catch (cacheError) {
-        console.error('Error loading cached products:', cacheError);
-      }
-      
-      Alert.alert("Error", "Unable to fetch products. Please check connection.");
-      
+      console.error('[OrderDetails] Error loading products:', error);
+      Alert.alert(
+        "Error",
+        `Failed to load products: ${error.message}. Please try downloading data from Home screen.`,
+        [
+          { text: "Retry", onPress: () => fetchAllProducts(isRefresh) },
+          { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") }
+        ]
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }
 
-  // Fetch single product by barcode
+  // Search product by barcode from database (OFFLINE-FIRST)
   async function fetchProductByBarcode(barcode) {
     const cleanBarcode = barcode.trim();
-    
+
     if (!cleanBarcode) {
       Alert.alert("Error", "Please enter a valid barcode");
       return null;
     }
-    
+
     setSearchLoading(true);
     try {
-      const token = await getToken();
-      
-      if (!token) {
-        return null;
-      }
+      console.log('[OrderDetails] Searching for barcode:', cleanBarcode);
+      await dbService.init();
 
-      const url = `https://tasksas.com/api/product/get-product-details?code=${encodeURIComponent(cleanBarcode)}`;
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      // Search in database
+      const product = await dbService.getProductByBarcode(cleanBarcode);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Handle response formats
-      let productData = data;
-      if (data && data.data) {
-        productData = data.data;
-      }
-      
-      if (Array.isArray(productData) && productData.length > 0) {
-        productData = productData[0];
-      }
-      
-      if (!productData) {
-        Alert.alert("Not Found", `No product found for barcode: ${cleanBarcode}`);
-        return null;
-      }
-      
-      const product = extractProductData(productData);
-      
       if (!product) {
-        Alert.alert("Error", "Could not process product data");
+        // Try searching in all products by code or name
+        const searchResults = await dbService.searchProducts(cleanBarcode);
+
+        if (searchResults.length > 0) {
+          const foundProduct = searchResults[0];
+          return {
+            id: foundProduct.id || foundProduct.code,
+            code: foundProduct.code,
+            name: foundProduct.name,
+            barcode: foundProduct.barcode || foundProduct.code,
+            price: foundProduct.price || 0,
+            mrp: foundProduct.mrp || 0,
+            stock: foundProduct.stock || 0,
+            brand: foundProduct.brand || '',
+            unit: foundProduct.unit || '',
+            photos: [],
+            taxcode: foundProduct.taxcode || '',
+            productCategory: foundProduct.category || '',
+          };
+        }
+
+        Alert.alert("Not Found", `Product with barcode "${cleanBarcode}" not found in database.`);
         return null;
       }
-      
-      // Add to products
-      setAllProducts(prev => {
-        const exists = prev.find(p => p.code === product.code);
-        if (exists) return prev;
-        return [product, ...prev];
-      });
-      
-      setFilteredProducts(prev => {
-        const exists = prev.find(p => p.code === product.code);
-        if (exists) return prev;
-        return [product, ...prev];
-      });
-      
-      // Update cache
-      try {
-        const cachedProducts = await AsyncStorage.getItem('cached_products');
-        const existingProducts = cachedProducts ? JSON.parse(cachedProducts) : [];
-        const productExists = existingProducts.find(p => p.code === product.code);
-        if (!productExists) {
-          const updatedProducts = [product, ...existingProducts];
-          await AsyncStorage.setItem('cached_products', JSON.stringify(updatedProducts));
-        }
-      } catch (cacheError) {
-        console.error('Error caching product:', cacheError);
-      }
-      
-      return product;
-      
+
+      // Format product from database
+      const formattedProduct = {
+        id: product.id || product.code,
+        code: product.code,
+        name: product.name,
+        barcode: product.barcode || product.code,
+        price: product.price || 0,
+        mrp: product.mrp || 0,
+        stock: product.stock || 0,
+        brand: product.brand || '',
+        unit: product.unit || '',
+        photos: [],
+        taxcode: product.taxcode || '',
+        productCategory: product.category || '',
+      };
+
+      return formattedProduct;
+
     } catch (error) {
-      console.error('Error fetching product:', error);
-      Alert.alert("Error", `Failed to fetch product: ${error.message}`);
+      console.error('[OrderDetails] Error searching product:', error);
+      Alert.alert("Error", `Failed to search product: ${error.message}`);
       return null;
     } finally {
       setSearchLoading(false);
@@ -403,9 +325,17 @@ export default function OrderDetails() {
     await fetchAllProducts(true);
   };
 
-  // Initial load
+  // Initial load and network monitoring
   useEffect(() => {
+    // Load products
     fetchAllProducts();
+
+    // Monitor network status
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Handle barcode scanning
@@ -413,12 +343,12 @@ export default function OrderDetails() {
     if (scanned) {
       const code = String(scanned);
       handleScannedBarcode(code);
-      router.setParams({ 
-        area, 
-        customer, 
-        type, 
+      router.setParams({
+        area,
+        customer,
+        type,
         payment,
-        scanned: undefined 
+        scanned: undefined
       });
     }
   }, [scanned]);
@@ -426,42 +356,42 @@ export default function OrderDetails() {
   // Handle search
   const handleSearch = () => {
     const searchQuery = query.trim().toLowerCase();
-    
+
     if (!searchQuery) {
       setFilteredProducts(allProducts);
       return;
     }
-    
-    const results = allProducts.filter((p) => 
-      p.name.toLowerCase().includes(searchQuery) || 
+
+    const results = allProducts.filter((p) =>
+      p.name.toLowerCase().includes(searchQuery) ||
       p.code?.toLowerCase().includes(searchQuery) ||
       p.barcode?.toLowerCase().includes(searchQuery) ||
       (p.brand && p.brand.toLowerCase().includes(searchQuery))
     );
-    
+
     setFilteredProducts(results);
-    
+
     if (results.length === 0) {
       Alert.alert("No Results", `No products found for "${query}".`);
     }
   };
 
   async function handleScannedBarcode(code) {
-    const existingProduct = allProducts.find((p) => 
-      p.barcode === code || 
+    const existingProduct = allProducts.find((p) =>
+      p.barcode === code ||
       p.code === code
     );
-    
+
     if (existingProduct) {
       addToCart(existingProduct);
       Alert.alert("Success", `${existingProduct.name} added to cart`);
       return;
     }
-    
+
     setLoading(true);
     const fetchedProduct = await fetchProductByBarcode(code);
     setLoading(false);
-    
+
     if (fetchedProduct) {
       addToCart(fetchedProduct);
       Alert.alert("Success", `${fetchedProduct.name} added to cart`);
@@ -540,16 +470,16 @@ export default function OrderDetails() {
 
       const existingOrders = await AsyncStorage.getItem('placed_orders');
       const orders = existingOrders ? JSON.parse(existingOrders) : [];
-      
+
       orders.push(order);
-      
+
       await AsyncStorage.setItem('placed_orders', JSON.stringify(orders));
 
       setCart([]);
       toggleSheet(false);
-      
+
       Alert.alert(
-        "Order Placed Successfully", 
+        "Order Placed Successfully",
         `Order placed for ${customer}\nTotal: ₹ ${order.total.toFixed(2)}`,
         [
           {
@@ -571,7 +501,7 @@ export default function OrderDetails() {
   // Render empty state
   const renderEmptyState = () => {
     if (loading || searchLoading) return null;
-    
+
     return (
       <View style={styles.emptyState}>
         <Ionicons name="cube-outline" size={80} color="rgba(255,255,255,0.7)" />
@@ -579,23 +509,23 @@ export default function OrderDetails() {
           {allProducts.length === 0 ? "No Products Available" : "No Search Results"}
         </Text>
         <Text style={styles.emptyStateText}>
-          {allProducts.length === 0 
+          {allProducts.length === 0
             ? "Use the barcode scanner to add products"
             : `No products match "${query}". Try a different search.`}
         </Text>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.scanActionBtn}
-          onPress={() => router.push({ 
-            pathname: "/Order/Scanner", 
-            params: { area, customer, type, payment } 
+          onPress={() => router.push({
+            pathname: "/Order/Scanner",
+            params: { area, customer, type, payment }
           })}
         >
           <Ionicons name="qr-code" size={20} color="#fff" />
           <Text style={styles.scanActionText}>Scan Barcode</Text>
         </TouchableOpacity>
-        
+
         {allProducts.length === 0 && (
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.scanActionBtn, { backgroundColor: '#28a745', marginTop: 10 }]}
             onPress={onRefresh}
           >
@@ -640,7 +570,7 @@ export default function OrderDetails() {
             <Text style={styles.smallLabel}>Customer</Text>
             <Text style={styles.customerName}>{customer || "Unknown Customer"}</Text>
             <Text style={styles.muted}>
-              {area && `Area: ${area}`} 
+              {area && `Area: ${area}`}
               {type && ` • Type: ${type}`}
               {payment && ` • Payment: ${payment}`}
             </Text>
@@ -670,11 +600,11 @@ export default function OrderDetails() {
             )}
           </View>
 
-          <TouchableOpacity 
-            style={styles.scanBtn} 
-            onPress={() => router.push({ 
-              pathname: "/Order/Scanner", 
-              params: { area, customer, type, payment } 
+          <TouchableOpacity
+            style={styles.scanBtn}
+            onPress={() => router.push({
+              pathname: "/Order/Scanner",
+              params: { area, customer, type, payment }
             })}
           >
             <Ionicons name="qr-code" size={20} color="#1a73e8" />
@@ -700,7 +630,7 @@ export default function OrderDetails() {
         {!loading && allProducts.length > 0 && (
           <View style={styles.productCount}>
             <Text style={styles.productCountText}>
-              {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} 
+              {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'}
               {query ? ` matching "${query}"` : ' available'}
             </Text>
           </View>
@@ -731,13 +661,13 @@ export default function OrderDetails() {
             return (
               <View style={styles.productCard}>
                 {/* Product Image */}
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.productLeft}
                   onPress={() => openImageModal(item.photos, 0)}
                 >
                   {item.photos && item.photos.length > 0 ? (
-                    <Image 
-                      source={{ uri: item.photos[0].url }} 
+                    <Image
+                      source={{ uri: item.photos[0].url }}
                       style={styles.thumb}
                       resizeMode="cover"
                     />
@@ -758,30 +688,30 @@ export default function OrderDetails() {
                   <Text style={styles.productName} numberOfLines={2}>
                     {item.name}
                   </Text>
-                  
+
                   {item.brand && (
                     <Text style={styles.brand}>{item.brand}</Text>
                   )}
-                  
+
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
                     <Text style={styles.barcode}>Code: {item.code || item.barcode || 'N/A'}</Text>
                     {item.unit && (
                       <Text style={[styles.barcode, { marginLeft: 8 }]}>Unit: {item.unit}</Text>
                     )}
                   </View>
-                  
+
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
                     <Text style={styles.price}>₹ {item.price > 0 ? item.price.toFixed(2) : '0.00'}</Text>
                     {item.mrp > item.price && (
                       <Text style={styles.mrpText}>MRP: ₹ {item.mrp.toFixed(2)}</Text>
                     )}
                   </View>
-                  
+
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                     <Text style={[
-                      styles.stock, 
-                      item.stock <= 0 ? { color: "#ff4444" } : 
-                      item.stock < 10 ? { color: "#ff9800" } : { color: "#4CAF50" }
+                      styles.stock,
+                      item.stock <= 0 ? { color: "#ff4444" } :
+                        item.stock < 10 ? { color: "#ff9800" } : { color: "#4CAF50" }
                     ]}>
                       Stock: {item.stock > 0 ? item.stock.toFixed(2) : 'Out of stock'}
                     </Text>
@@ -793,14 +723,14 @@ export default function OrderDetails() {
                   {currentQty > 0 ? (
                     <View style={{ alignItems: "center" }}>
                       <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
-                        <TouchableOpacity 
-                          style={[styles.qtyCircleSmall, currentQty <= 0 && { opacity: 0.5 }]} 
+                        <TouchableOpacity
+                          style={[styles.qtyCircleSmall, currentQty <= 0 && { opacity: 0.5 }]}
                           onPress={() => changeQty(item.id, currentQty - 1)}
                           disabled={currentQty <= 0}
                         >
                           <Text style={{ fontSize: 16, fontWeight: "700" }}>-</Text>
                         </TouchableOpacity>
-                        
+
                         <TextInput
                           style={styles.qtyTextInputMain}
                           value={displayValue}
@@ -822,12 +752,12 @@ export default function OrderDetails() {
                           }}
                           keyboardType="numeric"
                         />
-                        
-                        <TouchableOpacity 
+
+                        <TouchableOpacity
                           style={[
-                            styles.qtyCircleSmall, 
+                            styles.qtyCircleSmall,
                             item.stock > 0 && currentQty >= item.stock && { opacity: 0.5 }
-                          ]} 
+                          ]}
                           onPress={() => changeQty(item.id, currentQty + 1)}
                           disabled={item.stock > 0 && currentQty >= item.stock}
                         >
@@ -835,15 +765,15 @@ export default function OrderDetails() {
                         </TouchableOpacity>
                       </View>
 
-                      <TouchableOpacity 
+                      <TouchableOpacity
                         onPress={() => removeItem(item.id)}
                       >
                         <Ionicons name="trash" size={18} color="#ff4444" />
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    <TouchableOpacity 
-                      style={[styles.addBtn, item.stock <= 0 && { backgroundColor: '#cccccc' }]} 
+                    <TouchableOpacity
+                      style={[styles.addBtn, item.stock <= 0 && { backgroundColor: '#cccccc' }]}
                       onPress={() => {
                         if (item.stock <= 0) {
                           Alert.alert("Out of Stock", "This product is currently out of stock");
@@ -917,8 +847,8 @@ export default function OrderDetails() {
       </Modal>
 
       {/* Bottom sheet - Cart */}
-      <Animated.View 
-        pointerEvents={sheetOpen ? "auto" : "none"} 
+      <Animated.View
+        pointerEvents={sheetOpen ? "auto" : "none"}
         style={[styles.sheetContainer, { transform: [{ translateY: sheetAnim }] }]}
       >
         <View style={styles.sheetHandle} />
@@ -945,8 +875,8 @@ export default function OrderDetails() {
               showsVerticalScrollIndicator={false}
               renderItem={({ item }) => {
                 const itemTotal = item.qty * item.product.price;
-                const displayValueCart = editingQty[`cart_${item.product.id}`] !== undefined 
-                  ? editingQty[`cart_${item.product.id}`] 
+                const displayValueCart = editingQty[`cart_${item.product.id}`] !== undefined
+                  ? editingQty[`cart_${item.product.id}`]
                   : String(item.qty);
 
                 return (
@@ -964,14 +894,14 @@ export default function OrderDetails() {
                     </View>
 
                     <View style={{ flexDirection: "row", alignItems: "center" }}>
-                      <TouchableOpacity 
-                        style={[styles.qtyCircle, item.qty <= 1 && { opacity: 0.5 }]} 
+                      <TouchableOpacity
+                        style={[styles.qtyCircle, item.qty <= 1 && { opacity: 0.5 }]}
                         onPress={() => changeQty(item.product.id, item.qty - 1)}
                         disabled={item.qty <= 1}
                       >
                         <Text>-</Text>
                       </TouchableOpacity>
-                      
+
                       <TextInput
                         style={styles.qtyTextInput}
                         value={displayValueCart}
@@ -993,12 +923,12 @@ export default function OrderDetails() {
                         }}
                         keyboardType="numeric"
                       />
-                      
-                      <TouchableOpacity 
+
+                      <TouchableOpacity
                         style={[
-                          styles.qtyCircle, 
+                          styles.qtyCircle,
                           item.product.stock > 0 && item.qty >= item.product.stock && { opacity: 0.5 }
-                        ]} 
+                        ]}
                         onPress={() => changeQty(item.product.id, item.qty + 1)}
                         disabled={item.product.stock > 0 && item.qty >= item.product.stock}
                       >
@@ -1006,8 +936,8 @@ export default function OrderDetails() {
                       </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity 
-                      style={{ marginLeft: 12 }} 
+                    <TouchableOpacity
+                      style={{ marginLeft: 12 }}
                       onPress={() => removeItem(item.product.id)}
                     >
                       <Ionicons name="trash" size={20} color="#ff4444" />
@@ -1026,14 +956,14 @@ export default function OrderDetails() {
               </View>
 
               <View style={{ flexDirection: "row", gap: 12, marginBottom: 20 }}>
-                <TouchableOpacity 
-                  style={[styles.actionBtn, { backgroundColor: "#6c757d" }]} 
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: "#6c757d" }]}
                   onPress={() => toggleSheet(false)}
                 >
                   <Text style={{ color: "#fff", fontWeight: "600" }}>Continue Shopping</Text>
                 </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.actionBtn, { backgroundColor: "#28a745" }]} 
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: "#28a745" }]}
                   onPress={handlePlaceOrder}
                 >
                   <Text style={{ color: "#fff", fontWeight: "600" }}>Place Order</Text>
@@ -1052,51 +982,51 @@ export default function OrderDetails() {
 }
 
 const styles = StyleSheet.create({
-  header: { 
-    height: 60, 
-    paddingHorizontal: 16, 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between", 
-    backgroundColor: "transparent", 
-    marginTop: 28 
+  header: {
+    height: 60,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "transparent",
+    marginTop: 28
   },
-  headerTitle: { 
-    color: "#fff", 
-    fontWeight: "700", 
-    fontSize: 20 
+  headerTitle: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 20
   },
-  cartIcon: { 
-    padding: 6, 
-    position: "relative" 
+  cartIcon: {
+    padding: 6,
+    position: "relative"
   },
-  cartBadge: { 
-    position: "absolute", 
-    right: -6, 
-    top: -6, 
-    backgroundColor: "#ff3b30", 
-    borderRadius: 10, 
+  cartBadge: {
+    position: "absolute",
+    right: -6,
+    top: -6,
+    backgroundColor: "#ff3b30",
+    borderRadius: 10,
     minWidth: 20,
     height: 20,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 5,
   },
-  cartBadgeText: { 
-    color: "#fff", 
-    fontSize: 12, 
-    fontWeight: "700" 
+  cartBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700"
   },
-  container: { 
-    flex: 1, 
-    padding: 16 
+  container: {
+    flex: 1,
+    padding: 16
   },
-  customerCard: { 
-    backgroundColor: "#fff", 
-    borderRadius: 12, 
-    padding: 14, 
-    flexDirection: "row", 
-    alignItems: "center", 
+  customerCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -1104,49 +1034,49 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  customerLeft: { 
-    marginRight: 12 
+  customerLeft: {
+    marginRight: 12
   },
-  smallLabel: { 
-    color: "#7a8aa3", 
-    fontSize: 12 
+  smallLabel: {
+    color: "#7a8aa3",
+    fontSize: 12
   },
-  customerName: { 
-    fontSize: 16, 
-    fontWeight: "800", 
-    color: "#1b2b45" 
+  customerName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#1b2b45"
   },
-  muted: { 
-    color: "#7a8aa3", 
+  muted: {
+    color: "#7a8aa3",
     marginTop: 4,
-    fontSize: 12 
+    fontSize: 12
   },
-  searchRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 8, 
-    marginTop: 6 
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6
   },
-  searchBox: { 
-    flex: 1, 
-    backgroundColor: "#f2f6fb", 
-    borderRadius: 10, 
-    paddingHorizontal: 12, 
-    paddingVertical: 10, 
-    flexDirection: "row", 
-    alignItems: "center", 
-    gap: 8 
+  searchBox: {
+    flex: 1,
+    backgroundColor: "#f2f6fb",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
   },
-  searchInput: { 
-    flex: 1, 
-    marginLeft: 6, 
+  searchInput: {
+    flex: 1,
+    marginLeft: 6,
     color: "#2b4b69",
-    fontSize: 14 
+    fontSize: 14
   },
-  scanBtn: { 
-    marginLeft: 8, 
-    backgroundColor: "#fff", 
-    padding: 12, 
+  scanBtn: {
+    marginLeft: 8,
+    backgroundColor: "#fff",
+    padding: 12,
     borderRadius: 10,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -1154,12 +1084,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  productCard: { 
-    backgroundColor: "#fff", 
-    borderRadius: 12, 
-    padding: 12, 
-    marginBottom: 12, 
-    flexDirection: "row", 
+  productCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    flexDirection: "row",
     alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
@@ -1167,17 +1097,17 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  productLeft: { 
-    width: 70, 
-    height: 70, 
-    marginRight: 12, 
-    position: 'relative' 
+  productLeft: {
+    width: 70,
+    height: 70,
+    marginRight: 12,
+    position: 'relative'
   },
-  thumb: { 
-    backgroundColor: "#e6eefc", 
-    width: 70, 
-    height: 70, 
-    borderRadius: 8 
+  thumb: {
+    backgroundColor: "#e6eefc",
+    width: 70,
+    height: 70,
+    borderRadius: 8
   },
   photoCount: {
     position: 'absolute',
@@ -1193,56 +1123,56 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
   },
-  productName: { 
-    fontWeight: "700", 
+  productName: {
+    fontWeight: "700",
     color: "#1b2b45",
     fontSize: 14,
-    lineHeight: 18 
+    lineHeight: 18
   },
-  barcode: { 
-    color: "#7a8aa3", 
+  barcode: {
+    color: "#7a8aa3",
     fontSize: 11,
     marginTop: 2
   },
-  brand: { 
-    color: "#666", 
-    fontSize: 12, 
+  brand: {
+    color: "#666",
+    fontSize: 12,
     marginTop: 2,
     fontWeight: '500'
   },
-  price: { 
-    color: "#1e73d9", 
-    fontWeight: "700", 
-    fontSize: 16 
+  price: {
+    color: "#1e73d9",
+    fontWeight: "700",
+    fontSize: 16
   },
   mrpText: {
     color: "#999",
     fontSize: 12,
     textDecorationLine: 'line-through',
   },
-  stock: { 
+  stock: {
     fontSize: 12,
-    fontWeight: '600' 
+    fontWeight: '600'
   },
-  actions: { 
-    alignItems: "center", 
-    justifyContent: "center" 
+  actions: {
+    alignItems: "center",
+    justifyContent: "center"
   },
-  addBtn: { 
-    width: 36, 
-    height: 36, 
-    borderRadius: 18, 
-    backgroundColor: "#2b6ef0", 
-    alignItems: "center", 
-    justifyContent: "center" 
+  addBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#2b6ef0",
+    alignItems: "center",
+    justifyContent: "center"
   },
-  qtyCircleSmall: { 
-    width: 28, 
-    height: 28, 
-    borderRadius: 14, 
-    borderWidth: 1, 
-    borderColor: "#d3dce6", 
-    alignItems: "center", 
+  qtyCircleSmall: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#d3dce6",
+    alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#fff",
   },
@@ -1306,36 +1236,36 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
   },
-  sheetHandle: { 
-    width: 60, 
-    height: 6, 
-    backgroundColor: "#e6eefc", 
-    borderRadius: 6, 
-    alignSelf: "center", 
-    marginBottom: 12 
+  sheetHandle: {
+    width: 60,
+    height: 6,
+    backgroundColor: "#e6eefc",
+    borderRadius: 6,
+    alignSelf: "center",
+    marginBottom: 12
   },
-  sheetTitle: { 
-    fontSize: 18, 
-    fontWeight: "800", 
-    color: "#1b2b45", 
-    marginBottom: 16 
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#1b2b45",
+    marginBottom: 16
   },
-  cartRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    paddingVertical: 12, 
-    borderBottomWidth: 1, 
-    borderBottomColor: "#f1f4f8" 
+  cartRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f4f8"
   },
-  qtyCircle: { 
-    width: 28, 
-    height: 28, 
-    borderRadius: 14, 
-    borderWidth: 1, 
-    borderColor: "#e1e6ee", 
-    alignItems: "center", 
+  qtyCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#e1e6ee",
+    alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff" 
+    backgroundColor: "#fff"
   },
   qtyTextInput: {
     marginHorizontal: 8,
@@ -1356,17 +1286,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 13,
   },
-  cartFooter: { 
-    flexDirection: "column", 
+  cartFooter: {
+    flexDirection: "column",
     marginBottom: 20,
     paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: "#f1f4f8"
   },
-  closeSheet: { 
-    marginTop: 12, 
+  closeSheet: {
+    marginTop: 12,
     alignSelf: "center",
-    padding: 10 
+    padding: 10
   },
   cartPrice: {
     color: "#666",

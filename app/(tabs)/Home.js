@@ -1,17 +1,19 @@
 // Company.js
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import {
+  Animated,
   SafeAreaView,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-  Animated,
+  View
 } from 'react-native';
-import { useEffect, useRef } from 'react';
-
+import DownloadButton from '../../src/components/DownloadButton';
+import OfflineIndicator from '../../src/components/OfflineIndicator';
 
 const Home = ({ navigation }) => {
   const router = useRouter();
@@ -95,62 +97,74 @@ const Home = ({ navigation }) => {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F5F5FF" />
-      
-      <View style={styles.content}>
-        {/* Header Section */}
-        <Animated.View 
-          style={[
-            styles.headerSection,
-            {
-              opacity: fadeAnim,
-              transform: [{ translateY: slideAnim }]
-            }
-          ]}
-        >
-          <Text style={styles.date}>{getCurrentDate()}</Text>
-          {/* <Text style={styles.mainTitle}>HOME DASHBOARD</Text> */}
-        </Animated.View>
 
-        {/* Quick Actions Grid */}
-        <Animated.View 
-          style={[
-            styles.actionsGrid,
-            {
-              opacity: fadeAnim,
-            }
-          ]}
-        >
-          {quickActions.map((action, index) => (
-            <TouchableOpacity
-              key={index}
-              style={[
-                styles.actionCard,
-                { 
-                  backgroundColor: action.bgColor,
-                  borderColor: action.borderColor,
-                }
-              ]}
-              onPress={action.onPress}
-              activeOpacity={0.7}
-            >
-              <View style={[
-                styles.iconContainer,
-                { backgroundColor: action.iconBg }
-              ]}>
-                <Ionicons 
-                  name={action.icon} 
-                  size={32} 
-                  color={action.titleColor}
-                />
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.content}>
+          {/* Header Section */}
+          <Animated.View
+            style={[
+              styles.headerSection,
+              {
+                opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }]
+              }
+            ]}
+          >
+            <View style={styles.headerRow}>
+              <View style={styles.headerLeft}>
+                <Text style={styles.date}>{getCurrentDate()}</Text>
               </View>
-              <Text style={[styles.actionTitle, { color: action.titleColor }]}>
-                {action.title}
-              </Text>
-              <Text style={styles.actionDescription}>{action.description}</Text>
-            </TouchableOpacity>
-          ))}
-        </Animated.View>
-      </View>
+              <OfflineIndicator />
+            </View>
+          </Animated.View>
+
+          {/* Download/Sync Button */}
+          <DownloadButton />
+
+          {/* Quick Actions Grid */}
+          <Animated.View
+            style={[
+              styles.actionsGrid,
+              {
+                opacity: fadeAnim,
+              }
+            ]}
+          >
+            {quickActions.map((action, index) => (
+              <TouchableOpacity
+                key={index}
+                style={[
+                  styles.actionCard,
+                  {
+                    backgroundColor: action.bgColor,
+                    borderColor: action.borderColor,
+                  }
+                ]}
+                onPress={action.onPress}
+                activeOpacity={0.7}
+              >
+                <View style={[
+                  styles.iconContainer,
+                  { backgroundColor: action.iconBg }
+                ]}>
+                  <Ionicons
+                    name={action.icon}
+                    size={32}
+                    color={action.titleColor}
+                  />
+                </View>
+                <Text style={[styles.actionTitle, { color: action.titleColor }]}>
+                  {action.title}
+                </Text>
+                <Text style={styles.actionDescription}>{action.description}</Text>
+              </TouchableOpacity>
+            ))}
+          </Animated.View>
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -160,13 +174,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F5F5FF',
   },
+  scrollView: {
+    flex: 1,
+  },
   content: {
     flex: 1,
     paddingHorizontal: 20,
     paddingTop: 24,
+    paddingBottom: 20,
   },
   headerSection: {
-    marginBottom: 32,
+    marginBottom: 20,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerLeft: {
+    flex: 1,
   },
   date: {
     fontSize: 16,
