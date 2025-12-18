@@ -1,4 +1,4 @@
-// DebtorsScreen.js - Updated to use main database service
+// app/(tabs)/customers.js
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -8,13 +8,15 @@ import {
   Alert,
   BackHandler,
   FlatList,
+  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
 
 export default function DebtorsScreen() {
@@ -41,14 +43,8 @@ export default function DebtorsScreen() {
   const loadLocalCustomers = async () => {
     try {
       setLoading(true);
-
-      console.log('[Customers] Initializing database...');
       await dbService.init();
-
-      console.log('[Customers] Loading customers...');
       const rows = await dbService.getCustomers();
-
-      console.log(`[Customers] Found ${rows.length} customers`);
 
       if (rows.length === 0) {
         setLoading(false);
@@ -80,17 +76,9 @@ export default function DebtorsScreen() {
       setTotalStores(filteredRows.length);
       setTotalBalance(Math.round(totalBal));
 
-      console.log(`[Customers] ✅ Loaded ${filteredRows.length} customers with non-zero balance`);
     } catch (err) {
       console.error("[Customers] Error loading customers:", err);
-      Alert.alert(
-        "Error",
-        `Unable to load customers: ${err.message}. Please download data from Home screen.`,
-        [
-          { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
-          { text: "Retry", onPress: () => loadLocalCustomers() }
-        ]
-      );
+      Alert.alert("Error", "Unable to load customers.");
     } finally {
       setLoading(false);
     }
@@ -128,10 +116,10 @@ export default function DebtorsScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color="#0d3b6c" />
-        <Text style={{ marginTop: 10, color: "#0d3b6c" }}>Loading customers...</Text>
-      </View>
+      <LinearGradient colors={Gradients.background} style={styles.loadingScreen}>
+        <ActivityIndicator size="large" color={Colors.primary.main} />
+        <Text style={styles.loadingText}>Loading customers...</Text>
+      </LinearGradient>
     );
   }
 
@@ -142,6 +130,7 @@ export default function DebtorsScreen() {
       <Animated.View entering={FadeInUp.delay(index * 40)}>
         <TouchableOpacity
           style={styles.card}
+          activeOpacity={0.7}
           onPress={() =>
             router.push({
               pathname: "/customer-ledger",
@@ -154,108 +143,310 @@ export default function DebtorsScreen() {
           }
         >
           <View style={styles.cardRow}>
-            <View style={{ flex: 3 }}>
+            <View style={styles.cardInfo}>
               <Text style={styles.cardName} numberOfLines={1}>
                 {item.name}
               </Text>
-              <Text style={styles.subText}>{item.phone}</Text>
-              <Text style={styles.subText}>{item.place}</Text>
+              <View style={styles.metaContainer}>
+                {item.phone ? (
+                  <View style={styles.metaItem}>
+                    <Ionicons name="call-outline" size={14} color={Colors.text.tertiary} />
+                    <Text style={styles.subText}>{item.phone}</Text>
+                  </View>
+                ) : null}
+                {item.place ? (
+                  <View style={styles.metaItem}>
+                    <Ionicons name="location-outline" size={14} color={Colors.text.tertiary} />
+                    <Text style={styles.subText}>{item.place}</Text>
+                  </View>
+                ) : null}
+              </View>
             </View>
 
-            <Text
-              style={[
-                styles.balanceText,
-                { color: balance < 0 ? "#ff3b30" : "#0b8a2f" },
-              ]}
-            >
-              {Math.round(balance).toLocaleString("en-IN")}
-            </Text>
+            <View style={styles.balanceContainer}>
+              <Text style={styles.balanceLabel}>Balance</Text>
+              <Text
+                style={[
+                  styles.balanceText,
+                  { color: balance < 0 ? Colors.error.main : Colors.success.main },
+                ]}
+              >
+                ₹{Math.round(balance).toLocaleString("en-IN")}
+              </Text>
+            </View>
           </View>
+          <Ionicons
+            name="chevron-forward"
+            size={20}
+            color={Colors.neutral[400]}
+            style={styles.cardArrow}
+          />
         </TouchableOpacity>
       </Animated.View>
     );
   };
 
   return (
-    <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
-      <View style={styles.backbutton}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={23} color="#0d3b6c" style={styles.arrow} />
-        </TouchableOpacity>
-        <Animated.Text entering={FadeInUp} style={styles.title}>
-          Customers Statement
-        </Animated.Text>
-      </View>
-
-      <Animated.View entering={FadeInUp.delay(80)} style={styles.summaryCard}>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Total Stores</Text>
-          <Text style={styles.summaryValue}>{totalStores}</Text>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Customers Statement</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Total Balance</Text>
-          <Text style={styles.summaryValue}>{Math.round(totalBalance).toLocaleString("en-IN")}</Text>
-        </View>
-      </Animated.View>
+        {/* Summary Cards */}
+        <Animated.View entering={FadeInUp.delay(80)} style={styles.summaryContainer}>
+          <LinearGradient
+            colors={Gradients.primary}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.summaryCard}
+          >
+            <View style={styles.summaryIconCircle}>
+              <Ionicons name="people" size={20} color={Colors.primary.main} />
+            </View>
+            <View>
+              <Text style={styles.summaryLabel}>Total Stores</Text>
+              <Text style={styles.summaryValue}>{totalStores}</Text>
+            </View>
+          </LinearGradient>
 
-      <Animated.View entering={FadeInUp.delay(120)}>
-        <TextInput
-          placeholder="Search Name, Place, Phone"
-          placeholderTextColor="#7c8899"
-          style={styles.searchBox}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
+          <LinearGradient
+            colors={Gradients.success}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.summaryCard}
+          >
+            <View style={[styles.summaryIconCircle, { backgroundColor: 'rgba(255,255,255,0.9)' }]}>
+              <Ionicons name="wallet" size={20} color={Colors.success.main} />
+            </View>
+            <View>
+              <Text style={styles.summaryLabel}>Total Balance</Text>
+              <Text style={styles.summaryValue}>₹{(totalBalance / 1000).toFixed(1)}k</Text>
+            </View>
+          </LinearGradient>
+        </Animated.View>
+
+        {/* Search */}
+        <Animated.View entering={FadeInUp.delay(120)} style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
+          <TextInput
+            placeholder="Search Name, Place, Phone..."
+            placeholderTextColor={Colors.text.tertiary}
+            style={styles.searchBox}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        </Animated.View>
+
+        {/* List Header */}
+        <Animated.View entering={FadeInUp.delay(150)} style={styles.listHeader}>
+          <Text style={styles.listHeaderTitle}>Customer List</Text>
+          <Text style={styles.listHeaderCount}>{filtered.length} found</Text>
+        </Animated.View>
+
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => (item.code ?? item.id ?? Math.random().toString()).toString()}
+          renderItem={renderCard}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search-outline" size={48} color={Colors.primary[200]} />
+              <Text style={styles.emptyText}>
+                No customers found.
+              </Text>
+            </View>
+          }
         />
-      </Animated.View>
-
-      <Animated.View entering={FadeInUp.delay(150)} style={styles.headingCard}>
-        <Text style={[styles.headingText, { flex: 3 }]}>Name</Text>
-        <Text style={[styles.headingText, { flex: 1, textAlign: "right" }]}>Balance</Text>
-      </Animated.View>
-
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => (item.code ?? item.id ?? Math.random().toString()).toString()}
-        renderItem={renderCard}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            No results found. Download customers from Company.
-          </Text>
-        }
-      />
+      </SafeAreaView>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 14, backgroundColor: "#fff" },
-  loadingScreen: { flex: 1, backgroundColor: "#f7f9fa", alignItems: "center", justifyContent: "center" },
-  title: { color: "#0d3b6c", fontSize: 22, fontWeight: "700", textAlign: "center", marginBottom: 11, marginTop: 18, marginLeft: 70 },
-  summaryCard: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderRadius: 14,
-    padding: 14,
-    backgroundColor: "rgba(255,255,255,0.9)",
-    borderWidth: 1,
-    borderColor: "rgba(13,59,108,0.08)",
-    marginBottom: 16,
+  container: {
+    flex: 1,
   },
-  summaryItem: { alignItems: "center", flex: 1 },
-  summaryLabel: { color: "#55606a", fontSize: 14 },
-  summaryValue: { color: "#0d3b6c", fontSize: 20, fontWeight: "700" },
-  searchBox: { backgroundColor: "rgba(245,245,245,1)", borderRadius: 14, padding: 12, color: "#333", marginBottom: 16, borderWidth: 1, borderColor: "rgba(13,59,108,0.06)" },
-  headingCard: { flexDirection: "row", paddingVertical: 8, paddingHorizontal: 6, marginBottom: 8 },
-  headingText: { color: "#0d3b6c", fontWeight: "600", fontSize: 15 },
-  card: { backgroundColor: "#ffffff", padding: 14, borderRadius: 14, marginBottom: 12, borderWidth: 1, borderColor: "#eef6ff" },
-  cardRow: { flexDirection: "row", justifyContent: "space-between" },
-  cardName: { color: "#0b2a44", fontSize: 16, fontWeight: "600" },
-  subText: { color: "#6b7c8a", fontSize: 13 },
-  balanceText: { fontSize: 18, fontWeight: "700", textAlign: "right" },
-  emptyText: { textAlign: "center", color: "#9aa4b2", marginTop: 40, fontSize: 16 },
-  backbutton: { flexDirection: "row" },
-  arrow: { marginTop: 18 },
+  safeArea: {
+    flex: 1,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.md,
+  },
+  loadingScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  loadingText: {
+    marginTop: Spacing.md,
+    color: Colors.text.secondary,
+    fontSize: Typography.sizes.base
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+  },
+  backButton: {
+    padding: Spacing.xs,
+  },
+  title: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  summaryContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.md,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  summaryCard: {
+    flex: 1,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    ...Shadows.md,
+  },
+  summaryIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  summaryLabel: {
+    fontSize: Typography.sizes.xs,
+    color: 'rgba(255,255,255,0.8)',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  summaryValue: {
+    fontSize: Typography.sizes.lg,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  searchContainer: {
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    height: 50,
+    ...Shadows.sm,
+  },
+  searchIcon: {
+    marginRight: Spacing.sm,
+  },
+  searchBox: {
+    flex: 1,
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+  },
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+  },
+  listHeaderTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  listHeaderCount: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+    fontWeight: '500',
+  },
+  listContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: 100,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+  },
+  cardRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginRight: Spacing.sm,
+  },
+  cardInfo: {
+    flex: 1,
+    marginRight: Spacing.md,
+  },
+  cardName: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: 6,
+  },
+  metaContainer: {
+    gap: 4,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  subText: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.secondary,
+  },
+  balanceContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  balanceLabel: {
+    fontSize: 10,
+    color: Colors.text.tertiary,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  balanceText: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+  },
+  cardArrow: {
+    opacity: 0.5,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: Spacing['3xl'],
+  },
+  emptyText: {
+    marginTop: Spacing.md,
+    color: Colors.text.tertiary,
+    fontSize: Typography.sizes.base,
+    textAlign: 'center',
+  },
 });

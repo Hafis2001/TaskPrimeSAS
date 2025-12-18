@@ -1,16 +1,19 @@
 // app/Order/Scanner.js
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
   Vibration,
+  View
 } from "react-native";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 
 export default function Scanner() {
   const router = useRouter();
@@ -55,9 +58,14 @@ export default function Scanner() {
   if (!permission.granted) {
     return (
       <View style={styles.center}>
-        <Text style={styles.permissionText}>Camera permission is required</Text>
+        <Ionicons name="camera-outline" size={64} color={Colors.text.tertiary} style={{ marginBottom: Spacing.lg }} />
+        <Text style={styles.permissionTitle}>Camera Access Needed</Text>
+        <Text style={styles.permissionText}>App needs camera permission to scan barcodes</Text>
+
         <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-          <Text style={styles.permissionButtonText}>Grant Permission</Text>
+          <LinearGradient colors={Gradients.primary} style={styles.gradientButton}>
+            <Text style={styles.permissionButtonText}>Grant Permission</Text>
+          </LinearGradient>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -71,42 +79,55 @@ export default function Scanner() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <StatusBar barStyle="light-content" />
       <CameraView
         style={{ flex: 1 }}
         facing="back"
         flash={flash}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
         barcodeScannerSettings={{
-          barcodeTypes: ["all"], // supports all formats in Expo SDK 54
+          barcodeTypes: ["all"],
         }}
       />
 
-      {/* Top Navigation Bar */}
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
-          <Ionicons name="close" size={26} color="#fff" />
-        </TouchableOpacity>
+      {/* Overlay */}
+      <View style={styles.overlay}>
+        {/* Top Bar */}
+        <View style={styles.topBar}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
+            <Ionicons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
 
-        <Text style={styles.topText}>Scan Barcode</Text>
+          <View style={styles.titleContainer}>
+            <Text style={styles.topText}>Scan Barcode</Text>
+          </View>
 
-        {/* Flash Button */}
-        <TouchableOpacity
-          onPress={() =>
-            setFlash((prev) => (prev === "off" ? "on" : "off"))
-          }
-          style={{ padding: 8 }}
-        >
-          <Ionicons
-            name={flash === "off" ? "flash-off" : "flash"}
-            size={26}
-            color="#fff"
-          />
-        </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() =>
+              setFlash((prev) => (prev === "off" ? "on" : "off"))
+            }
+            style={styles.iconButton}
+          >
+            <Ionicons
+              name={flash === "off" ? "flash-off" : "flash"}
+              size={24}
+              color={flash === 'on' ? Colors.warning.main : '#fff'}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* Scan Frame */}
+        <View style={styles.scanAreaContainer}>
+          <View style={styles.scanFrame}>
+            <View style={[styles.corner, styles.topLeft]} />
+            <View style={[styles.corner, styles.topRight]} />
+            <View style={[styles.corner, styles.bottomLeft]} />
+            <View style={[styles.corner, styles.bottomRight]} />
+          </View>
+          <Text style={styles.scanHint}>Point camera at a barcode</Text>
+        </View>
       </View>
-
-      {/* Scan Focus Box */}
-      <View style={styles.scanBox} />
     </View>
   );
 }
@@ -116,59 +137,115 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#000",
+    backgroundColor: Colors.background,
+    padding: Spacing.xl,
   },
-  topBar: {
-    position: "absolute",
-    top: 50,
-    left: 15,
-    right: 15,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 10,
-  },
-  topText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 18,
+  permissionTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
   },
   permissionText: {
-    color: "#fff",
-    fontSize: 16,
-    marginBottom: 20,
+    color: Colors.text.secondary,
+    fontSize: Typography.sizes.base,
+    marginBottom: Spacing.xl,
     textAlign: "center",
   },
   permissionButton: {
-    backgroundColor: "#1a73e8",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-    marginBottom: 12,
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
+    marginBottom: Spacing.md,
+    width: '100%',
+    ...Shadows.colored.primary,
+  },
+  gradientButton: {
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   permissionButtonText: {
     color: "#fff",
     fontWeight: "700",
-    fontSize: 16,
+    fontSize: Typography.sizes.base,
   },
   backButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: Spacing.md,
   },
   backButtonText: {
-    color: "#fff",
-    fontSize: 16,
+    color: Colors.text.secondary,
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
   },
 
-  // Scan box in center
-  scanBox: {
-    position: "absolute",
-    top: "30%",
-    left: "10%",
-    width: "80%",
-    height: "40%",
-    borderColor: "#00ff00",
-    borderWidth: 2,
-    borderRadius: 12,
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'space-between',
+  },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 50, // improved status bar handling
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.lg,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  titleContainer: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: BorderRadius.full,
+  },
+  topText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: Typography.sizes.base,
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  scanAreaContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanFrame: {
+    width: 250,
+    height: 250,
+    position: 'relative',
+  },
+  corner: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+    borderColor: '#fff',
+    borderWidth: 4,
+  },
+  topLeft: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0 },
+  topRight: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0 },
+  bottomLeft: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0 },
+  bottomRight: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0 },
+
+  scanHint: {
+    color: '#fff',
+    marginTop: Spacing.xl,
+    fontSize: Typography.sizes.base,
+    fontWeight: '500',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
   },
 });

@@ -1,4 +1,4 @@
-// app/upload.js
+// app/Collection/Upload.js
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
@@ -16,10 +16,11 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import Animated, { FadeInUp } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
 
-const API_UPLOAD_COLLECTION = "https://tasksas.com/api/collections/upload/"; // Replace with your actual API
+const API_UPLOAD_COLLECTION = "https://tasksas.com/api/collection/create/";
 
 export default function UploadScreen() {
   const router = useRouter();
@@ -50,20 +51,12 @@ export default function UploadScreen() {
 
   const loadPendingCollections = async () => {
     try {
-      setLoading(true);
-
-      console.log('[Upload] Loading collections from database...');
+      if (loading) setLoading(true);
       await dbService.init();
-
-      // Get unsynced collections from database
       const pendingCollections = await dbService.getOfflineCollections(false);
-
-      console.log(`[Upload] Found ${pendingCollections.length} pending collections`);
-
       setCollections(pendingCollections);
     } catch (error) {
       console.error("[Upload] Error loading collections:", error);
-      Alert.alert("Error", `Failed to load collections: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -150,33 +143,39 @@ export default function UploadScreen() {
         setUploadProgress({ current: i + 1, total: collectionsToUpload.length });
 
         try {
-          // Prepare data for API
+          // Prepare upload data according to API structure
           const uploadData = {
-            customer_code: collection.customer_code,
-            customer_name: collection.customer_name,
-            amount: collection.amount,
-            payment_type: collection.payment_type,
-            cheque_number: collection.cheque_number,
-            remarks: collection.remarks,
-            date: collection.date,
+            code: collection.customer_code,
+            name: collection.customer_name,
+            amount: parseFloat(collection.amount),
+            type: collection.payment_type
           };
 
-          // TODO: Replace this with actual API call
+          // Add optional fields only if they exist
+          if (collection.customer_place) {
+            uploadData.place = collection.customer_place;
+          }
+          if (collection.customer_phone) {
+            uploadData.phone = collection.customer_phone;
+          }
+
           const response = await fetch(API_UPLOAD_COLLECTION, {
             method: "POST",
             headers: {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
+              "Accept": "application/json",
             },
             body: JSON.stringify(uploadData),
           });
 
           if (!response.ok) {
-            throw new Error(`Upload failed: ${response.status}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `Upload failed: ${response.status}`);
           }
 
-          // Mark as synced
-          await markAsSynced(collection.id);
+          // Mark as synced locally using local_id
+          await dbService.markCollectionAsSynced(collection.local_id);
           successCount++;
 
         } catch (error) {
@@ -185,7 +184,7 @@ export default function UploadScreen() {
         }
       }
 
-      // Reload collections
+      // Reload collections after upload
       await loadPendingCollections();
       setSelectedCollections([]);
 
@@ -212,174 +211,71 @@ export default function UploadScreen() {
     }
   };
 
-  const markAsSynced = async (collectionId) => {
-    try {
-      // Use the local_id from database
-      await dbService.markCollectionAsSynced(collectionId);
-      console.log('[Upload] Marked collection as synced:', collectionId);
-    } catch (error) {
-      console.error("[Upload] Error marking as synced:", error);
-    }
-  };
-
-  const handleDelete = (collectionId) => {
-    Alert.alert(
-      "Delete Collection",
-      "Are you sure you want to delete this collection? This action cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteCollection(collectionId);
-          }
-        }
-      ]
-    );
-  };
-
-  const deleteCollection = async (collectionId) => {
-    try {
-      // Reload collections after deletion
-      // Note: Implement actual deletion in database.js if needed
-      await loadPendingCollections();
-      setSelectedCollections(prev => prev.filter(id => id !== collectionId));
-      Alert.alert("Success", "Collection will be removed on next sync.");
-    } catch (error) {
-      console.error("[Upload] Error deleting collection:", error);
-      Alert.alert("Error", "Failed to delete collection.");
-    }
-  };
-
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
   const renderCollectionItem = ({ item, index }) => {
     const isSelected = selectedCollections.includes(item.id);
 
     return (
       <Animated.View
         entering={FadeInUp.delay(index * 50)}
-        style={styles.collectionCard}
+        style={[styles.collectionCard, isSelected && styles.selectedCard]}
       >
         <TouchableOpacity
           style={styles.cardContent}
           onPress={() => toggleSelectCollection(item.id)}
           activeOpacity={0.7}
         >
-          <View style={styles.checkbox}>
-            {isSelected ? (
-              <Ionicons name="checkbox" size={24} color="#0d3b6c" />
-            ) : (
-              <Ionicons name="square-outline" size={24} color="#6b7c8a" />
-            )}
+          <View style={styles.checkboxContainer}>
+            <Ionicons
+              name={isSelected ? "checkbox" : "square-outline"}
+              size={24}
+              color={isSelected ? Colors.primary.main : Colors.text.tertiary}
+            />
           </View>
 
           <View style={styles.collectionInfo}>
-            <View style={styles.customerRow}>
-              <Text style={styles.customerName} numberOfLines={1}>
-                {item.customer_name}
-              </Text>
-              <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
-            </View>
+            <Text style={styles.customerName} numberOfLines={1}>
+              {item.customer_name}
+            </Text>
+            <Text style={styles.amount}>₹{(+item.amount).toLocaleString()}</Text>
 
-            <View style={styles.detailRow}>
-              <View style={styles.detailItem}>
-                <Ionicons name="person-outline" size={14} color="#6b7c8a" />
-                <Text style={styles.detailText}>{item.customer_code}</Text>
+            <View style={styles.detailsRow}>
+              <View style={[styles.badge, { backgroundColor: Colors.neutral[100] }]}>
+                <Text style={styles.badgeText}>{item.payment_type}</Text>
               </View>
-              <View style={styles.detailItem}>
-                <Ionicons name="time-outline" size={14} color="#6b7c8a" />
-                <Text style={styles.detailText}>{formatDate(item.date)}</Text>
-              </View>
+              <Text style={styles.dateText}>{new Date(item.date).toLocaleDateString()}</Text>
             </View>
-
-            <View style={styles.detailRow}>
-              <View style={[styles.badge, item.payment_type === 'cash' ? styles.cashBadge : styles.chequeBadge]}>
-                <Ionicons
-                  name={item.payment_type === 'cash' ? "wallet" : "card"}
-                  size={12}
-                  color="#ffffff"
-                />
-                <Text style={styles.badgeText}>
-                  {item.payment_type.toUpperCase()}
-                </Text>
-              </View>
-              {item.cheque_number && (
-                <Text style={styles.chequeNumber}>#{item.cheque_number}</Text>
-              )}
-            </View>
-
-            {item.remarks && (
-              <View style={styles.remarksContainer}>
-                <Ionicons name="chatbox-outline" size={12} color="#6b7c8a" />
-                <Text style={styles.remarksText} numberOfLines={2}>
-                  {item.remarks}
-                </Text>
-              </View>
-            )}
           </View>
-
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={() => handleDelete(item.id)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="trash-outline" size={20} color="#ff3b30" />
-          </TouchableOpacity>
         </TouchableOpacity>
       </Animated.View>
     );
   };
 
-  if (loading) {
+  if (loading && !refreshing) {
     return (
-      <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0d3b6c" />
-          <Text style={styles.loadingText}>Loading collections...</Text>
-        </View>
+      <LinearGradient colors={Gradients.background} style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary.main} />
       </LinearGradient>
     );
   }
 
   return (
-    <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <Animated.View entering={FadeInUp} style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#0d3b6c" />
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Upload Collections</Text>
-          <View style={styles.statusContainer}>
+          <Text style={styles.headerTitle}>Upload Data</Text>
+          <View style={[styles.statusBadge, isOnline ? styles.onlineBadge : styles.offlineBadge]}>
             <View style={[styles.statusDot, isOnline ? styles.onlineDot : styles.offlineDot]} />
-          </View>
-        </Animated.View>
-
-        {!isOnline && (
-          <Animated.View entering={FadeInDown} style={styles.offlineWarning}>
-            <Ionicons name="cloud-offline-outline" size={20} color="#ff9500" />
-            <Text style={styles.offlineWarningText}>
-              You're offline. Connect to internet to upload collections.
+            <Text style={[styles.statusText, isOnline ? styles.onlineText : styles.offlineText]}>
+              {isOnline ? "ONLINE" : "OFFLINE"}
             </Text>
-          </Animated.View>
-        )}
+          </View>
+        </View>
 
         {collections.length > 0 && (
-          <Animated.View entering={FadeInDown.delay(100)} style={styles.selectionBar}>
+          <View style={styles.selectionBar}>
             <TouchableOpacity
               style={styles.selectAllButton}
               onPress={toggleSelectAll}
@@ -388,80 +284,70 @@ export default function UploadScreen() {
               <Ionicons
                 name={selectedCollections.length === collections.length ? "checkbox" : "square-outline"}
                 size={20}
-                color="#0d3b6c"
+                color={Colors.primary.main}
               />
               <Text style={styles.selectAllText}>
                 {selectedCollections.length === collections.length ? "Deselect All" : "Select All"}
               </Text>
             </TouchableOpacity>
             <Text style={styles.selectionCount}>
-              {selectedCollections.length} of {collections.length} selected
+              {selectedCollections.length} selected
             </Text>
-          </Animated.View>
+          </View>
         )}
 
         {collections.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Ionicons name="cloud-upload-outline" size={80} color="#9aa4b2" />
-            <Text style={styles.emptyTitle}>No Pending Collections</Text>
+            <Ionicons name="cloud-done-outline" size={64} color={Colors.success.main} />
+            <Text style={styles.emptyTitle}>All Synced!</Text>
             <Text style={styles.emptySubtitle}>
-              All collections are synced or add new collections to upload.
+              You have no pending collections to upload.
             </Text>
             <TouchableOpacity
               style={styles.addButton}
-              onPress={() => router.push("/add-collection")}
+              onPress={() => router.push("/Collection/AddCollection")}
               activeOpacity={0.8}
             >
-              <Ionicons name="add-circle-outline" size={20} color="#ffffff" />
-              <Text style={styles.addButtonText}>Add Collection</Text>
+              <Text style={styles.addButtonText}>Add New Payment</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <>
             <FlatList
               data={collections}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item) => (item.id || Math.random()).toString()}
               renderItem={renderCollectionItem}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
               refreshControl={
-                <RefreshControl
-                  refreshing={refreshing}
-                  onRefresh={onRefresh}
-                  tintColor="#0d3b6c"
-                />
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary.main} />
               }
             />
 
-            {uploading && (
-              <Animated.View entering={FadeInUp} style={styles.uploadProgress}>
-                <ActivityIndicator size="small" color="#0d3b6c" />
-                <Text style={styles.uploadProgressText}>
-                  Uploading {uploadProgress.current} of {uploadProgress.total}...
-                </Text>
-              </Animated.View>
-            )}
-
-            <Animated.View entering={FadeInUp.delay(200)} style={styles.uploadButtonContainer}>
+            <Animated.View entering={FadeInUp} style={styles.footer}>
               <TouchableOpacity
                 style={[
                   styles.uploadButton,
-                  (!isOnline || selectedCollections.length === 0 || uploading) && styles.uploadButtonDisabled
+                  (!isOnline || selectedCollections.length === 0 || uploading) && styles.disabledButton
                 ]}
                 onPress={handleUpload}
                 disabled={!isOnline || selectedCollections.length === 0 || uploading}
-                activeOpacity={0.8}
               >
-                {uploading ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <Ionicons name="cloud-upload-outline" size={22} color="#ffffff" />
-                    <Text style={styles.uploadButtonText}>
-                      Upload {selectedCollections.length > 0 ? `(${selectedCollections.length})` : ''}
-                    </Text>
-                  </>
-                )}
+                <View style={[
+                  styles.gradientButton,
+                  (!isOnline || selectedCollections.length === 0 || uploading) && styles.disabledGradient
+                ]}>
+                  {uploading ? (
+                    <ActivityIndicator color="#FFF" size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-upload" size={20} color="#FFF" />
+                      <Text style={styles.uploadButtonText}>
+                        Upload {selectedCollections.length} Items
+                      </Text>
+                    </>
+                  )}
+                </View>
               </TouchableOpacity>
             </Animated.View>
           </>
@@ -472,276 +358,183 @@ export default function UploadScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  safeArea: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: "#6b7c8a",
-  },
+  container: { flex: 1 },
+  safeArea: { flex: 1, paddingTop: Spacing.xs, paddingBottom: Spacing.md },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(13, 59, 108, 0.08)",
-    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
-    flex: 1,
-    fontSize: 20,
+    fontSize: Typography.sizes.xl,
     fontWeight: "700",
-    color: "#0d3b6c",
-    marginLeft: 12,
+    color: Colors.text.primary,
   },
-  statusContainer: {
-    flexDirection: "row",
-    alignItems: "center",
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 6,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  onlineDot: {
-    backgroundColor: "#34c759",
-  },
-  offlineDot: {
-    backgroundColor: "#ff9500",
-  },
-  offlineWarning: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff9e6",
-    borderRadius: 0,
-    padding: 12,
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#ffd966",
-  },
-  offlineWarningText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#b8860b",
-    fontWeight: "500",
-  },
+  onlineBadge: { backgroundColor: Colors.success[50] },
+  offlineBadge: { backgroundColor: Colors.warning[50] },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  onlineDot: { backgroundColor: Colors.success.main },
+  offlineDot: { backgroundColor: Colors.warning.main },
+  statusText: { fontSize: 10, fontWeight: '700' },
+  onlineText: { color: Colors.success.main },
+  offlineText: { color: Colors.warning.main },
   selectionBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.8)",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.neutral[50],
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(13, 59, 108, 0.08)",
+    borderBottomColor: Colors.border.light,
   },
   selectAllButton: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
   selectAllText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0d3b6c",
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+    fontWeight: '600',
   },
   selectionCount: {
-    fontSize: 13,
-    color: "#6b7c8a",
-    fontWeight: "500",
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  emptyTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginTop: Spacing.md,
+  },
+  emptySubtitle: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl,
+  },
+  addButton: {
+    backgroundColor: Colors.primary.main,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.full,
+  },
+  addButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   listContent: {
-    padding: 20,
+    padding: Spacing.lg,
     paddingBottom: 100,
   },
   collectionCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+  },
+  selectedCard: {
+    borderColor: Colors.primary.main,
+    backgroundColor: Colors.primary[50],
   },
   cardContent: {
-    flexDirection: "row",
-    padding: 14,
-    alignItems: "flex-start",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  checkbox: {
-    marginRight: 12,
-    marginTop: 2,
+  checkboxContainer: {
+    marginRight: Spacing.md,
   },
   collectionInfo: {
     flex: 1,
   },
-  customerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
   customerName: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0b2a44",
-    marginRight: 8,
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
   },
   amount: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0b8a2f",
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.success.main,
+    marginVertical: 4,
   },
-  detailRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 6,
-    flexWrap: "wrap",
-    gap: 12,
-  },
-  detailItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  detailText: {
-    fontSize: 12,
-    color: "#6b7c8a",
+  detailsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
   },
   badge: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    gap: 4,
-  },
-  cashBadge: {
-    backgroundColor: "#0b8a2f",
-  },
-  chequeBadge: {
-    backgroundColor: "#0d3b6c",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   badgeText: {
     fontSize: 10,
-    fontWeight: "700",
-    color: "#ffffff",
+    fontWeight: '700',
+    color: Colors.text.secondary,
   },
-  chequeNumber: {
-    fontSize: 12,
-    color: "#6b7c8a",
-    fontWeight: "500",
+  dateText: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
   },
-  remarksContainer: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-    marginTop: 6,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#f5f5f5",
-  },
-  remarksText: {
-    flex: 1,
-    fontSize: 12,
-    color: "#6b7c8a",
-    fontStyle: "italic",
-  },
-  deleteButton: {
-    padding: 4,
-    marginLeft: 8,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 40,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#0d3b6c",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: "#6b7c8a",
-    textAlign: "center",
-    marginBottom: 24,
-  },
-  addButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#0d3b6c",
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 10,
-    gap: 8,
-  },
-  addButtonText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#ffffff",
-  },
-  uploadProgress: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 12,
-    gap: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    borderTopWidth: 1,
-    borderTopColor: "rgba(13, 59, 108, 0.08)",
-  },
-  uploadProgressText: {
-    fontSize: 14,
-    color: "#0d3b6c",
-    fontWeight: "600",
-  },
-  uploadButtonContainer: {
-    position: "absolute",
+  footer: {
+    position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: "rgba(255, 247, 240, 0.95)",
+    padding: Spacing.lg,
+    backgroundColor: 'rgba(255,255,255,0.9)',
     borderTopWidth: 1,
-    borderTopColor: "rgba(13, 59, 108, 0.08)",
+    borderTopColor: Colors.border.light,
   },
   uploadButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0d3b6c",
-    paddingVertical: 16,
-    borderRadius: 12,
-    gap: 8,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
   },
-  uploadButtonDisabled: {
-    backgroundColor: "#9aa4b2",
-    opacity: 0.6,
+  gradientButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    gap: 8,
+    backgroundColor: Colors.primary.main,
+    borderRadius: BorderRadius.lg,
+  },
+  disabledGradient: {
+    backgroundColor: Colors.neutral[400],
   },
   uploadButtonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#ffffff",
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: Typography.sizes.base,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });

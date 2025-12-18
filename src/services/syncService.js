@@ -50,11 +50,16 @@ class SyncService {
             // Initialize database if not already done
             await dbService.init();
 
-            this.updateProgress('Starting download...', 5);
+            this.updateProgress('Clearing old data...', 5);
+
+            // Clear old customers and products data to ensure fresh data
+            await dbService.clearDownloadableData();
+
+            this.updateProgress('Downloading customers...', 15);
 
             // Download customers
             await this.downloadCustomers();
-            this.updateProgress('Downloading products...', 40);
+            this.updateProgress('Downloading products...', 50);
 
             // Download products
             await this.downloadProducts();

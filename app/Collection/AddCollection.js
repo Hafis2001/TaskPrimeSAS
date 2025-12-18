@@ -1,4 +1,4 @@
-// app/add-collection.js
+// app/Collection/AddCollection.js
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
@@ -19,10 +19,10 @@ import {
   View
 } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
 
 const API_CUSTOMERS = "https://tasksas.com/api/debtors/get-debtors/";
-const API_SAVE_COLLECTION = "https://tasksas.com/api/collections/save/"; // Add your save collection API
 
 export default function AddCollectionScreen() {
   const router = useRouter();
@@ -38,10 +38,10 @@ export default function AddCollectionScreen() {
   const [filteredCustomers, setFilteredCustomers] = useState([]);
 
   // Form fields
-  const [selectedCustomer, setSelectedCustomer] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedCustomerName, setSelectedCustomerName] = useState("");
   const [amount, setAmount] = useState("");
-  const [paymentType, setPaymentType] = useState("cash");
+  const [paymentType, setPaymentType] = useState("Cash");
   const [chequeNumber, setChequeNumber] = useState("");
   const [remarks, setRemarks] = useState("");
 
@@ -76,7 +76,6 @@ export default function AddCollectionScreen() {
   const fetchCustomers = async () => {
     try {
       setLoading(true);
-
       const localCustomers = await loadCustomersFromDB();
 
       if (localCustomers.length > 0) {
@@ -149,7 +148,6 @@ export default function AddCollectionScreen() {
 
       setCustomers(filteredCustomers);
       setFilteredCustomers(filteredCustomers);
-      console.log(`Loaded ${filteredCustomers.length} customers from API`);
     } catch (error) {
       console.error("API fetch error:", error);
       throw error;
@@ -158,24 +156,11 @@ export default function AddCollectionScreen() {
 
   const loadCustomersFromDB = async () => {
     try {
-      console.log('[AddCollection] Initializing database...');
       await dbService.init();
-
-      console.log('[AddCollection] Loading customers from database...');
       const allCustomers = await dbService.getCustomers();
 
-      console.log(`[AddCollection] Found ${allCustomers.length} total customers`);
-
       if (allCustomers.length === 0) {
-        setLoading(false); // Assuming setLoadingCustomers is meant to be setLoading
-        Alert.alert(
-          "No Customer Data",
-          "No customer data available. Please download customer data from Home screen first.",
-          [
-            { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
-            { text: "Cancel", style: "cancel" }
-          ]
-        );
+        setLoading(false);
         return [];
       }
 
@@ -185,24 +170,15 @@ export default function AddCollectionScreen() {
         return nameA.localeCompare(nameB);
       });
 
-      console.log(`[AddCollection] ✅ Loaded ${sortedCustomers.length} customers from local database`);
       return sortedCustomers;
     } catch (error) {
       console.error("[AddCollection] Error loading customers from database:", error);
-      Alert.alert(
-        "Error",
-        `Failed to load customers: ${error.message}. Please download data from Home screen.`,
-        [
-          { text: "Retry", onPress: () => fetchCustomers() },
-          { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") }
-        ]
-      );
       return [];
     }
   };
 
   const handleSelectCustomer = (customer) => {
-    setSelectedCustomer(customer.code);
+    setSelectedCustomer(customer);
     setSelectedCustomerName(customer.name);
     setShowCustomerModal(false);
     setSearchQuery("");
@@ -219,7 +195,7 @@ export default function AddCollectionScreen() {
       return;
     }
 
-    if (paymentType === "cheque" && !chequeNumber.trim()) {
+    if (paymentType === "Cheque" && !chequeNumber.trim()) {
       Alert.alert("Validation Error", "Please enter cheque number.");
       return;
     }
@@ -228,105 +204,40 @@ export default function AddCollectionScreen() {
 
     try {
       const collectionData = {
-        customer_code: selectedCustomer,
-        customer_name: selectedCustomerName,
+        code: selectedCustomer.code,
+        name: selectedCustomer.name,
+        place: selectedCustomer.place || null,
+        phone: selectedCustomer.phone || null,
         amount: parseFloat(amount),
-        payment_type: paymentType,
-        cheque_number: paymentType === "cheque" ? chequeNumber : null,
+        type: paymentType,
+        cheque_number: paymentType === "Cheque" ? chequeNumber : null,
         remarks: remarks.trim() || null,
         date: new Date().toISOString(),
+        synced: 0
       };
 
-      if (isOnline) {
-        await saveToAPI(collectionData);
-      } else {
-        await saveToLocalStorage(collectionData);
-        Alert.alert(
-          "Saved Offline",
-          "Collection saved locally. It will be synced when you're back online.",
-          [{ text: "OK", onPress: () => router.back() }]
-        );
-      }
+      // Save to local storage
+      await saveToLocalStorage(collectionData);
+
+      Alert.alert(
+        "Saved",
+        "Collection saved locally. Please sync when online.",
+        [{ text: "OK", onPress: () => router.back() }]
+      );
 
       resetForm();
     } catch (error) {
       console.error("Save error:", error);
-
-      if (isOnline) {
-        Alert.alert(
-          "Network Error",
-          "Failed to save online. Would you like to save offline?",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Save Offline",
-              onPress: async () => {
-                try {
-                  const collectionData = {
-                    customer_code: selectedCustomer,
-                    customer_name: selectedCustomerName,
-                    amount: parseFloat(amount),
-                    payment_type: paymentType,
-                    cheque_number: paymentType === "cheque" ? chequeNumber : null,
-                    remarks: remarks.trim() || null,
-                    date: new Date().toISOString(),
-                  };
-                  await saveToLocalStorage(collectionData);
-                  resetForm();
-                  router.back();
-                } catch (err) {
-                  Alert.alert("Error", "Failed to save collection.");
-                }
-              }
-            }
-          ]
-        );
-      } else {
-        Alert.alert("Error", "Failed to save collection. Please try again.");
-      }
+      Alert.alert("Error", "Failed to save collection. Please try again.");
     } finally {
       setSaving(false);
     }
   };
 
-  const saveToAPI = async (collectionData) => {
-    const token = await AsyncStorage.getItem("authToken");
-
-    // Save to SQLite database (offline-first approach)
-    await saveToLocalStorage(collectionData, false); // false = needs to be uploaded
-
-    Alert.alert(
-      "Collection Saved!",
-      "Your collection has been saved offline. What would you like to do next?",
-      [
-        {
-          text: "Add Another",
-          onPress: () => {
-            // Stay on page, form is already reset
-          }
-        },
-        {
-          text: "Done",
-          onPress: () => router.push("/Collection/Collection")
-        },
-        // {
-        //   text: "Upload Now",
-        //   onPress: () => router.push("/Collection/Upload")
-        // }
-      ]
-    );
-  };
-
-  const saveToLocalStorage = async (collectionData, isSynced = false) => {
+  const saveToLocalStorage = async (collectionData) => {
     try {
-      // Save to SQLite database
       await dbService.init();
-      const localId = await dbService.saveOfflineCollection({
-        ...collectionData,
-        synced: isSynced ? 1 : 0
-      });
-
-      console.log("Collection saved to database:", localId);
+      await dbService.saveOfflineCollection(collectionData);
     } catch (error) {
       console.error("Error saving to database:", error);
       throw error;
@@ -334,10 +245,10 @@ export default function AddCollectionScreen() {
   };
 
   const resetForm = () => {
-    setSelectedCustomer("");
+    setSelectedCustomer(null);
     setSelectedCustomerName("");
     setAmount("");
-    setPaymentType("cash");
+    setPaymentType("Cash");
     setChequeNumber("");
     setRemarks("");
   };
@@ -363,9 +274,9 @@ export default function AddCollectionScreen() {
 
   if (loading) {
     return (
-      <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
+      <LinearGradient colors={Gradients.background} style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0d3b6c" />
+          <ActivityIndicator size="large" color={Colors.primary.main} />
           <Text style={styles.loadingText}>Loading customers...</Text>
         </View>
       </LinearGradient>
@@ -373,56 +284,38 @@ export default function AddCollectionScreen() {
   }
 
   return (
-    <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <Animated.View entering={FadeInUp} style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={handleClose} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#0d3b6c" />
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Add Collection</Text>
           <View style={styles.statusContainer}>
             <View style={[styles.statusDot, isOnline ? styles.onlineDot : styles.offlineDot]} />
             <Text style={styles.statusText}>{isOnline ? "Online" : "Offline"}</Text>
           </View>
-        </Animated.View>
+        </View>
 
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {!isOnline && (
-            <Animated.View entering={FadeInUp.delay(50)} style={styles.offlineWarning}>
-              <Ionicons name="cloud-offline-outline" size={20} color="#ff9500" />
-              <Text style={styles.offlineWarningText}>
-                You're offline. Collections will be saved locally and synced later.
-              </Text>
-            </Animated.View>
-          )}
-
-          {customers.length === 0 && (
-            <Animated.View entering={FadeInUp.delay(50)} style={styles.noDataWarning}>
-              <Ionicons name="alert-circle-outline" size={20} color="#ff3b30" />
-              <Text style={styles.noDataWarningText}>
-                No customer data available. Please download customer data first.
-              </Text>
-            </Animated.View>
-          )}
-
           <Animated.View entering={FadeInUp.delay(100)} style={styles.formSection}>
             <Text style={styles.label}>
               Select Customer <Text style={styles.required}>*</Text>
             </Text>
             <TouchableOpacity
-              style={styles.customerSelector}
+              style={styles.inputBox}
               onPress={() => customers.length > 0 && setShowCustomerModal(true)}
               disabled={customers.length === 0}
             >
-              <Ionicons name="person-outline" size={20} color="#6b7c8a" style={styles.inputIcon} />
-              <Text style={[styles.customerSelectorText, !selectedCustomerName && styles.placeholderText]}>
-                {selectedCustomerName || "-- Select Customer --"}
+              <Ionicons name="person" size={20} color={selectedCustomerName ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
+              <Text style={[styles.inputText, !selectedCustomerName && styles.placeholderText]}>
+                {selectedCustomerName || "Select Customer"}
               </Text>
-              <Ionicons name="chevron-down" size={20} color="#6b7c8a" />
+              <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
             </TouchableOpacity>
           </Animated.View>
 
@@ -430,12 +323,12 @@ export default function AddCollectionScreen() {
             <Text style={styles.label}>
               Amount <Text style={styles.required}>*</Text>
             </Text>
-            <View style={styles.inputContainer}>
-              <Ionicons name="cash-outline" size={20} color="#6b7c8a" style={styles.inputIcon} />
+            <View style={styles.inputBox}>
+              <Ionicons name="cash" size={20} color={amount ? Colors.success.main : Colors.text.tertiary} style={styles.inputIcon} />
               <TextInput
-                style={styles.input}
+                style={styles.inputText}
                 placeholder="Enter amount"
-                placeholderTextColor="#9aa4b2"
+                placeholderTextColor={Colors.text.tertiary}
                 value={amount}
                 onChangeText={setAmount}
                 keyboardType="numeric"
@@ -451,23 +344,29 @@ export default function AddCollectionScreen() {
               <TouchableOpacity
                 style={[
                   styles.paymentTypeButton,
-                  paymentType === "cash" && styles.paymentTypeButtonActive,
+                  paymentType === "Cash" && styles.paymentTypeButtonActive,
                 ]}
                 onPress={() => {
-                  setPaymentType("cash");
+                  setPaymentType("Cash");
                   setChequeNumber("");
                 }}
-                activeOpacity={0.7}
+                activeOpacity={0.8}
               >
+                {paymentType === "Cash" && (
+                  <LinearGradient
+                    colors={Gradients.primary}
+                    style={styles.activeGradient}
+                  />
+                )}
                 <Ionicons
-                  name="wallet-outline"
+                  name="wallet"
                   size={24}
-                  color={paymentType === "cash" ? "#ffffff" : "#6b7c8a"}
+                  color={paymentType === "Cash" ? "#ffffff" : Colors.text.secondary}
                 />
                 <Text
                   style={[
                     styles.paymentTypeText,
-                    paymentType === "cash" && styles.paymentTypeTextActive,
+                    paymentType === "Cash" && styles.paymentTypeTextActive,
                   ]}
                 >
                   Cash
@@ -477,20 +376,26 @@ export default function AddCollectionScreen() {
               <TouchableOpacity
                 style={[
                   styles.paymentTypeButton,
-                  paymentType === "cheque" && styles.paymentTypeButtonActive,
+                  paymentType === "Cheque" && styles.paymentTypeButtonActive,
                 ]}
-                onPress={() => setPaymentType("cheque")}
-                activeOpacity={0.7}
+                onPress={() => setPaymentType("Cheque")}
+                activeOpacity={0.8}
               >
+                {paymentType === "Cheque" && (
+                  <LinearGradient
+                    colors={Gradients.primary}
+                    style={styles.activeGradient}
+                  />
+                )}
                 <Ionicons
-                  name="card-outline"
+                  name="card"
                   size={24}
-                  color={paymentType === "cheque" ? "#ffffff" : "#6b7c8a"}
+                  color={paymentType === "Cheque" ? "#ffffff" : Colors.text.secondary}
                 />
                 <Text
                   style={[
                     styles.paymentTypeText,
-                    paymentType === "cheque" && styles.paymentTypeTextActive,
+                    paymentType === "Cheque" && styles.paymentTypeTextActive,
                   ]}
                 >
                   Cheque
@@ -499,17 +404,17 @@ export default function AddCollectionScreen() {
             </View>
           </Animated.View>
 
-          {paymentType === "cheque" && (
+          {paymentType === "Cheque" && (
             <Animated.View entering={FadeInUp.delay(400)} style={styles.formSection}>
               <Text style={styles.label}>
                 Cheque Number <Text style={styles.required}>*</Text>
               </Text>
-              <View style={styles.inputContainer}>
-                <Ionicons name="document-text-outline" size={20} color="#6b7c8a" style={styles.inputIcon} />
+              <View style={styles.inputBox}>
+                <Ionicons name="document-text" size={20} color={Colors.text.tertiary} style={styles.inputIcon} />
                 <TextInput
-                  style={styles.input}
+                  style={styles.inputText}
                   placeholder="Enter cheque number"
-                  placeholderTextColor="#9aa4b2"
+                  placeholderTextColor={Colors.text.tertiary}
                   value={chequeNumber}
                   onChangeText={setChequeNumber}
                 />
@@ -519,47 +424,38 @@ export default function AddCollectionScreen() {
 
           <Animated.View entering={FadeInUp.delay(500)} style={styles.formSection}>
             <Text style={styles.label}>Remarks (Optional)</Text>
-            <View style={styles.textAreaContainer}>
-              <TextInput
-                style={styles.textArea}
-                placeholder="Add any notes or remarks..."
-                placeholderTextColor="#9aa4b2"
-                value={remarks}
-                onChangeText={setRemarks}
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-              />
-            </View>
+            <TextInput
+              style={[styles.inputBox, styles.textArea]}
+              placeholder="Add any notes..."
+              placeholderTextColor={Colors.text.tertiary}
+              value={remarks}
+              onChangeText={setRemarks}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+            />
           </Animated.View>
 
           <Animated.View entering={FadeInUp.delay(600)} style={styles.buttonContainer}>
             <TouchableOpacity
-              style={[styles.button, styles.saveButton]}
+              style={styles.saveButton}
               onPress={handleSave}
               disabled={saving || customers.length === 0}
               activeOpacity={0.8}
             >
-              {saving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark-circle-outline" size={20} color="#ffffff" />
-                  <Text style={styles.buttonText}>
-                    {isOnline ? "Save Collection" : "Save Offline"}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.button, styles.closeButton]}
-              onPress={handleClose}
-              disabled={saving}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="close-circle-outline" size={20} color="#ff3b30" />
-              <Text style={[styles.buttonText, { color: "#ff3b30" }]}>Close</Text>
+              <LinearGradient
+                colors={Gradients.primary}
+                style={styles.buttonGradient}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle" size={20} color="#ffffff" />
+                    <Text style={styles.buttonText}>Save Collection</Text>
+                  </>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
           </Animated.View>
         </ScrollView>
@@ -576,25 +472,20 @@ export default function AddCollectionScreen() {
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Select Customer</Text>
                 <TouchableOpacity onPress={() => setShowCustomerModal(false)}>
-                  <Ionicons name="close" size={24} color="#0d3b6c" />
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.searchContainer}>
-                <Ionicons name="search" size={20} color="#6b7c8a" style={styles.searchIcon} />
+                <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search customer..."
-                  placeholderTextColor="#9aa4b2"
+                  placeholder="Search name or code..."
+                  placeholderTextColor={Colors.text.tertiary}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
                   autoFocus={true}
                 />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery("")}>
-                    <Ionicons name="close-circle" size={20} color="#6b7c8a" />
-                  </TouchableOpacity>
-                )}
               </View>
 
               <FlatList
@@ -605,16 +496,18 @@ export default function AddCollectionScreen() {
                     style={styles.customerItem}
                     onPress={() => handleSelectCustomer(item)}
                   >
+                    <View style={styles.customerAvatar}>
+                      <Text style={styles.avatarText}>{item.name.charAt(0)}</Text>
+                    </View>
                     <View style={styles.customerInfo}>
                       <Text style={styles.customerName}>{item.name}</Text>
                       <Text style={styles.customerCode}>Code: {item.code}</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={20} color="#6b7c8a" />
+                    <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
                   </TouchableOpacity>
                 )}
                 ListEmptyComponent={
                   <View style={styles.emptyContainer}>
-                    <Ionicons name="search-outline" size={48} color="#9aa4b2" />
                     <Text style={styles.emptyText}>No customers found</Text>
                   </View>
                 }
@@ -634,6 +527,8 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.md,
   },
   loadingContainer: {
     flex: 1,
@@ -642,31 +537,32 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 16,
-    color: "#6b7c8a",
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(13, 59, 108, 0.08)",
-    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: Typography.sizes.xl,
     fontWeight: "700",
-    color: "#0d3b6c",
+    color: Colors.text.primary,
   },
   statusContainer: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
   statusDot: {
     width: 8,
@@ -674,108 +570,64 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   onlineDot: {
-    backgroundColor: "#34c759",
+    backgroundColor: Colors.success.main,
   },
   offlineDot: {
-    backgroundColor: "#ff9500",
+    backgroundColor: Colors.warning.main,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: Typography.sizes.xs,
     fontWeight: "600",
-    color: "#6b7c8a",
+    color: Colors.text.secondary,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
+    padding: Spacing.lg,
     paddingBottom: 40,
   },
-  offlineWarning: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff9e6",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 20,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: "#ffd966",
-  },
-  offlineWarningText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#b8860b",
-    fontWeight: "500",
-  },
-  noDataWarning: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#ffebee",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 20,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: "#ffcdd2",
-  },
-  noDataWarningText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#c62828",
-    fontWeight: "500",
-  },
   formSection: {
-    marginBottom: 24,
+    marginBottom: Spacing.lg,
   },
   label: {
-    fontSize: 15,
+    fontSize: Typography.sizes.sm,
     fontWeight: "600",
-    color: "#0d3b6c",
-    marginBottom: 8,
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
   },
   required: {
-    color: "#ff3b30",
+    color: Colors.error.main,
   },
-  customerSelector: {
+  inputBox: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#ffffff",
-    borderRadius: 12,
+    borderRadius: BorderRadius.lg,
     borderWidth: 1,
-    borderColor: "#eef6ff",
-    paddingHorizontal: 12,
-    height: 50,
-  },
-  customerSelectorText: {
-    flex: 1,
-    fontSize: 15,
-    color: "#0b2a44",
-  },
-  placeholderText: {
-    color: "#9aa4b2",
-  },
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#eef6ff",
-    paddingHorizontal: 12,
-    height: 50,
+    borderColor: Colors.border.light,
+    paddingHorizontal: Spacing.md,
+    height: 52,
+    ...Shadows.sm,
   },
   inputIcon: {
-    marginRight: 10,
+    marginRight: Spacing.sm,
   },
-  input: {
+  inputText: {
     flex: 1,
-    fontSize: 15,
-    color: "#0b2a44",
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+  },
+  placeholderText: {
+    color: Colors.text.tertiary,
+  },
+  textArea: {
+    height: 100,
+    paddingVertical: Spacing.md,
   },
   paymentTypeContainer: {
     flexDirection: "row",
-    gap: 12,
+    gap: Spacing.md,
   },
   paymentTypeButton: {
     flex: 1,
@@ -783,136 +635,129 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#ffffff",
-    borderRadius: 12,
+    borderRadius: BorderRadius.lg,
     borderWidth: 1,
-    borderColor: "#eef6ff",
-    paddingVertical: 16,
+    borderColor: Colors.border.light,
+    paddingVertical: Spacing.md,
     gap: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    height: 56,
   },
   paymentTypeButtonActive: {
-    backgroundColor: "#0d3b6c",
-    borderColor: "#0d3b6c",
+    borderColor: 'transparent',
+  },
+  activeGradient: {
+    ...StyleSheet.absoluteFillObject,
   },
   paymentTypeText: {
-    fontSize: 15,
+    fontSize: Typography.sizes.base,
     fontWeight: "600",
-    color: "#6b7c8a",
+    color: Colors.text.secondary,
+    zIndex: 1,
   },
   paymentTypeTextActive: {
     color: "#ffffff",
   },
-  textAreaContainer: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#eef6ff",
-    padding: 12,
-    minHeight: 100,
-  },
-  textArea: {
-    fontSize: 15,
-    color: "#0b2a44",
-    minHeight: 80,
-  },
   buttonContainer: {
-    gap: 12,
-    marginTop: 8,
-  },
-  button: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 12,
-    paddingVertical: 16,
-    gap: 8,
+    marginTop: Spacing.md,
   },
   saveButton: {
-    backgroundColor: "#0b8a2f",
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    ...Shadows.colored.primary,
   },
-  closeButton: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#ff3b30",
+  buttonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+    gap: 8,
   },
   buttonText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#ffffff",
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "flex-end",
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: "80%",
-    paddingBottom: 20,
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: BorderRadius['2xl'],
+    borderTopRightRadius: BorderRadius['2xl'],
+    height: '80%',
+    padding: Spacing.lg,
   },
   modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eef6ff",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0d3b6c",
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
   },
   searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f5f5f5",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    marginHorizontal: 20,
-    marginVertical: 12,
-    height: 45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.neutral[50],
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    height: 48,
+    marginBottom: Spacing.md,
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: Spacing.sm,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    color: "#0b2a44",
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
   },
   customerItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
+    borderBottomColor: Colors.border.light,
+  },
+  customerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primary[100],
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  avatarText: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.primary.main,
   },
   customerInfo: {
     flex: 1,
   },
   customerName: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0b2a44",
-    marginBottom: 4,
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
   },
   customerCode: {
-    fontSize: 13,
-    color: "#6b7c8a",
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
   },
   emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 60,
+    padding: Spacing.xl,
+    alignItems: 'center',
   },
   emptyText: {
-    fontSize: 16,
-    color: "#9aa4b2",
-    marginTop: 12,
+    color: Colors.text.secondary,
+    fontSize: Typography.sizes.base,
   },
 });

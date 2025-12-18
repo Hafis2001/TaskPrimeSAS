@@ -97,6 +97,8 @@ class DatabaseService {
           local_id TEXT UNIQUE,
           customer_code TEXT,
           customer_name TEXT,
+          customer_place TEXT,
+          customer_phone TEXT,
           amount REAL,
           payment_type TEXT,
           cheque_number TEXT,
@@ -331,14 +333,16 @@ class DatabaseService {
 
             await this.db.runAsync(
                 `INSERT INTO offline_collections 
-        (local_id, customer_code, customer_name, amount, payment_type, cheque_number, remarks, date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (local_id, customer_code, customer_name, customer_place, customer_phone, amount, payment_type, cheque_number, remarks, date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     localId,
-                    collection.customer_code,
-                    collection.customer_name,
+                    collection.customer_code || collection.code,
+                    collection.customer_name || collection.name,
+                    collection.customer_place || collection.place || null,
+                    collection.customer_phone || collection.phone || null,
                     collection.amount,
-                    collection.payment_type,
+                    collection.payment_type || collection.type,
                     collection.cheque_number || null,
                     collection.remarks || null,
                     collection.date || new Date().toISOString(),
@@ -354,10 +358,10 @@ class DatabaseService {
         }
     }
 
-    async getOfflineCollections(syncedOnly = false) {
+    async getOfflineCollections(syncedOnly) {
         try {
             let query = 'SELECT * FROM offline_collections';
-            if (syncedOnly !== null) {
+            if (syncedOnly !== undefined && syncedOnly !== null) {
                 query += ` WHERE synced = ${syncedOnly ? 1 : 0}`;
             }
             query += ' ORDER BY created_at DESC';
@@ -379,6 +383,20 @@ class DatabaseService {
             return true;
         } catch (error) {
             console.error('Error marking collection as synced:', error);
+            return false;
+        }
+    }
+
+    async deleteCollection(collectionId) {
+        try {
+            await this.db.runAsync(
+                'DELETE FROM offline_collections WHERE id = ?',
+                [collectionId]
+            );
+            console.log('Collection deleted:', collectionId);
+            return true;
+        } catch (error) {
+            console.error('Error deleting collection:', error);
             return false;
         }
     }
@@ -533,6 +551,21 @@ class DatabaseService {
     }
 
     // ==================== UTILITY ====================
+
+    async clearDownloadableData() {
+        try {
+            // Only clear customers and products (downloadable data)
+            // Preserve offline_collections and offline_orders (user-created data)
+            await this.db.runAsync('DELETE FROM customers');
+            await this.db.runAsync('DELETE FROM products');
+            await this.db.runAsync('DELETE FROM customer_ledger');
+            console.log('Downloadable data (customers, products) cleared');
+            return true;
+        } catch (error) {
+            console.error('Error clearing downloadable data:', error);
+            return false;
+        }
+    }
 
     async clearAllData() {
         try {

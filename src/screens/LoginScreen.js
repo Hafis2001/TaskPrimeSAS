@@ -1,3 +1,4 @@
+// src/screens/LoginScreen.js
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
@@ -7,7 +8,10 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Image,
+  KeyboardAvoidingView,
   Platform,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -15,13 +19,15 @@ import {
   View,
 } from "react-native";
 import Animated, {
+  FadeInDown,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 
-const { width } = Dimensions.get("window");
+const { width, height } = Dimensions.get("window");
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -37,10 +43,11 @@ export default function LoginScreen() {
   useEffect(() => {
     glow.value = withRepeat(withTiming(1, { duration: 2500 }), -1, true);
   }, []);
+
   const animatedGlow = useAnimatedStyle(() => ({
-    shadowColor: "#FF8C42",
+    shadowColor: Colors.primary.main,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: glow.value,
+    shadowOpacity: glow.value * 0.5,
     shadowRadius: glow.value * 15,
     elevation: glow.value * 10,
   }));
@@ -51,7 +58,7 @@ export default function LoginScreen() {
       try {
         const stored = await AsyncStorage.getItem("clientId");
         if (stored) setClientId(stored.trim().toUpperCase());
-      } catch (e) {}
+      } catch (e) { }
     })();
   }, []);
 
@@ -109,7 +116,7 @@ export default function LoginScreen() {
             package: matched.package ?? "",
           })
         );
-      } catch {}
+      } catch { }
 
       return { ok: true, customer: matched };
     } catch {
@@ -129,7 +136,7 @@ export default function LoginScreen() {
     try {
       const stored = await AsyncStorage.getItem("clientId");
       if (stored) setClientId(stored.trim().toUpperCase());
-    } catch {}
+    } catch { }
 
     const licenseResult = await validateLicense();
 
@@ -209,117 +216,167 @@ export default function LoginScreen() {
 
   return (
     <LinearGradient
-      colors={["#FFF7F0", "#FFEDE0", "#FFF2E5"]} // VERY PALE WHITE + ORANGE
+      colors={Gradients.background}
       style={styles.container}
     >
-      <Animated.View style={[styles.formContainer, animatedGlow]}>
-        <Text style={styles.title}>
-          Co-<Text style={styles.titleAccent}>operate</Text>
-        </Text>
-        <Text style={styles.subtitle}>Login</Text>
-
-        <View style={styles.inputContainer}>
-          <Ionicons name="person-outline" size={20} color="#555" style={styles.icon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            placeholderTextColor="#777"
-            value={username}
-            autoCapitalize="characters"
-            onChangeText={(text) => setUsername(text.toUpperCase().replace(/\s/g, ""))}
-          />
-        </View>
-
-        <View style={styles.inputContainer}>
-          <Ionicons name="lock-closed-outline" size={20} color="#555" style={styles.icon} />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#777"
-            secureTextEntry={!showPassword}
-            value={password}
-            onChangeText={setPassword}
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            onPress={() => setShowPassword(!showPassword)}
-            style={styles.eyeIcon}
-          >
-            <Ionicons
-              name={showPassword ? "eye-off-outline" : "eye-outline"}
-              size={20}
-              color="#555"
+      <StatusBar barStyle="dark-content" />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.keyboardView}
+      >
+        <Animated.View entering={FadeInDown.springify()} style={[styles.formContainer, animatedGlow]}>
+          <View style={styles.header}>
+            <Image
+              source={require('../../assets/images/logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
             />
-          </TouchableOpacity>
-        </View>
+            <Text style={styles.title}>
+              Task<Text style={styles.titleAccent}>SAS</Text>
+            </Text>
+            <Text style={styles.subtitle}>Sign in to continue</Text>
+          </View>
 
-        <Animated.View style={[styles.buttonWrapper, animatedGlow]}>
+          <View style={styles.inputWrapper}>
+            <Text style={styles.label}>Username</Text>
+            <View style={styles.inputContainer}>
+              <Ionicons name="person-outline" size={20} color={Colors.text.tertiary} style={styles.icon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your username"
+                placeholderTextColor={Colors.text.tertiary}
+                value={username}
+                autoCapitalize="characters"
+                onChangeText={(text) => setUsername(text.toUpperCase().replace(/\s/g, ""))}
+              />
+            </View>
+          </View>
+
+          <View style={styles.inputWrapper}>
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.inputContainer}>
+              <Ionicons name="lock-closed-outline" size={20} color={Colors.text.tertiary} style={styles.icon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                placeholderTextColor={Colors.text.tertiary}
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIcon}
+              >
+                <Ionicons
+                  name={showPassword ? "eye-off-outline" : "eye-outline"}
+                  size={20}
+                  color={Colors.text.tertiary}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <TouchableOpacity
-            style={[styles.button, loading && { opacity: 0.85 }]}
+            style={[styles.button, loading && { opacity: 0.8 }]}
             onPress={handleLogin}
             disabled={loading}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Login</Text>
-            )}
+            <LinearGradient
+              colors={Gradients.primary}
+              style={styles.buttonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Login</Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.forgotButton}>
+            <Text style={styles.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
         </Animated.View>
 
-        <TouchableOpacity>
-          <Text style={styles.forgotText}>Forgot Password?</Text>
-        </TouchableOpacity>
-      </Animated.View>
+        <Text style={styles.footerText}>Version 1.0.0 • TaskPrime SAS</Text>
+      </KeyboardAvoidingView>
     </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", alignItems: "center" },
+  container: { flex: 1 },
+  keyboardView: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   formContainer: {
-    width: width * 0.95,
-    backgroundColor: "rgba(255, 255, 255, 0.6)",
-    borderRadius: 25,
-    padding: 25,
+    width: width * 0.9,
+    maxWidth: 400,
+    backgroundColor: '#FFF',
+    borderRadius: BorderRadius['2xl'],
+    padding: Spacing['2xl'],
     alignItems: "center",
-    height: 650,
+    ...Shadows.xl,
   },
 
-  title: { fontSize: 30, fontWeight: "700", color: "#333" },
-  titleAccent: { color: "#FF8C42" },
-  subtitle: { fontSize: 24, color: "#444", marginBottom: 40 },
+  header: { alignItems: 'center', marginBottom: Spacing.xl },
+  logo: {
+    width: 120,
+    height: 120,
+    marginBottom: Spacing.md,
+  },
+
+  title: { fontSize: Typography.sizes['2xl'], fontWeight: "800", color: Colors.text.primary },
+  titleAccent: { color: Colors.primary.main },
+  subtitle: { fontSize: Typography.sizes.base, color: Colors.text.secondary, marginTop: 4 },
+
+  inputWrapper: { width: '100%', marginBottom: Spacing.lg },
+  label: { fontSize: Typography.sizes.sm, fontWeight: "600", color: Colors.text.primary, marginBottom: 8, marginLeft: 4 },
 
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.15)",
-    borderRadius: 15,
-    paddingHorizontal: 15,
-    marginBottom: 40,
-    backgroundColor: "rgba(255,255,255,0.8)",
-    padding: 10,
+    borderColor: Colors.border.light,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    height: 50,
+    backgroundColor: Colors.neutral[50],
   },
 
-  icon: { marginRight: 10 },
+  icon: { marginRight: Spacing.sm },
   input: {
     flex: 1,
-    color: "#333",
-    fontSize: 16,
-    paddingVertical: Platform.OS === "ios" ? 12 : 10,
+    color: Colors.text.primary,
+    fontSize: Typography.sizes.base,
+    height: '100%',
   },
-  eyeIcon: { padding: 5 },
+  eyeIcon: { padding: Spacing.sm },
 
-  buttonWrapper: { width: "100%", marginTop: 20, borderRadius: 15 },
   button: {
-    backgroundColor: "#FF8C42",
-    paddingVertical: 14,
-    borderRadius: 15,
-    alignItems: "center",
+    width: "100%",
+    borderRadius: BorderRadius.xl,
+    marginTop: Spacing.md,
+    ...Shadows.colored.primary,
+    overflow: 'hidden',
   },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  buttonGradient: {
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonText: { color: "#fff", fontSize: Typography.sizes.lg, fontWeight: "700" },
 
-  forgotText: { color: "#555", marginTop: 20, fontSize: 14 },
+  forgotButton: { marginTop: Spacing.lg, padding: Spacing.sm },
+  forgotText: { color: Colors.primary.main, fontSize: Typography.sizes.sm, fontWeight: "600" },
+
+  footerText: {
+    position: 'absolute',
+    bottom: Spacing.xl,
+    color: Colors.text.tertiary,
+    fontSize: Typography.sizes.xs
+  }
 });

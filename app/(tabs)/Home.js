@@ -1,9 +1,11 @@
-// Company.js
+// app/(tabs)/Home.js
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import {
   Animated,
+  Dimensions,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -12,8 +14,11 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { BorderRadius, Colors, Gradients, Spacing, Typography } from '../../constants/theme';
 import DownloadButton from '../../src/components/DownloadButton';
 import OfflineIndicator from '../../src/components/OfflineIndicator';
+
+const { width } = Dimensions.get('window');
 
 const Home = ({ navigation }) => {
   const router = useRouter();
@@ -24,12 +29,12 @@ const Home = ({ navigation }) => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 600,
+        duration: 800,
         useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 600,
+        duration: 800,
         useNativeDriver: true,
       }),
     ]).start();
@@ -41,50 +46,40 @@ const Home = ({ navigation }) => {
       title: 'COLLECTION',
       description: 'Record customer payments',
       onPress: () => router.push("/Collection/Collection"),
-      bgColor: '#FFF5F0',
-      iconBg: '#FFE8DD',
-      titleColor: '#D2916B',
-      borderColor: '#F4D4C4',
+      gradient: Gradients.accent,
+      shadowColor: Colors.accent.main,
     },
     {
       icon: 'cart-outline',
       title: 'SALES',
       description: 'Create a new sales entry',
       onPress: () => router.push("/Sales"),
-      bgColor: '#F0FFF5',
-      iconBg: '#DDF5E8',
-      titleColor: '#7AB89A',
-      borderColor: '#C4E8D4',
+      gradient: Gradients.success,
+      shadowColor: Colors.success.main,
     },
     {
       icon: 'return-up-back-outline',
       title: 'SALES RETURN',
       description: 'Process a return',
       onPress: () => router.push("/Sales-Return"),
-      bgColor: '#F8F0FF',
-      iconBg: '#EBE0FF',
-      titleColor: '#A88BC4',
-      borderColor: '#D9CCE8',
+      gradient: Colors.primary[400] ? [Colors.primary[400], Colors.primary[600]] : Gradients.primary,
+      shadowColor: Colors.primary.main,
     },
     {
       icon: 'cube-outline',
       title: 'ORDER',
       description: 'Place a new stock order',
       onPress: () => router.push("/Order/Entry"),
-      bgColor: '#F0F8FF',
-      iconBg: '#DDE8F5',
-      titleColor: '#7A9BB8',
-      borderColor: '#C4D4E8',
+      gradient: Gradients.secondary,
+      shadowColor: Colors.secondary.main,
     },
     {
       icon: 'receipt-outline',
       title: 'VIEW ORDERS',
       description: 'View all placed orders',
       onPress: () => router.push("/Order/PlaceOrder"),
-      bgColor: '#FFF8F0',
-      iconBg: '#FFE8DD',
-      titleColor: '#D2A16B',
-      borderColor: '#F4D9C4',
+      gradient: Gradients.ocean,
+      shadowColor: Colors.secondary[600],
       highlight: true,
     },
   ];
@@ -95,14 +90,14 @@ const Home = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F5F5FF" />
-
-      <ScrollView
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.content}>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.primary[50]} />
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
+        >
           {/* Header Section */}
           <Animated.View
             style={[
@@ -115,14 +110,24 @@ const Home = ({ navigation }) => {
           >
             <View style={styles.headerRow}>
               <View style={styles.headerLeft}>
+                <Text style={styles.greeting}>Hello, User</Text>
                 <Text style={styles.date}>{getCurrentDate()}</Text>
               </View>
-              <OfflineIndicator />
+              <View>
+                <OfflineIndicator />
+              </View>
             </View>
           </Animated.View>
 
           {/* Download/Sync Button */}
-          <DownloadButton />
+          <Animated.View
+            style={{
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }]
+            }}
+          >
+            <DownloadButton />
+          </Animated.View>
 
           {/* Quick Actions Grid */}
           <Animated.View
@@ -130,130 +135,167 @@ const Home = ({ navigation }) => {
               styles.actionsGrid,
               {
                 opacity: fadeAnim,
+                transform: [{ translateY: slideAnim }]
               }
             ]}
           >
-            {quickActions.map((action, index) => (
-              <TouchableOpacity
-                key={index}
-                style={[
-                  styles.actionCard,
-                  {
-                    backgroundColor: action.bgColor,
-                    borderColor: action.borderColor,
-                  }
-                ]}
-                onPress={action.onPress}
-                activeOpacity={0.7}
-              >
-                <View style={[
-                  styles.iconContainer,
-                  { backgroundColor: action.iconBg }
-                ]}>
-                  <Ionicons
-                    name={action.icon}
-                    size={32}
-                    color={action.titleColor}
-                  />
-                </View>
-                <Text style={[styles.actionTitle, { color: action.titleColor }]}>
-                  {action.title}
-                </Text>
-                <Text style={styles.actionDescription}>{action.description}</Text>
-              </TouchableOpacity>
-            ))}
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+
+            <View style={styles.gridContainer}>
+              {quickActions.map((action, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={[
+                    styles.actionCardContainer,
+                    action.highlight && styles.highlightCard
+                  ]}
+                  onPress={action.onPress}
+                  activeOpacity={0.9}
+                >
+                  <LinearGradient
+                    colors={action.gradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[
+                      styles.actionCard,
+                      { shadowColor: action.shadowColor }
+                    ]}
+                  >
+                    <View style={styles.iconContainer}>
+                      <Ionicons
+                        name={action.icon}
+                        size={28}
+                        color="#FFFFFF"
+                      />
+                    </View>
+                    <View style={styles.cardContent}>
+                      <Text style={styles.actionTitle}>
+                        {action.title}
+                      </Text>
+                      <Text style={styles.actionDescription} numberOfLines={2}>
+                        {action.description}
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name="arrow-forward-circle"
+                      size={24}
+                      color="rgba(255,255,255,0.6)"
+                      style={styles.arrowIcon}
+                    />
+                  </LinearGradient>
+                </TouchableOpacity>
+              ))}
+            </View>
           </Animated.View>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5FF',
+  },
+  safeArea: {
+    flex: 1,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.md,
   },
   scrollView: {
     flex: 1,
   },
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 20,
+  scrollContent: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.xl,
+    paddingBottom: Spacing['3xl'],
   },
   headerSection: {
-    marginBottom: 20,
+    marginBottom: Spacing.xl,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   headerLeft: {
     flex: 1,
   },
-  date: {
-    fontSize: 16,
-    color: '#9B9BA5',
-    marginBottom: 8,
-    fontWeight: '400',
-  },
-  mainTitle: {
-    fontSize: 36,
+  greeting: {
+    fontSize: Typography.sizes['2xl'],
     fontWeight: '700',
-    color: '#A8B8E0',
+    color: Colors.text.primary,
+    marginBottom: 4,
+  },
+  date: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+    fontWeight: '500',
+    textTransform: 'uppercase',
     letterSpacing: 1,
   },
+  sectionTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.md,
+    marginTop: Spacing.md,
+  },
   actionsGrid: {
+    marginTop: Spacing.md,
+  },
+  gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
     justifyContent: 'space-between',
+    gap: Spacing.md,
+  },
+  actionCardContainer: {
+    width: (width - (Spacing.lg * 2) - Spacing.md) / 2, // calculate exact width for 2 columns
+    marginBottom: Spacing.sm,
+  },
+  highlightCard: {
+    width: '100%', // full width for highlighted card
   },
   actionCard: {
-    width: '47.5%',
-    height: 170,
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 2,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 5,
-    },
-    shadowOpacity: 0.08,
+    height: 160,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+    justifyContent: 'space-between',
+    elevation: 8,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
     shadowRadius: 12,
-    elevation: 3,
   },
   iconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.full,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
+    backdropFilter: 'blur(10px)', // works on some versions, ignored on others
+  },
+  cardContent: {
+    marginTop: Spacing.sm,
   },
   actionTitle: {
-    fontSize: 14,
+    fontSize: Typography.sizes.md,
     fontWeight: '700',
-    marginBottom: 6,
-    letterSpacing: 0.8,
+    color: '#FFFFFF',
+    marginBottom: 4,
+    letterSpacing: 0.5,
   },
   actionDescription: {
-    fontSize: 13,
-    color: '#1A1A1A',
+    fontSize: Typography.sizes.xs,
+    color: 'rgba(255,255,255,0.9)',
     lineHeight: 18,
-    fontWeight: '400',
+    fontWeight: '500',
+  },
+  arrowIcon: {
+    position: 'absolute',
+    top: Spacing.lg,
+    right: Spacing.lg,
   },
 });
 

@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  PermissionsAndroid,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -20,121 +21,158 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
   const [loading, setLoading] = useState(false);
   const [deviceId, setDeviceId] = useState("");
   const [deviceName, setDeviceName] = useState("");
-  const [checking, setChecking] = useState(true); // Initial check
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
     initializeApp();
   }, []);
 
+  const requestAndroidPermissions = async () => {
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE,
+        {
+          title: "Device ID Permission",
+          message: "This app needs access to your device ID for license activation.",
+          buttonNeutral: "Ask Me Later",
+          buttonNegative: "Cancel",
+          buttonPositive: "OK"
+        }
+      );
+
+      if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+        console.log("✅ Phone state permission granted");
+        return true;
+      } else {
+        console.log("❌ Phone state permission denied");
+        return false;
+      }
+    } catch (err) {
+      console.warn("Permission request error:", err);
+      return false;
+    }
+  };
+
   const getDeviceId = async () => {
     try {
-      let id;
+      let id = null;
       
       if (Platform.OS === "android") {
-        // Try to get Android ID first
+        // Request permission first
+        const hasPermission = await requestAndroidPermissions();
+        
+        if (!hasPermission) {
+          throw new Error("Permission denied. Please grant phone state permission to use this app.");
+        }
+
+        // Try multiple methods to get Android ID
+        
+        // Method 1: Application.androidId
         id = Application.androidId;
+        console.log("Method 1 - Application.androidId:", id);
         
-        // Fallback for emulators or devices where androidId is null
-        if (!id || id === "null" || id === "") {
-          console.warn("⚠️ Android ID not available, using fallback method");
-          
-          // Check if stored device ID exists
-          const storedId = await AsyncStorage.getItem("persistentDeviceId");
-          
-          if (storedId) {
-            console.log("Using stored device ID:", storedId);
-            id = storedId;
-          } else {
-            // Generate a persistent unique ID for this device
-            // Using multiple device properties to make it more unique
-            const brand = Device.brand || "unknown";
-            const modelName = Device.modelName || "unknown";
-            const osVersion = Device.osVersion || "unknown";
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substr(2, 9);
+        if (id && id !== "null" && id !== "" && id !== "unknown") {
+          console.log("✅ Using Application.androidId:", id);
+          return id;
+        }
+
+        // Method 2: Try getting from native module directly using Application.getAndroidId()
+        if (Application.getAndroidId) {
+          try {
+            id = await Application.getAndroidId();
+            console.log("Method 2 - Application.getAndroidId():", id);
             
-            id = `android_${brand}_${modelName}_${osVersion}_${timestamp}_${random}`.replace(/\s+/g, '_');
-            
-            // Store this ID permanently for this device
-            await AsyncStorage.setItem("persistentDeviceId", id);
-            console.log("Generated and stored new device ID:", id);
+            if (id && id !== "null" && id !== "" && id !== "unknown") {
+              console.log("✅ Using Application.getAndroidId():", id);
+              return id;
+            }
+          } catch (e) {
+            console.log("Method 2 failed:", e);
           }
         }
-        
-        console.log("✅ Android Device ID:", id);
-      } else if (Platform.OS === "ios") {
-        // Use IDFV (Identifier For Vendor) for iOS
-        id = await Application.getIosIdForVendorAsync();
-        
-        // Fallback for simulators or jailbroken devices
-        if (!id || id === "null" || id === "") {
-          console.warn("⚠️ iOS IDFV not available, using fallback method");
-          
-          // Check if stored device ID exists
-          const storedId = await AsyncStorage.getItem("persistentDeviceId");
-          
-          if (storedId) {
-            console.log("Using stored device ID:", storedId);
-            id = storedId;
-          } else {
-            // Generate a persistent unique ID for this device
-            const modelName = Device.modelName || "unknown";
-            const osVersion = Device.osVersion || "unknown";
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substr(2, 9);
-            
-            id = `ios_${modelName}_${osVersion}_${timestamp}_${random}`.replace(/\s+/g, '_');
-            
-            // Store this ID permanently for this device
-            await AsyncStorage.setItem("persistentDeviceId", id);
-            console.log("Generated and stored new device ID:", id);
-          }
-        }
-        
-        console.log("✅ iOS Device ID (IDFV):", id);
-      } else {
-        // For web or other platforms
-        const storedId = await AsyncStorage.getItem("persistentDeviceId");
-        
+
+        // Method 3: Check if we have a previously stored device ID
+        const storedId = await AsyncStorage.getItem("device_hardware_id");
         if (storedId) {
-          id = storedId;
-        } else {
-          id = `web_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          await AsyncStorage.setItem("persistentDeviceId", id);
-        }
-        
-        console.log("✅ Web/Other Device ID:", id);
-      }
-      
-      return id;
-    } catch (error) {
-      console.error("❌ Error getting device ID:", error);
-      
-      // Last resort fallback - check for stored ID
-      try {
-        const storedId = await AsyncStorage.getItem("persistentDeviceId");
-        if (storedId) {
-          console.log("Using stored fallback device ID");
+          console.log("✅ Using stored device ID:", storedId);
           return storedId;
         }
-      } catch (storageError) {
-        console.error("Storage error:", storageError);
+
+        // If all methods fail, generate a UUID-based persistent ID
+        console.log("⚠️ Android ID not available, generating persistent UUID");
+        const uuid = 'xxxxxxxxxxxxxxxx'.replace(/[x]/g, function(c) {
+          const r = Math.random() * 16 | 0;
+          return r.toString(16);
+        });
+        
+        // Store it permanently
+        await AsyncStorage.setItem("device_hardware_id", uuid);
+        console.log("✅ Generated and stored UUID:", uuid);
+        return uuid;
+        
+      } else if (Platform.OS === "ios") {
+        // Get iOS IDFV
+        id = await Application.getIosIdForVendorAsync();
+        
+        console.log("iOS IDFV from Application:", id);
+        
+        if (id && id !== "null" && id !== "") {
+          console.log("✅ Using iOS IDFV:", id);
+          return id;
+        }
+
+        // Fallback for iOS - check stored ID
+        const storedId = await AsyncStorage.getItem("device_hardware_id");
+        if (storedId) {
+          console.log("✅ Using stored iOS device ID:", storedId);
+          return storedId;
+        }
+
+        // Generate UUID for iOS fallback
+        const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          const r = Math.random() * 16 | 0;
+          const v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+        
+        await AsyncStorage.setItem("device_hardware_id", uuid);
+        console.log("✅ Generated and stored iOS UUID:", uuid);
+        return uuid;
+        
+      } else {
+        throw new Error("Unsupported platform: " + Platform.OS);
       }
       
-      // If everything fails, show error
+    } catch (error) {
+      console.error("❌ CRITICAL ERROR getting device ID:", error);
+      
+      // Last resort - try to get stored ID
+      try {
+        const storedId = await AsyncStorage.getItem("device_hardware_id");
+        if (storedId) {
+          console.log("Using emergency stored device ID");
+          return storedId;
+        }
+      } catch (e) {
+        console.error("Storage error:", e);
+      }
+      
       Alert.alert(
         "Device ID Error",
-        `Unable to get device identifier: ${error.message}\n\nPlease restart the app or contact support.`,
+        error.message || "Unable to get device identifier",
         [
           {
             text: "Retry",
             onPress: () => {
-              // Retry initialization
               initializeApp();
             }
           },
           {
-            text: "Cancel",
+            text: "Exit",
             style: "cancel"
           }
         ]
@@ -149,16 +187,14 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       let name = "";
       
       if (Platform.OS === "android") {
-        // Get device brand and model for Android
         const brand = Device.brand || "";
         const modelName = Device.modelName || "";
         name = `${brand} ${modelName}`.trim() || "Android Device";
       } else if (Platform.OS === "ios") {
-        // Get device model for iOS
         const modelName = Device.modelName || "";
         name = modelName || "iOS Device";
       } else {
-        name = "Web Device";
+        name = "Unknown Device";
       }
       
       return name;
@@ -172,7 +208,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
     try {
       setChecking(true);
       
-      // Get device ID (Android ID, iOS IDFV, or fallback)
+      // Get device ID
       const id = await getDeviceId();
       setDeviceId(id);
       
@@ -180,26 +216,25 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       const name = await getDeviceName();
       setDeviceName(name);
       
-      console.log("Checking if device is already registered...");
+      console.log("=== DEVICE INFO ===");
       console.log("Platform:", Platform.OS);
       console.log("Device ID:", id);
       console.log("Device Name:", name);
+      console.log("Is Physical Device:", Device.isDevice);
+      console.log("===================");
       
       // Check if device is already registered in the API
       const isRegistered = await checkDeviceRegistration(id);
       
       if (isRegistered) {
         console.log("✅ Device already registered, skipping license screen");
-        // Device is already registered, skip license screen
         onActivationSuccess();
       } else {
         console.log("❌ Device not registered, showing license screen");
-        // Device not registered, show license screen
         setChecking(false);
       }
     } catch (error) {
       console.error("Initialization error:", error);
-      // On error, show license screen
       setChecking(false);
     }
   };
@@ -240,7 +275,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
           if (deviceFound) {
             console.log("✅ Device found in customer:", customer.customer_name);
             
-            // Store customer info for later use INCLUDING CLIENT_ID
+            // Store customer info for later use
             await AsyncStorage.setItem("licenseActivated", "true");
             await AsyncStorage.setItem("licenseKey", customer.license_key);
             await AsyncStorage.setItem("deviceId", deviceIdToCheck);
@@ -360,7 +395,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       }
       
       // Check if device limit reached
-      if (customer.license_summary.registered_count >= customer.license_summary.max_devices) {
+      if (customer.license_summary.registered_devices >= customer.license_summary.max_devices) {
         Alert.alert(
           "License Limit Reached",
           `Maximum devices (${customer.license_summary.max_devices}) already registered for this license`
@@ -376,6 +411,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
 
       console.log("📤 Registering new device...");
       console.log("Platform:", Platform.OS);
+      console.log("Is Physical Device:", Device.isDevice);
       console.log("License Key:", licenseKey.trim());
       console.log("Device ID:", deviceId);
       console.log("Device Name:", deviceName);
@@ -387,7 +423,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         },
         body: JSON.stringify({
           license_key: licenseKey.trim(),
-          device_id: deviceId, // This is Android ID, iOS IDFV, or persistent fallback ID
+          device_id: deviceId,
           device_name: deviceName,
         }),
       });
@@ -411,7 +447,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       console.log("Device registration response:", deviceData);
 
       if (deviceResponse.ok && deviceData.success) {
-        // Success - store activation status permanently INCLUDING CLIENT_ID
+        // Success - store activation status
         await AsyncStorage.setItem("licenseActivated", "true");
         await AsyncStorage.setItem("licenseKey", licenseKey.trim());
         await AsyncStorage.setItem("deviceId", deviceId);
@@ -421,6 +457,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         
         console.log("✅ Device registered successfully!");
         console.log("✅ Stored client_id:", customer.client_id);
+        console.log("✅ Registered Device ID:", deviceId);
         
         Alert.alert(
           "Success",
@@ -449,7 +486,6 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
     } catch (error) {
       console.error("Activation error:", error);
       
-      // More detailed error message
       let errorMessage = "Network error. Please check your connection and try again.";
       
       if (error.message) {
@@ -496,13 +532,17 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
 
         {/* Device Info Display */}
         <View style={styles.deviceInfoContainer}>
-          <Text style={styles.deviceInfoLabel}>
-            Device ID
-          </Text>
+          <View style={styles.deviceInfoRow}>
+            <Text style={styles.deviceInfoLabel}>Device Type</Text>
+            <Text style={styles.deviceInfoBadge}>
+              {Device.isDevice ? "Physical Device" : "Emulator/Simulator"}
+            </Text>
+          </View>
+          <Text style={styles.deviceInfoLabel}>Device ID</Text>
           <Text style={styles.deviceInfoText} numberOfLines={2}>
             {deviceId || "Loading..."}
           </Text>
-          <Text style={styles.deviceInfoLabel} Style={{ marginTop: 12 }}>Device Name</Text>
+          <Text style={[styles.deviceInfoLabel, { marginTop: 12 }]}>Device Name</Text>
           <Text style={styles.deviceInfoText} numberOfLines={1}>
             {deviceName || "Loading..."}
           </Text>
@@ -589,11 +629,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.2)",
   },
+  deviceInfoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   deviceInfoLabel: {
     fontSize: 14,
     fontWeight: "600",
     color: "#fff",
     marginBottom: 8,
+  },
+  deviceInfoBadge: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#4CAF50",
+    backgroundColor: "rgba(76, 175, 80, 0.2)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   deviceInfoText: {
     fontSize: 12,

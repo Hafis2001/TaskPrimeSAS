@@ -1,20 +1,30 @@
 // app/Order/PlaceOrder.js
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  FlatList,
-  Alert,
-  TextInput,
-  ScrollView,
-} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  LayoutAnimation,
+  Platform,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  UIManager,
+  View,
+} from 'react-native';
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
+
+if (Platform.OS === 'android') {
+  if (UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  }
+}
 
 export default function PlaceOrder() {
   const router = useRouter();
@@ -34,7 +44,7 @@ export default function PlaceOrder() {
       if (storedOrders) {
         const parsedOrders = JSON.parse(storedOrders);
         // Sort by timestamp, newest first
-        const sortedOrders = parsedOrders.sort((a, b) => 
+        const sortedOrders = parsedOrders.sort((a, b) =>
           new Date(b.timestamp) - new Date(a.timestamp)
         );
         setOrders(sortedOrders);
@@ -54,6 +64,7 @@ export default function PlaceOrder() {
 
   // Toggle order expansion
   function toggleOrder(orderId) {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setExpandedOrder(expandedOrder === orderId ? null : orderId);
   }
 
@@ -68,10 +79,10 @@ export default function PlaceOrder() {
             qty: newQty,
             total: newQty * updatedItems[itemIndex].price
           };
-          
+
           // Recalculate order total
           const newTotal = updatedItems.reduce((sum, item) => sum + item.total, 0);
-          
+
           return {
             ...order,
             items: updatedItems,
@@ -104,14 +115,14 @@ export default function PlaceOrder() {
               const updatedOrders = orders.map(order => {
                 if (order.id === orderId) {
                   const updatedItems = order.items.filter((_, idx) => idx !== itemIndex);
-                  
+
                   // If no items left, mark order for deletion
                   if (updatedItems.length === 0) {
                     return null;
                   }
-                  
+
                   const newTotal = updatedItems.reduce((sum, item) => sum + item.total, 0);
-                  
+
                   return {
                     ...order,
                     items: updatedItems,
@@ -179,7 +190,7 @@ export default function PlaceOrder() {
               const updatedOrders = orders.filter(order => order.id !== orderId);
               setOrders(updatedOrders);
               await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
-              Alert.alert('Success', 'Order deleted successfully');
+              // Alert.alert('Success', 'Order deleted successfully');
             } catch (error) {
               console.error('Error deleting order:', error);
               Alert.alert('Error', 'Failed to delete order');
@@ -209,19 +220,22 @@ export default function PlaceOrder() {
     return (
       <View style={styles.orderCard}>
         {/* Order Header */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.orderHeader}
           onPress={() => toggleOrder(order.id)}
           activeOpacity={0.7}
         >
           <View style={styles.orderHeaderLeft}>
-            <View style={[styles.statusBadge, isConfirmed && styles.confirmedBadge]}>
-              <Ionicons 
-                name={isConfirmed ? "checkmark-circle" : "time"} 
-                size={16} 
-                color="#fff" 
+            <LinearGradient
+              colors={isConfirmed ? Gradients.success : [Colors.warning.main, Colors.warning.main]}
+              style={styles.statusBadge}
+            >
+              <Ionicons
+                name={isConfirmed ? "checkmark-circle" : "time"}
+                size={16}
+                color="#fff"
               />
-            </View>
+            </LinearGradient>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.customerNameBold}>{order.customer}</Text>
               <Text style={styles.orderDetails}>
@@ -234,10 +248,10 @@ export default function PlaceOrder() {
           <View style={styles.orderHeaderRight}>
             <Text style={styles.orderTotal}>₹{order.total.toFixed(2)}</Text>
             <Text style={styles.itemCount}>{order.items.length} items</Text>
-            <Ionicons 
-              name={isExpanded ? "chevron-up" : "chevron-down"} 
-              size={20} 
-              color="#7a8aa3" 
+            <Ionicons
+              name={isExpanded ? "chevron-up" : "chevron-down"}
+              size={20}
+              color={Colors.text.tertiary}
               style={{ marginTop: 4 }}
             />
           </View>
@@ -247,11 +261,11 @@ export default function PlaceOrder() {
         {isExpanded && (
           <View style={styles.orderBody}>
             <View style={styles.divider} />
-            
+
             {/* Order Items */}
             {order.items.map((item, index) => {
-              const displayValue = editingQty[`${order.id}_${index}`] !== undefined 
-                ? editingQty[`${order.id}_${index}`] 
+              const displayValue = editingQty[`${order.id}_${index}`] !== undefined
+                ? editingQty[`${order.id}_${index}`]
                 : String(item.qty);
 
               return (
@@ -263,14 +277,14 @@ export default function PlaceOrder() {
 
                   {/* Quantity Controls */}
                   <View style={styles.qtyControls}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.qtyBtn}
                       onPress={() => {
                         const newQty = Math.max(1, item.qty - 1);
                         updateItemQty(order.id, index, newQty);
                       }}
                     >
-                      <Text style={styles.qtyBtnText}>-</Text>
+                      <Ionicons name="remove" size={16} color={Colors.text.primary} />
                     </TouchableOpacity>
 
                     <TextInput
@@ -281,13 +295,13 @@ export default function PlaceOrder() {
                           setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
                           return;
                         }
-                        
+
                         const cleaned = text.replace(/[^0-9]/g, '');
                         if (cleaned === "") {
                           setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
                           return;
                         }
-                        
+
                         const num = parseInt(cleaned, 10);
                         if (!isNaN(num) && num > 0) {
                           setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: cleaned }));
@@ -303,7 +317,7 @@ export default function PlaceOrder() {
                           delete newState[`${order.id}_${index}`];
                           return newState;
                         });
-                        
+
                         if (item.qty === 0) {
                           updateItemQty(order.id, index, 1);
                         }
@@ -312,18 +326,18 @@ export default function PlaceOrder() {
                       selectTextOnFocus={true}
                     />
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={styles.qtyBtn}
                       onPress={() => updateItemQty(order.id, index, item.qty + 1)}
                     >
-                      <Text style={styles.qtyBtnText}>+</Text>
+                      <Ionicons name="add" size={16} color={Colors.text.primary} />
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={() => removeItem(order.id, index)}
-                      style={{ marginLeft: 8 }}
+                      style={styles.removeBtn}
                     >
-                      <Ionicons name="trash-outline" size={20} color="#d9534f" />
+                      <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
                     </TouchableOpacity>
                   </View>
 
@@ -335,21 +349,31 @@ export default function PlaceOrder() {
             {/* Action Buttons */}
             <View style={styles.actionButtons}>
               {!isConfirmed && (
-                <TouchableOpacity 
-                  style={styles.confirmBtn}
+                <TouchableOpacity
+                  style={styles.actionButton}
                   onPress={() => confirmOrder(order.id)}
                 >
-                  <Ionicons name="checkmark-circle" size={18} color="#fff" />
-                  <Text style={styles.confirmBtnText}>Confirm Order</Text>
+                  <LinearGradient
+                    colors={Gradients.success}
+                    style={styles.actionButtonGradient}
+                  >
+                    <Ionicons name="checkmark-circle" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Confirm Order</Text>
+                  </LinearGradient>
                 </TouchableOpacity>
               )}
 
-              <TouchableOpacity 
-                style={styles.deleteBtn}
+              <TouchableOpacity
+                style={styles.actionButton}
                 onPress={() => deleteOrder(order.id)}
               >
-                <Ionicons name="trash-outline" size={18} color="#d9534f" />
-                <Text style={styles.deleteBtnText}>Delete</Text>
+                <LinearGradient
+                  colors={Gradients.danger}
+                  style={styles.actionButtonGradient}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>Delete Order</Text>
+                </LinearGradient>
               </TouchableOpacity>
             </View>
           </View>
@@ -359,16 +383,18 @@ export default function PlaceOrder() {
   }
 
   return (
-    <LinearGradient colors={["#4ea0ff", "#3a6fff"]} style={{ flex: 1 }}>
+    <LinearGradient colors={Gradients.background} style={styles.mainContainer}>
       <SafeAreaView style={{ flex: 1 }}>
+        <StatusBar barStyle="dark-content" />
+
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
-            <Ionicons name="chevron-back" size={24} color="#fff" />
+          <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Placed Orders</Text>
-          <TouchableOpacity onPress={handleRefresh} style={{ padding: 6 }}>
-            <Ionicons name="refresh" size={24} color="#fff" />
+          <TouchableOpacity onPress={handleRefresh} style={styles.iconButton}>
+            <Ionicons name="refresh" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
         </View>
 
@@ -376,13 +402,22 @@ export default function PlaceOrder() {
         <View style={styles.container}>
           {orders.length === 0 ? (
             <View style={styles.emptyState}>
-              <Ionicons name="receipt-outline" size={64} color="#d3dce6" />
-              <Text style={styles.emptyText}>No orders placed yet</Text>
-              <TouchableOpacity 
+              <View style={styles.emptyIconContainer}>
+                <Ionicons name="receipt-outline" size={60} color={Colors.primary.light} />
+              </View>
+              <Text style={styles.emptyTitle}>No orders placed yet</Text>
+              <Text style={styles.emptySubtitle}>Start by creating a new order</Text>
+              <TouchableOpacity
                 style={styles.emptyBtn}
                 onPress={() => router.push("/Order/Entry")}
               >
-                <Text style={styles.emptyBtnText}>Create New Order</Text>
+                <LinearGradient
+                  colors={Gradients.primary}
+                  style={styles.emptyBtnGradient}
+                >
+                  <Text style={styles.emptyBtnText}>Create New Order</Text>
+                  <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                </LinearGradient>
               </TouchableOpacity>
             </View>
           ) : (
@@ -393,6 +428,7 @@ export default function PlaceOrder() {
               contentContainerStyle={styles.listContent}
               refreshing={refreshing}
               onRefresh={handleRefresh}
+              showsVerticalScrollIndicator={false}
             />
           )}
         </View>
@@ -402,42 +438,44 @@ export default function PlaceOrder() {
 }
 
 const styles = StyleSheet.create({
+  mainContainer: { flex: 1 },
   header: {
-    height: 60,
-    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 28,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   headerTitle: {
-    color: '#fff',
-    fontSize: 20,
+    fontSize: Typography.sizes.xl,
     fontWeight: '700',
+    color: Colors.text.primary,
   },
+  iconButton: { padding: 4 },
+
   container: {
     flex: 1,
-    padding: 16,
+    paddingHorizontal: Spacing.lg,
   },
   listContent: {
     paddingBottom: 20,
+    paddingTop: Spacing.sm,
   },
+
   orderCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 12,
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.md,
     overflow: 'hidden',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
   },
   orderHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    padding: Spacing.md,
   },
   orderHeaderLeft: {
     flex: 1,
@@ -445,166 +483,172 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statusBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#ffa726',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  confirmedBadge: {
-    backgroundColor: '#38ba50',
-  },
   customerNameBold: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1b2b45',
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+    color: Colors.text.primary,
   },
   orderDetails: {
-    fontSize: 12,
-    color: '#7a8aa3',
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.secondary,
     marginTop: 2,
   },
   orderTime: {
-    fontSize: 11,
-    color: '#a0aec0',
+    fontSize: 10,
+    color: Colors.text.tertiary,
     marginTop: 2,
   },
   orderHeaderRight: {
     alignItems: 'flex-end',
   },
   orderTotal: {
-    fontSize: 18,
+    fontSize: Typography.sizes.lg,
     fontWeight: '700',
-    color: '#1e73d9',
+    color: Colors.primary.main,
   },
   itemCount: {
-    fontSize: 12,
-    color: '#7a8aa3',
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
     marginTop: 2,
   },
+
   orderBody: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+    backgroundColor: Colors.neutral[50], // Slightly different bg or inner content
   },
   divider: {
     height: 1,
-    backgroundColor: '#e6eefc',
-    marginBottom: 12,
+    backgroundColor: Colors.border.light,
+    marginBottom: Spacing.md,
   },
+
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f7fa',
+    borderBottomColor: Colors.border.light,
+    backgroundColor: '#FFF',
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    marginBottom: 8,
   },
   itemName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1b2b45',
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+    color: Colors.text.primary,
   },
   itemPrice: {
-    fontSize: 12,
-    color: '#7a8aa3',
-    marginTop: 4,
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.secondary,
+    marginTop: 2,
   },
+
   qtyControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 12,
+    marginHorizontal: Spacing.sm,
   },
   qtyBtn: {
     width: 28,
     height: 28,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#d3dce6',
+    borderColor: Colors.border.medium,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#fff',
-  },
-  qtyBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1b2b45',
   },
   qtyInput: {
     marginHorizontal: 8,
-    fontWeight: '700',
-    fontSize: 14,
+    fontWeight: '600',
+    fontSize: Typography.sizes.sm,
     textAlign: 'center',
     minWidth: 35,
     borderWidth: 1,
-    borderColor: '#d3dce6',
-    borderRadius: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
+    borderColor: Colors.border.medium,
+    borderRadius: BorderRadius.sm,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
     backgroundColor: '#fff',
+    color: Colors.text.primary,
   },
+  removeBtn: { marginLeft: 8, padding: 4 },
+
   itemTotal: {
-    fontSize: 14,
+    fontSize: Typography.sizes.sm,
     fontWeight: '700',
-    color: '#38ba50',
-    minWidth: 70,
+    color: Colors.success.main,
+    minWidth: 60,
     textAlign: 'right',
   },
+
   actionButtons: {
-    marginTop: 16,
+    marginTop: Spacing.md,
     gap: 10,
+    flexDirection: 'row',
   },
-  confirmBtn: {
-    backgroundColor: '#38ba50',
+  actionButton: {
+    flex: 1,
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
+    ...Shadows.sm,
+  },
+  actionButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    gap: 8,
+    paddingVertical: 10,
+    gap: 6,
   },
-  confirmBtnText: {
+  actionButtonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: Typography.sizes.sm,
     fontWeight: '700',
   },
-  deleteBtn: {
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#d9534f',
-    gap: 8,
-  },
-  deleteBtnText: {
-    color: '#d9534f',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
+    paddingBottom: 100,
   },
-  emptyText: {
-    fontSize: 18,
-    color: '#fff',
-    marginTop: 16,
-    marginBottom: 24,
-    fontWeight: '600',
+  emptyIconContainer: {
+    marginBottom: Spacing.lg,
+  },
+  emptyTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
+    marginBottom: Spacing.xl,
   },
   emptyBtn: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: BorderRadius.full,
+    overflow: 'hidden',
+    ...Shadows.colored.primary,
+  },
+  emptyBtnGradient: {
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   emptyBtnText: {
-    color: '#3a6fff',
-    fontSize: 16,
+    color: '#FFF',
+    fontSize: Typography.sizes.base,
     fontWeight: '700',
   },
 });

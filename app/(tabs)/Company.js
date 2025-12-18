@@ -1,10 +1,9 @@
-// Company.js - Updated to use main database service
+// app/(tabs)/Company.js
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  Alert,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -12,14 +11,13 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
 
 const Company = () => {
   const router = useRouter();
   const [customersCount, setCustomersCount] = useState(0);
-  const [loading, setLoading] = useState(true);
 
-  // Load customer count from database
   useEffect(() => {
     loadCustomerCount();
   }, []);
@@ -31,135 +29,227 @@ const Company = () => {
       setCustomersCount(stats?.customers || 0);
     } catch (error) {
       console.error('[Company] Error loading customer count:', error);
-    } finally {
-      setLoading(false);
     }
-  };
-
-  const handleLogout = () => {
-    Alert.alert("Logout", "Are you sure you want to logout?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Yes",
-        onPress: async () => {
-          await AsyncStorage.removeItem("authToken");
-          router.replace("/LoginScreen");
-        },
-      },
-    ]);
   };
 
   const quickActions = [
     {
-      icon: "business-outline",
-      title: "About",
+      icon: "business",
+      title: "About Company",
       description: "Company mission, values, and history",
       onPress: () => router.push("/company-info"),
+      color: Colors.primary.main,
+      bg: Colors.primary[50],
     },
     {
-      icon: "people-outline",
+      icon: "people",
       title: "Customers",
-      description: `View ${customersCount} customers in database`,
+      description: `${customersCount} registered customers`,
       onPress: () => router.push("/customers"),
+      color: Colors.secondary.main,
+      bg: Colors.secondary[50],
     },
+    {
+      icon: "map",
+      title: "Area Assignment",
+      description: "Manage sales territories",
+      onPress: () => router.push("/area-assign"),
+      color: Colors.accent.main,
+      bg: Colors.accent[50],
+    }
   ];
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        {/* Optional: Add any header content here if needed */}
-      </View>
-
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
-        <View style={styles.logoContainer} />
-        <View style={styles.greetingContainer} />
-
-        <View style={styles.actionsContainer}>
-          <Text style={styles.actionsTitle}>Quick Actions</Text>
-
-          <View style={styles.actionsList}>
-            {quickActions.map((action, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.actionCard}
-                onPress={action.onPress}
-                activeOpacity={0.8}
-              >
-                <View style={styles.iconContainer}>
-                  <Ionicons name={action.icon} size={24} color="#0d3b6c" />
-                </View>
-                <View style={styles.actionContent}>
-                  <Text style={styles.actionTitle}>{action.title}</Text>
-                  <Text style={styles.actionDescription}>{action.description}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="#F1F5F9" />
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Info message */}
-          <View style={styles.infoBox}>
-            <Ionicons name="information-circle" size={16} color="#1976D2" />
-            <Text style={styles.infoText}>
-              To download or sync customer data, go to Home screen and click the Download/Sync button
-            </Text>
-          </View>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          <Text style={styles.pageTitle}>Company</Text>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+
+        <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
+          <View style={styles.bannerContainer}>
+            <LinearGradient
+              colors={Gradients.primary}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.banner}
+            >
+              <View style={styles.bannerContent}>
+                <View style={styles.bannerIcon}>
+                  <Ionicons name="briefcase" size={32} color={Colors.primary.main} />
+                </View>
+                <View>
+                  <Text style={styles.bannerTitle}>Business Center</Text>
+                  <Text style={styles.bannerSubtitle}>Manage your company data</Text>
+                </View>
+              </View>
+            </LinearGradient>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+
+            <View style={styles.listContainer}>
+              {quickActions.map((action, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.actionCard}
+                  onPress={action.onPress}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconContainer, { backgroundColor: action.bg }]}>
+                    <Ionicons name={action.icon} size={24} color={action.color} />
+                  </View>
+
+                  <View style={styles.cardContent}>
+                    <Text style={styles.actionTitle}>{action.title}</Text>
+                    <Text style={styles.actionDescription}>{action.description}</Text>
+                  </View>
+
+                  <View style={styles.arrowContainer}>
+                    <Ionicons name="chevron-forward" size={20} color={Colors.neutral[400]} />
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.infoSection}>
+            <View style={styles.infoCard}>
+              <Ionicons name="information-circle" size={20} color={Colors.primary.main} />
+              <Text style={styles.infoText}>
+                Use the Home screen to download or sync the latest company data.
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f7f9fa" },
+  container: {
+    flex: 1,
+  },
+  safeArea: {
+    flex: 1,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.md,
+  },
   header: {
-    width: "100%",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
   },
-  scrollView: { flex: 1 },
-  contentContainer: { padding: 24 },
-  logoContainer: { marginBottom: 32 },
-  greetingContainer: { marginBottom: 32 },
-  actionsContainer: { flex: 1 },
-  actionsTitle: { fontSize: 18, fontWeight: "600", color: "#0d3b6c", marginBottom: 16 },
-  actionsList: { gap: 12, marginBottom: 20 },
-  actionCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#78c0f8ff",
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#f4f5f7ff",
-    minHeight: 80,
+  pageTitle: {
+    fontSize: Typography.sizes['3xl'],
+    fontWeight: '700',
+    color: Colors.text.primary,
   },
-  iconContainer: {
-    backgroundColor: "rgba(251,251,243,0.48)",
-    borderRadius: 8,
-    padding: 8,
-    marginRight: 16
+  scrollView: {
+    flex: 1
   },
-  actionContent: { flex: 1 },
-  actionTitle: { fontSize: 16, fontWeight: "600", color: "#F1F5F9", marginBottom: 4 },
-  actionDescription: { fontSize: 14, color: "#f8fafdff" },
-  infoBox: {
+  contentContainer: {
+    padding: Spacing.lg,
+    paddingBottom: 100, // Space for tab bar
+  },
+  bannerContainer: {
+    marginBottom: Spacing.xl,
+  },
+  banner: {
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    ...Shadows.md,
+  },
+  bannerContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E3F2FD',
-    borderRadius: 8,
-    padding: 12,
-    gap: 8,
+    gap: Spacing.lg,
+  },
+  bannerIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.sm,
+  },
+  bannerTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  bannerSubtitle: {
+    fontSize: Typography.sizes.sm,
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: '500',
+  },
+  section: {
+    marginBottom: Spacing.xl,
+  },
+  sectionTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.md,
+  },
+  listContainer: {
+    gap: Spacing.md,
+  },
+  actionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+  },
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cardContent: {
+    flex: 1,
+    marginLeft: Spacing.md,
+  },
+  actionTitle: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: 2,
+  },
+  actionDescription: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+  },
+  arrowContainer: {
+    marginLeft: Spacing.sm,
+  },
+  infoSection: {
+    marginTop: Spacing.md,
+  },
+  infoCard: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    backgroundColor: Colors.primary[50], // Very light purple
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.primary[100],
   },
   infoText: {
     flex: 1,
-    fontSize: 12,
-    color: '#1565C0',
-    lineHeight: 16,
-  },
+    fontSize: Typography.sizes.sm,
+    color: Colors.primary[900],
+    lineHeight: 20,
+  }
 });
 
 export default Company;

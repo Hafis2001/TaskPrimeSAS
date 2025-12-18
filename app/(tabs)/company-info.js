@@ -1,23 +1,24 @@
+// app/(tabs)/company-info.js
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useState } from 'react';
-import { 
-  ActivityIndicator, 
-  ScrollView, 
-  StyleSheet, 
-  Text, 
-  View, 
-  TouchableOpacity,
-  Modal 
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 
 const API_URL = 'https://tasksas.com/api/get-misel-data/';
 
 export default function CompanyInfoScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
@@ -48,223 +49,361 @@ export default function CompanyInfoScreen() {
     })();
   }, []);
 
-  // ✅ FIXED LOGOUT — No route error
   const handleLogout = async () => {
     await AsyncStorage.clear();
     setLogoutVisible(false);
-
-    // FIXED: remove leading "/" to avoid unexpected route error
     router.replace("/LoginScreen");
   };
 
-
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#4fd1c5" size="large" />
-      </View>
+      <LinearGradient colors={Gradients.background} style={styles.center}>
+        <ActivityIndicator color={Colors.primary.main} size="large" />
+      </LinearGradient>
     );
   }
 
+  const InfoRow = ({ label, value, icon, isLast }) => (
+    <View style={[styles.infoRow, isLast && styles.noBorder]}>
+      <View style={styles.labelContainer}>
+        <Ionicons name={icon} size={18} color={Colors.primary.main} style={styles.labelIcon} />
+        <Text style={styles.label}>{label}</Text>
+      </View>
+      <Text style={styles.value}>{value || '—'}</Text>
+    </View>
+  );
+
   return (
-    <LinearGradient colors={["#0b132b", "#1c2541"]} style={styles.container}>
-      <ScrollView 
-        contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 50 }}
-      >
-        <View style={{ flexDirection: "row", marginLeft:10 }}>
-         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={23} color="#fff" style={styles.arrow}/>
-        </TouchableOpacity>
-        {/* ----- Title ----- */}
-        <Text style={styles.title}>Company Info</Text>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Company Info</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        {/* ----- Company Details Card ----- */}
-        <View style={styles.card}>
-          <Text style={styles.label}>Firm Name</Text>
-          <Text style={styles.value}>{company?.firm_name || '—'}</Text>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {/* Company Card */}
+          <View style={styles.card}>
+            <LinearGradient
+              colors={Gradients.primary}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.cardHeader}
+            >
+              <View style={styles.companyIcon}>
+                <Ionicons name="business" size={24} color={Colors.primary.main} />
+              </View>
+              <View>
+                <Text style={styles.companyName}>
+                  {company?.firm_name || 'Company Name'}
+                </Text>
+                <Text style={styles.companyId}>ID: {user.clientId}</Text>
+              </View>
+            </LinearGradient>
 
-          <Text style={styles.label}>Address</Text>
-          <Text style={styles.value}>{company?.address || '—'}</Text>
-          <Text style={styles.value}>{company?.address1 || ''}</Text>
-          <Text style={styles.value}>{company?.address2 || ''}</Text>
+            <View style={styles.cardBody}>
+              <InfoRow
+                label="Address"
+                value={`${company?.address || ''} ${company?.address1 || ''} ${company?.address2 || ''}`}
+                icon="location-outline"
+              />
+              <InfoRow
+                label="Phone"
+                value={company?.phones || company?.mobile}
+                icon="call-outline"
+              />
+              <InfoRow
+                label="Email"
+                value={company?.pagers}
+                icon="mail-outline"
+              />
+              <InfoRow
+                label="GST / TIN"
+                value={company?.tinno}
+                icon="document-text-outline"
+                isLast
+              />
+            </View>
+          </View>
 
-          <Text style={styles.label}>Phone</Text>
-          <Text style={styles.value}>{company?.phones || company?.mobile || '—'}</Text>
-
-          <Text style={styles.label}>E-mail</Text>
-          <Text style={styles.value}>{company?.pagers || '—'}</Text>
-
-          <Text style={styles.label}>GST / TIN</Text>
-          <Text style={styles.value}>{company?.tinno || '—'}</Text>
-        </View>
-
-        {/* ----- User Card with Logout Row ----- */}
-        <View style={styles.userCard}>
-          
-          {/* Row Alignment FIXED */}
-          <View style={styles.row}>
-            <View>
-              <Text style={styles.welcome}>Welcome</Text>
-              <Text style={styles.userName}>{user.name || 'User'}</Text>
-              <Text style={styles.clientId}>ID: {user.clientId}</Text>
+          {/* User Profile Card */}
+          <Text style={styles.sectionTitle}>User Profile</Text>
+          <View style={styles.userCard}>
+            <View style={styles.userInfo}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                </Text>
+              </View>
+              <View>
+                <Text style={styles.welcomeText}>Welcome back,</Text>
+                <Text style={styles.userName}>{user.name || 'User'}</Text>
+              </View>
             </View>
 
-            {/* Logout Button Inside Row (Perfect alignment) */}
-            <TouchableOpacity 
-              style={styles.logoutBtn}
+            <TouchableOpacity
+              style={styles.logoutButton}
               onPress={() => setLogoutVisible(true)}
             >
-              <Ionicons name="log-out-outline" size={26} color="#68c0cfff" />
+              <Ionicons name="log-out-outline" size={20} color={Colors.error.main} />
+              <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
+        </ScrollView>
 
-        </View>
+        {/* Logout Modal */}
+        <Modal
+          visible={logoutVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setLogoutVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalIcon}>
+                <Ionicons name="log-out" size={32} color={Colors.error.main} />
+              </View>
+              <Text style={styles.modalTitle}>Confirm Logout</Text>
+              <Text style={styles.modalMessage}>
+                Are you sure you want to end your session?
+              </Text>
 
-      </ScrollView>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => setLogoutVisible(false)}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
 
-      {/* ----- Logout Popup Modal ----- */}
-      <Modal
-        visible={logoutVisible}
-        transparent
-        animationType="fade"
-      >
-        <View style={styles.modalBg}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Logout</Text>
-
-            <Text style={styles.modalMsg}>
-              Are you sure you want to logout,  
-              <Text style={{ color: "#4fd1c5", fontWeight: '700' }}> {user.name}</Text>?
-            </Text>
-
-            <View style={styles.modalBtns}>
-              <TouchableOpacity 
-                style={[styles.btn, { backgroundColor: "#1c2541" }]}
-                onPress={() => setLogoutVisible(false)}
-              >
-                <Text style={styles.btnText}>No</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={[styles.btn, { backgroundColor: "#4fd1c5" }]}
-                onPress={handleLogout}
-              >
-                <Text style={styles.btnText}>Yes</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.confirmButton}
+                  onPress={handleLogout}
+                >
+                  <Text style={styles.confirmButtonText}>Logout</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-
           </View>
-        </View>
-      </Modal>
-
+        </Modal>
+      </SafeAreaView>
     </LinearGradient>
   );
 }
 
-
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
-
+  safeArea: { flex: 1, paddingTop: Spacing.xs, paddingBottom: Spacing.md },
   center: {
-    flex: 1, justifyContent: 'center', 
-    alignItems: 'center', backgroundColor: '#0b132b'
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-
-  title: {
-    color: '#fff', fontSize: 24, fontWeight: '700',
-    marginBottom: 16, marginTop: 15, textAlign: "center",
-    marginLeft:60
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
-
+  backButton: {
+    padding: Spacing.xs,
+  },
+  headerTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  scrollContent: {
+    padding: Spacing.lg,
+    paddingBottom: 50,
+  },
   card: {
-    backgroundColor: '#0f1a2b',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    height:"75%",
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    marginBottom: Spacing.xl,
+    ...Shadows.md,
+    overflow: 'hidden',
   },
-
+  cardHeader: {
+    padding: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  companyIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  companyName: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  companyId: {
+    fontSize: Typography.sizes.sm,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  cardBody: {
+    padding: Spacing.lg,
+  },
+  infoRow: {
+    marginBottom: Spacing.md,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  noBorder: {
+    borderBottomWidth: 0,
+    marginBottom: 0,
+    paddingBottom: 0,
+  },
+  labelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
   label: {
-    color: '#9aa4b2', marginTop: 12, fontWeight: '600'
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+    fontWeight: '600',
   },
-
   value: {
-    color: '#fff', fontSize: 16, marginTop: 10
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+    paddingLeft: 26, // align with text
+    lineHeight: 22,
   },
-
+  sectionTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.md,
+  },
   userCard: {
-    backgroundColor: '#071029',
-    padding: 18,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center"
-  },
-
-  welcome: { color: '#9aa4b2' },
-  userName: { color: '#4fd1c5', fontSize: 18, fontWeight: '700', marginTop: 4 },
-  clientId: { color: '#9aa4b2', marginTop: 3 },
-
-  logoutBtn: {
-    backgroundColor: "#0b132b",
-    padding: 10,
-    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: "#1b1c38ff"
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
   },
-
-  modalBg: {
+  userInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: Colors.primary[100],
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.primary.main,
+  },
+  welcomeText: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.secondary,
+  },
+  userName: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    padding: 8,
+    backgroundColor: Colors.error[50],
+    borderRadius: BorderRadius.md,
+  },
+  logoutText: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.error.main,
+    fontWeight: '600',
+  },
+  modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center"
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
   },
-
-  modalBox: {
-    width: "80%",
-    backgroundColor: "#0f1a2b",
-    padding: 20,
-    borderRadius: 12,
+  modalContent: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    ...Shadows.xl,
   },
-
+  modalIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: Colors.error[50],
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
   modalTitle: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 10
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.xs,
   },
-
-  modalMsg: {
-    color: "#9aa4b2",
-    fontSize: 15,
-    marginBottom: 20
+  modalMessage: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
+    textAlign: 'center',
+    marginBottom: Spacing.xl,
   },
-
-  modalBtns: {
-    flexDirection: "row",
-    justifyContent: "space-between"
+  modalActions: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    width: '100%',
   },
-
-  btn: {
+  cancelButton: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginHorizontal: 5,
-    alignItems: "center"
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    alignItems: 'center',
   },
-
-  btnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700"
+  cancelButtonText: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
   },
-   arrow:{
-marginTop:18
-  }
+  confirmButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.error.main,
+    alignItems: 'center',
+  },
+  confirmButtonText: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
 });

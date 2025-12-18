@@ -1,6 +1,7 @@
 // src/components/DownloadButton.js
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
 import {
     ActivityIndicator,
@@ -11,6 +12,7 @@ import {
     View,
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from '../../constants/theme';
 import syncService from '../services/syncService';
 
 export default function DownloadButton({ onDownloadComplete }) {
@@ -174,19 +176,30 @@ export default function DownloadButton({ onDownloadComplete }) {
 
     return (
         <Animated.View entering={FadeInDown.delay(150)} style={styles.container}>
-            <View style={styles.card}>
+            <LinearGradient
+                colors={['#ffffff', '#fcfcfc']}
+                style={styles.card}
+            >
                 {/* Header */}
                 <View style={styles.header}>
                     <View style={styles.iconContainer}>
-                        <Ionicons
-                            name={isDownloading || isSyncing ? "cloud-download" : isOnline ? "cloud-done" : "cloud-offline"}
-                            size={28}
-                            color={isOnline ? "#4CAF50" : "#FF9800"}
-                        />
+                        <LinearGradient
+                            colors={
+                                isDownloading || isSyncing ? Gradients.primary :
+                                    isOnline ? Gradients.success : Gradients.warning
+                            }
+                            style={styles.iconGradient}
+                        >
+                            <Ionicons
+                                name={isDownloading || isSyncing ? "cloud-download" : isOnline ? "cloud-done" : "cloud-offline"}
+                                size={24}
+                                color="#FFF"
+                            />
+                        </LinearGradient>
                     </View>
                     <View style={styles.headerText}>
                         <Text style={styles.title}>
-                            {isDownloading ? 'Downloading...' : isSyncing ? 'Syncing...' : 'Offline Data'}
+                            {isDownloading ? 'Downloading...' : isSyncing ? 'Syncing...' : 'Data Sync'}
                         </Text>
                         <Text style={styles.subtitle}>
                             {isOnline ? 'Online' : 'Offline'} • Last sync: {formatLastSync(stats?.lastSyncTime)}
@@ -194,7 +207,7 @@ export default function DownloadButton({ onDownloadComplete }) {
                     </View>
                     {!isOnline && (
                         <View style={styles.offlineBadge}>
-                            <Ionicons name="wifi-off" size={14} color="#fff" />
+                            <Ionicons name="wifi-off" size={12} color="#fff" />
                         </View>
                     )}
                 </View>
@@ -204,7 +217,12 @@ export default function DownloadButton({ onDownloadComplete }) {
                     <View style={styles.progressContainer}>
                         <Text style={styles.progressText}>{progress.message}</Text>
                         <View style={styles.progressBar}>
-                            <View style={[styles.progressFill, { width: `${progress.progress}%` }]} />
+                            <LinearGradient
+                                colors={Gradients.primary}
+                                style={[styles.progressFill, { width: `${progress.progress}%` }]}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            />
                         </View>
                         <Text style={styles.progressPercentage}>{Math.round(progress.progress)}%</Text>
                     </View>
@@ -214,17 +232,17 @@ export default function DownloadButton({ onDownloadComplete }) {
                 {!isDownloading && !isSyncing && stats && (
                     <View style={styles.stats}>
                         <View style={styles.statItem}>
-                            <Ionicons name="people" size={20} color="#6b7c8a" />
+                            <Ionicons name="people" size={18} color={Colors.text.secondary} />
                             <Text style={styles.statText}>{stats.customers} Customers</Text>
                         </View>
                         <View style={styles.statItem}>
-                            <Ionicons name="cube" size={20} color="#6b7c8a" />
+                            <Ionicons name="cube" size={18} color={Colors.text.secondary} />
                             <Text style={styles.statText}>{stats.products} Products</Text>
                         </View>
                         {stats.hasPendingUploads && (
                             <View style={styles.statItem}>
-                                <Ionicons name="cloud-upload" size={20} color="#FF9800" />
-                                <Text style={[styles.statText, { color: '#FF9800' }]}>
+                                <Ionicons name="cloud-upload" size={18} color={Colors.warning.main} />
+                                <Text style={[styles.statText, { color: Colors.warning.main, fontWeight: '700' }]}>
                                     {stats.pendingCollections + stats.pendingOrders} Pending
                                 </Text>
                             </View>
@@ -236,35 +254,49 @@ export default function DownloadButton({ onDownloadComplete }) {
                 <View style={styles.actions}>
                     {stats && stats.hasData ? (
                         <TouchableOpacity
-                            style={[styles.button, styles.syncButton]}
+                            style={styles.buttonWrapper}
                             onPress={handleRefreshData}
                             disabled={isDownloading || isSyncing || !isOnline}
                             activeOpacity={0.7}
                         >
-                            {isSyncing ? (
-                                <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                                <>
-                                    <Ionicons name="refresh" size={20} color="#fff" />
-                                    <Text style={styles.buttonText}>Refresh Data</Text>
-                                </>
-                            )}
+                            <LinearGradient
+                                colors={Gradients.secondary} // Teal for refresh/sync
+                                style={styles.buttonGradient}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                {isSyncing ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <>
+                                        <Ionicons name="refresh" size={20} color="#fff" />
+                                        <Text style={styles.buttonText}>Refresh Data</Text>
+                                    </>
+                                )}
+                            </LinearGradient>
                         </TouchableOpacity>
                     ) : (
                         <TouchableOpacity
-                            style={[styles.button, styles.downloadButton]}
+                            style={styles.buttonWrapper}
                             onPress={handleDownload}
                             disabled={isDownloading || isSyncing || !isOnline}
                             activeOpacity={0.7}
                         >
-                            {isDownloading ? (
-                                <ActivityIndicator size="small" color="#fff" />
-                            ) : (
-                                <>
-                                    <Ionicons name="cloud-download" size={20} color="#fff" />
-                                    <Text style={styles.buttonText}>Download Data</Text>
-                                </>
-                            )}
+                            <LinearGradient
+                                colors={Gradients.primary} // Indigo for initial download
+                                style={styles.buttonGradient}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                            >
+                                {isDownloading ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <>
+                                        <Ionicons name="cloud-download" size={20} color="#fff" />
+                                        <Text style={styles.buttonText}>Download Data</Text>
+                                    </>
+                                )}
+                            </LinearGradient>
                         </TouchableOpacity>
                     )}
                 </View>
@@ -272,7 +304,7 @@ export default function DownloadButton({ onDownloadComplete }) {
                 {/* Info Message */}
                 {!stats?.hasData && !isDownloading && (
                     <View style={styles.infoBox}>
-                        <Ionicons name="information-circle" size={16} color="#1976D2" />
+                        <Ionicons name="information-circle" size={18} color={Colors.primary.main} />
                         <Text style={styles.infoText}>
                             Download data to work offline. Upload collections/orders from the Upload screen.
                         </Text>
@@ -282,99 +314,98 @@ export default function DownloadButton({ onDownloadComplete }) {
                 {/* Pending uploads info */}
                 {stats?.hasPendingUploads && !isDownloading && (
                     <View style={styles.warningBox}>
-                        <Ionicons name="cloud-upload-outline" size={16} color="#FF9800" />
+                        <Ionicons name="cloud-upload-outline" size={18} color={Colors.warning.dark} />
                         <Text style={styles.warningText}>
                             You have {stats.pendingCollections + stats.pendingOrders} pending items. Go to Upload screen to sync.
                         </Text>
                     </View>
                 )}
-            </View>
+            </LinearGradient>
         </Animated.View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        marginHorizontal: 16,
-        marginVertical: 12,
+        marginHorizontal: Spacing.lg,
+        marginVertical: Spacing.md,
+        borderRadius: BorderRadius.xl,
+        ...Shadows.md,
+        backgroundColor: '#fff',
     },
     card: {
-        backgroundColor: '#fff',
-        borderRadius: 16,
-        padding: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        elevation: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.05)',
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.md,
+        overflow: 'hidden',
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: Spacing.md,
     },
     iconContainer: {
+        marginRight: Spacing.md,
+        ...Shadows.sm,
+    },
+    iconGradient: {
         width: 48,
         height: 48,
         borderRadius: 24,
-        backgroundColor: '#F5F5F5',
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
     },
     headerText: {
         flex: 1,
     },
     title: {
-        fontSize: 16,
+        fontSize: Typography.sizes.base,
         fontWeight: '700',
-        color: '#1a1a1a',
+        color: Colors.text.primary,
         marginBottom: 2,
     },
     subtitle: {
-        fontSize: 13,
-        color: '#6b7c8a',
+        fontSize: Typography.sizes.xs,
+        color: Colors.text.secondary,
     },
     offlineBadge: {
         width: 28,
         height: 28,
         borderRadius: 14,
-        backgroundColor: '#FF9800',
+        backgroundColor: Colors.warning.main,
         justifyContent: 'center',
         alignItems: 'center',
+        ...Shadows.sm,
     },
     progressContainer: {
-        marginBottom: 12,
+        marginBottom: Spacing.md,
     },
     progressText: {
-        fontSize: 13,
-        color: '#6b7c8a',
+        fontSize: Typography.sizes.xs,
+        color: Colors.text.secondary,
         marginBottom: 8,
     },
     progressBar: {
         height: 6,
-        backgroundColor: '#E0E0E0',
+        backgroundColor: Colors.neutral[200],
         borderRadius: 3,
         overflow: 'hidden',
         marginBottom: 4,
     },
     progressFill: {
         height: '100%',
-        backgroundColor: '#4CAF50',
         borderRadius: 3,
     },
     progressPercentage: {
-        fontSize: 12,
-        color: '#6b7c8a',
+        fontSize: 10,
+        color: Colors.text.tertiary,
         textAlign: 'right',
     },
     stats: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        marginBottom: 12,
-        gap: 12,
+        marginBottom: Spacing.md,
+        gap: Spacing.md,
+        paddingVertical: Spacing.xs,
     },
     statItem: {
         flexDirection: 'row',
@@ -382,60 +413,62 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     statText: {
-        fontSize: 13,
-        color: '#6b7c8a',
+        fontSize: Typography.sizes.xs,
+        color: Colors.text.secondary,
         fontWeight: '500',
     },
     actions: {
         marginTop: 4,
     },
-    button: {
+    buttonWrapper: {
+        borderRadius: BorderRadius.lg,
+        overflow: 'hidden',
+        ...Shadows.sm,
+    },
+    buttonGradient: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 12,
-        borderRadius: 10,
         gap: 8,
     },
-    downloadButton: {
-        backgroundColor: '#1976D2',
-    },
-    syncButton: {
-        backgroundColor: '#4CAF50',
-    },
     buttonText: {
-        fontSize: 15,
+        fontSize: Typography.sizes.sm,
         fontWeight: '600',
         color: '#fff',
     },
     infoBox: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#E3F2FD',
-        borderRadius: 8,
-        padding: 10,
-        marginTop: 8,
+        backgroundColor: Colors.primary[50],
+        borderRadius: BorderRadius.md,
+        padding: Spacing.sm,
+        marginTop: Spacing.sm,
         gap: 8,
+        borderWidth: 1,
+        borderColor: Colors.primary[100],
     },
     infoText: {
         flex: 1,
-        fontSize: 12,
-        color: '#1565C0',
+        fontSize: Typography.sizes.xs,
+        color: Colors.primary.dark,
         lineHeight: 16,
     },
     warningBox: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFF9E6',
-        borderRadius: 8,
-        padding: 10,
-        marginTop: 8,
+        backgroundColor: Colors.warning[50],
+        borderRadius: BorderRadius.md,
+        padding: Spacing.sm,
+        marginTop: Spacing.sm,
         gap: 8,
+        borderWidth: 1,
+        borderColor: Colors.warning[200],
     },
     warningText: {
         flex: 1,
-        fontSize: 12,
-        color: '#E65100',
+        fontSize: Typography.sizes.xs,
+        color: Colors.warning.dark,
         lineHeight: 16,
     },
 });

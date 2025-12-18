@@ -1,20 +1,24 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+// app/customer-ledger.js
+import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  ActivityIndicator,
-  TouchableOpacity,
-  Alert,
-  Platform,
-} from "react-native";
-import Icon from "react-native-vector-icons/Ionicons";
-import { LinearGradient } from "expo-linear-gradient";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import { LinearGradient } from "expo-linear-gradient";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Platform,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../constants/theme";
 
 const API_URL = "https://taskprime.app/api/get-ledger-details?account_code=";
 
@@ -38,7 +42,6 @@ export default function CustomerLedgerScreen() {
 
   useEffect(() => {
     fetchLedger();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
 
   const fetchLedger = async () => {
@@ -197,15 +200,15 @@ export default function CustomerLedgerScreen() {
   const renderItem = ({ item }) => {
     const isCredit = item.credit && item.credit > 0;
     const amount = isCredit ? item.credit : item.debit;
-    const color = isCredit ? "#ff3b30" : "#0b8a2f"; // credit red, debit green
+    const color = isCredit ? Colors.error.main : Colors.success.main;
 
     return (
       <Animated.View entering={FadeInUp.delay(20)}>
         <View style={styles.transactionCard}>
           <View style={styles.rowBetween}>
             <View style={[styles.rowCenter, { flex: 1 }]}>
-              <View style={[styles.iconCircle, { backgroundColor: hexWithAlpha(color, 0.12) }]}>
-                <Icon name={isCredit ? "arrow-down" : "arrow-up"} size={18} color={color} />
+              <View style={[styles.iconCircle, { backgroundColor: isCredit ? Colors.error[50] : Colors.success[50] }]}>
+                <Ionicons name={isCredit ? "arrow-down" : "arrow-up"} size={18} color={color} />
               </View>
               <View style={{ flexShrink: 1 }}>
                 <Text style={styles.particulars} numberOfLines={1} ellipsizeMode="tail">
@@ -230,234 +233,248 @@ export default function CustomerLedgerScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loader}>
-        <ActivityIndicator size="large" color="#0d3b6c" />
-      </View>
+      <LinearGradient colors={Gradients.background} style={styles.loader}>
+        <ActivityIndicator size="large" color={Colors.primary.main} />
+      </LinearGradient>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.headerCard}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Icon name="arrow-back" size={22} color="#0d3b6c" />
-        </TouchableOpacity>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
+      <SafeAreaView style={{ flex: 1 }}>
+        <StatusBar barStyle="dark-content" />
 
-        <View style={{ flex: 1, paddingHorizontal: 8 }}>
-          <Animated.Text entering={FadeInUp} style={styles.title}>
-            {name || "Customer Ledger"}
-          </Animated.Text>
-          <Animated.Text entering={FadeInUp.delay(40)} style={styles.dateText}>
-            {fromDate && toDate
-              ? `${formatDate(fromDate)} → ${formatDate(toDate)}`
-              : "All Transactions"}
-          </Animated.Text>
+        {/* Header Card */}
+        <View style={styles.headerContainer}>
+          <LinearGradient colors={Gradients.primary} style={styles.headerCard}>
+            <View style={styles.headerTop}>
+              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+                <Ionicons name="arrow-back" size={24} color="#FFF" />
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Animated.Text entering={FadeInUp} style={styles.title} numberOfLines={1}>
+                  {name || "Customer Ledger"}
+                </Animated.Text>
+                <Animated.Text entering={FadeInUp.delay(40)} style={styles.dateText}>
+                  {fromDate && toDate
+                    ? `${formatDate(fromDate)} → ${formatDate(toDate)}`
+                    : "All Transactions"}
+                </Animated.Text>
+              </View>
+              <TouchableOpacity onPress={refreshAll} style={styles.iconAction}>
+                <Ionicons name="refresh" size={22} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.dateActions}>
+              <TouchableOpacity
+                onPress={() => {
+                  setDatePickerMode("from");
+                  setShowDatePicker(true);
+                }}
+                style={styles.dateButton}
+              >
+                <Ionicons name="calendar-outline" size={16} color="#FFF" />
+                <Text style={styles.dateButtonText}>From Date</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  setDatePickerMode("to");
+                  setShowDatePicker(true);
+                }}
+                style={styles.dateButton}
+              >
+                <Ionicons name="calendar" size={16} color="#FFF" />
+                <Text style={styles.dateButtonText}>To Date</Text>
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
         </View>
 
-        <View style={styles.actions}>
-          <TouchableOpacity
-            onPress={() => {
-              setDatePickerMode("from");
-              setShowDatePicker(true);
-            }}
-            style={styles.iconAction}
+        {showDatePicker && (
+          <DateTimePicker
+            value={datePickerMode === "from" ? (fromDate || new Date()) : (toDate || new Date())}
+            mode="date"
+            display="calendar"
+            onChange={onDateChange}
+          />
+        )}
+
+        <View style={styles.contentContainer}>
+          {/* Balances */}
+          <View style={styles.balanceRow}>
+            <View style={styles.balanceBox}>
+              <Text style={styles.balanceLabel}>Current Balance</Text>
+              <Text style={styles.balanceValue}>
+                {closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+            <View style={styles.balanceBox}>
+              <Text style={styles.balanceLabel}>Opening Balance</Text>
+              <Text style={styles.balanceValue}>
+                {openingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.totalCard}>
+            <View style={styles.totalItem}>
+              <Text style={styles.totalLabel}>Total Credit</Text>
+              <Text style={[styles.totalValue, { color: Colors.error.main }]}>{totalCredit.toLocaleString("en-IN")}</Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.totalItem}>
+              <Text style={styles.totalLabel}>Total Debit</Text>
+              <Text style={[styles.totalValue, { color: Colors.success.main }]}>{totalDebit.toLocaleString("en-IN")}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.transHeading}>TRANSACTIONS</Text>
+
+          <FlatList
+            data={filteredLedger}
+            keyExtractor={(_, i) => i.toString()}
+            renderItem={renderItem}
+            contentContainerStyle={styles.listContent}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Ionicons name="documents-outline" size={48} color={Colors.neutral[300]} />
+                <Text style={styles.emptyText}>No transactions found.</Text>
+              </View>
+            }
+            showsVerticalScrollIndicator={false}
+          />
+        </View>
+
+        <View style={styles.footerCard}>
+          <LinearGradient
+            colors={Gradients.surface}
+            style={styles.footerGradient}
           >
-            <Icon name="calendar-outline" size={20} color="#0d3b6c" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => {
-              setDatePickerMode("to");
-              setShowDatePicker(true);
-            }}
-            style={styles.iconAction}
-          >
-            <Icon name="calendar" size={20} color="#0d3b6c" />
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={refreshAll} style={styles.iconAction}>
-            <Icon name="refresh" size={20} color="#0d3b6c" />
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
-
-      {showDatePicker && (
-        <DateTimePicker
-          value={datePickerMode === "from" ? (fromDate || new Date()) : (toDate || new Date())}
-          mode="date"
-          display="calendar"
-          onChange={onDateChange}
-        />
-      )}
-
-      <View style={styles.balanceRow}>
-        <View style={styles.balanceBox}>
-          <Text style={styles.balanceLabel}>Current Balance</Text>
-          <Text style={styles.balanceValue}>
-            {closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-          </Text>
-        </View>
-        <View style={styles.balanceBox}>
-          <Text style={styles.balanceLabel}>Opening Balance</Text>
-          <Text style={styles.balanceValue}>
-            {openingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.totalCard}>
-        <View style={styles.totalItem}>
-          <Text style={styles.totalLabel}>Total Credit</Text>
-          <Text style={[styles.totalValue, { color: "#ff3b30" }]}>{totalCredit.toLocaleString("en-IN")}</Text>
+            <Text style={styles.footerLabel}>Closing Balance</Text>
+            <Text style={styles.footerValue}>
+              {closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+            </Text>
+          </LinearGradient>
         </View>
 
-        <View style={styles.divider} />
-
-        <View style={styles.totalItem}>
-          <Text style={styles.totalLabel}>Total Debit</Text>
-          <Text style={[styles.totalValue, { color: "#0b8a2f" }]}>{totalDebit.toLocaleString("en-IN")}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.transHeading}>TRANSACTIONS</Text>
-
-      <FlatList
-        data={filteredLedger}
-        keyExtractor={(_, i) => i.toString()}
-        renderItem={renderItem}
-        contentContainerStyle={{ paddingBottom: 110, paddingTop: 8 }}
-        ListEmptyComponent={<Text style={styles.emptyText}>No transactions found.</Text>}
-        showsVerticalScrollIndicator={false}
-      />
-
-      <View style={styles.footerCard}>
-        <Text style={styles.footerLabel}>Closing Balance</Text>
-        <Text style={styles.footerValue}>
-          {closingBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-        </Text>
-      </View>
-    </View>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
-// ----------------- Styles -----------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#FFF7F0", padding: 12 },
-  loader: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#FFF7F0" },
+  container: { flex: 1 },
+  loader: { flex: 1, justifyContent: "center", alignItems: "center" },
 
+  headerContainer: { paddingHorizontal: Spacing.lg, marginTop: Spacing.md },
   headerCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginTop: Platform.OS === "ios" ? 50 : 16,
-    marginBottom: 12,
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: "rgba(13,59,108,0.08)",
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    ...Shadows.md,
   },
+  headerTop: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
+  backBtn: { paddingRight: Spacing.md },
+  title: { fontSize: Typography.sizes.lg, fontWeight: "700", color: "#FFF" },
+  dateText: { fontSize: Typography.sizes.sm, color: "rgba(255,255,255,0.8)", marginTop: 2 },
+  iconAction: { padding: 4 },
 
-  backBtn: { paddingRight: 8 },
+  dateActions: { flexDirection: 'row', gap: Spacing.md },
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+    gap: 6,
+  },
+  dateButtonText: { color: '#FFF', fontSize: Typography.sizes.sm, fontWeight: '600' },
 
-  title: { fontSize: 18, fontWeight: "700", color: "#0d3b6c" },
-  dateText: { fontSize: 13, color: "#55606a", marginTop: 2 },
+  contentContainer: { flex: 1, paddingHorizontal: Spacing.lg },
 
-  actions: { flexDirection: "row", alignItems: "center" },
-  iconAction: { marginLeft: 10, padding: 6, borderRadius: 8 },
-
-  balanceRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
+  balanceRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: Spacing.md, gap: Spacing.md },
   balanceBox: {
-    backgroundColor: "rgba(255,255,255,0.9)",
     flex: 1,
-    marginHorizontal: 4,
-    borderRadius: 10,
-    padding: 12,
+    backgroundColor: '#FFF',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(13,59,108,0.06)",
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
   },
-  balanceLabel: { color: "#55606a", fontWeight: "600", fontSize: 13 },
-  balanceValue: { fontSize: 17, fontWeight: "700", color: "#0d3b6c", marginTop: 4 },
+  balanceLabel: { color: Colors.text.secondary, fontWeight: "600", fontSize: Typography.sizes.xs },
+  balanceValue: { fontSize: Typography.sizes.base, fontWeight: "700", color: Colors.text.primary, marginTop: 4 },
 
   totalCard: {
     flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.9)",
-    padding: 10,
-    borderRadius: 10,
-    marginBottom: 10,
+    backgroundColor: '#FFF',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.lg,
     alignItems: "center",
     justifyContent: "space-between",
     borderWidth: 1,
-    borderColor: "rgba(13,59,108,0.06)",
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
   },
   totalItem: { flex: 1, alignItems: "center" },
-  divider: { width: 1, height: 36, backgroundColor: "rgba(13,59,108,0.08)" },
-  totalLabel: { color: "#55606a", fontWeight: "600", fontSize: 13 },
-  totalValue: { fontSize: 16, fontWeight: "700" },
+  divider: { width: 1, height: 36, backgroundColor: Colors.border.medium },
+  totalLabel: { color: Colors.text.secondary, fontWeight: "600", fontSize: Typography.sizes.xs },
+  totalValue: { fontSize: Typography.sizes.base, fontWeight: "700" },
 
-  transHeading: { fontSize: 13, fontWeight: "700", color: "#0d3b6c", marginBottom: 6, marginTop: 6 },
+  transHeading: { fontSize: Typography.sizes.sm, fontWeight: "700", color: Colors.text.tertiary, marginBottom: Spacing.sm },
+
+  listContent: { paddingBottom: 100 },
 
   transactionCard: {
-    backgroundColor: "#ffffff",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 10,
+    backgroundColor: "#FFF",
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: "#eef6ff",
-    shadowColor: "#0d3b6c",
-    shadowOpacity: 0.02,
-    shadowRadius: 6,
-    elevation: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
   },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', marginTop: Spacing['2xl'] },
+  emptyText: { textAlign: "center", color: Colors.text.tertiary, marginTop: Spacing.md },
 
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   rowCenter: { flexDirection: "row", alignItems: "center" },
 
   iconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 10,
+    marginRight: Spacing.md,
   },
 
-  particulars: { fontWeight: "700", color: "#0b2a44", maxWidth: 220 },
-  subText: { color: "#6b7c8a", fontSize: 12 },
-  voucherText: { color: "#7c8899", fontSize: 12, marginTop: 4 },
+  particulars: { fontWeight: "700", color: Colors.text.primary, maxWidth: 220, fontSize: Typography.sizes.sm },
+  subText: { color: Colors.text.secondary, fontSize: Typography.sizes.xs, marginTop: 2 },
+  voucherText: { color: Colors.text.tertiary, fontSize: 10, marginTop: 2 },
 
-  amountText: { fontSize: 16, fontWeight: "700", textAlign: "right" },
+  amountText: { fontSize: Typography.sizes.base, fontWeight: "700", textAlign: "right" },
 
   footerCard: {
     position: "absolute",
-    bottom: 18,
-    left: 12,
-    right: 12,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    padding: 14,
-    alignItems: "center",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(13,59,108,0.12)",
+    bottom: Spacing.lg,
+    left: Spacing.lg,
+    right: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    ...Shadows.lg,
   },
-  footerLabel: { color: "#55606a", fontSize: 14, fontWeight: "700" },
-  footerValue: { color: "#0d3b6c", fontSize: 20, fontWeight: "900", marginTop: 6 },
-
-  emptyText: { textAlign: "center", color: "#9aa4b2", marginTop: 20 },
+  footerGradient: {
+    padding: Spacing.md,
+    alignItems: 'center',
+  },
+  footerLabel: { color: Colors.text.secondary, fontSize: Typography.sizes.sm, fontWeight: "700" },
+  footerValue: { color: Colors.primary.main, fontSize: Typography.sizes.xl, fontWeight: "900", marginTop: 4 },
 });
-
-// ----------------- Helpers -----------------
-function hexWithAlpha(hexColor, alpha) {
-  // hexColor like '#00eaff' -> returns rgba string with alpha
-  try {
-    const c = hexColor.replace("#", "");
-    const bigint = parseInt(c, 16);
-    const r = (bigint >> 16) & 255;
-    const g = (bigint >> 8) & 255;
-    const b = bigint & 255;
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  } catch {
-    return `rgba(13,59,108,${alpha})`;
-  }
-}

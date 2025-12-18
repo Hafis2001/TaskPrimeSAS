@@ -1,4 +1,4 @@
-// app/view-collection.js
+// app/Collection/View-Collection.js
 import { Ionicons } from "@expo/vector-icons";
 import * as NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
 
 export default function ViewCollectionScreen() {
@@ -73,28 +74,18 @@ export default function ViewCollectionScreen() {
 
   const loadCollections = async () => {
     try {
-      setLoading(true);
+      if (loading) setLoading(true);
 
-      console.log('[View-Collection] Loading collections from database...');
       await dbService.init();
-
-      // Get ALL collections (both synced and unsynced)
       const allCollections = await dbService.getOfflineCollections();
-
-      console.log(`[View-Collection] Found ${allCollections.length} total collections`);
-
-      // Sort by created_at (newest first)
       const sortedCollections = allCollections.sort((a, b) => {
-        return new Date(b.created_at) - new Date(a.created_at);
+        return new Date(b.created_at || b.date) - new Date(a.created_at || a.date);
       });
 
       setCollections(sortedCollections);
       calculateStats(sortedCollections);
-
-      console.log(`[View-Collection] ✅ Loaded ${sortedCollections.length} collections`);
     } catch (error) {
       console.error("[View-Collection] Error loading collections:", error);
-      Alert.alert("Error", `Failed to load collections: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -107,8 +98,8 @@ export default function ViewCollectionScreen() {
   }, []);
 
   const calculateStats = (data) => {
-    const syncedItems = data.filter(item => item.synced);
-    const pendingItems = data.filter(item => !item.synced);
+    const syncedItems = data.filter(item => item.synced === 1);
+    const pendingItems = data.filter(item => item.synced === 0);
 
     const totalAmount = data.reduce((sum, item) => sum + parseFloat(item.amount), 0);
     const syncedAmount = syncedItems.reduce((sum, item) => sum + parseFloat(item.amount), 0);
@@ -128,9 +119,9 @@ export default function ViewCollectionScreen() {
     let filtered = [...collections];
 
     if (filterStatus === "synced") {
-      filtered = filtered.filter(item => item.synced);
+      filtered = filtered.filter(item => item.synced === 1);
     } else if (filterStatus === "pending") {
-      filtered = filtered.filter(item => !item.synced);
+      filtered = filtered.filter(item => item.synced === 0);
     }
 
     if (searchQuery.trim()) {
@@ -148,7 +139,7 @@ export default function ViewCollectionScreen() {
   const handleDelete = (collection) => {
     Alert.alert(
       "Delete Collection",
-      `Delete collection for ${collection.customer_name}?${collection.synced ? '\n\nNote: This is already synced to server.' : ''}`,
+      `Delete collection for ${collection.customer_name}?${collection.synced === 1 ? '\n\nNote: This is already synced to server.' : ''}`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -164,13 +155,12 @@ export default function ViewCollectionScreen() {
 
   const deleteCollection = async (collectionId) => {
     try {
-      // Reload collections from database
-      // Note: Actual deletion would require a deleteCollection method in dbService
+      await dbService.init();
+      await dbService.deleteCollection(collectionId);
       await loadCollections();
-
-      Alert.alert("Success", "Collection removed from view.");
+      Alert.alert("Success", "Collection deleted successfully.");
     } catch (error) {
-      console.error("[View-Collection] Error deleting collection:", error);
+      console.error("Delete error:", error);
       Alert.alert("Error", "Failed to delete collection.");
     }
   };
@@ -186,25 +176,30 @@ export default function ViewCollectionScreen() {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
     });
   };
 
   const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `₹${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
-  const renderStatCard = (title, value, subtitle, color, icon) => (
-    <Animated.View entering={FadeInUp.delay(100)} style={[styles.statCard, { borderLeftColor: color }]}>
-      <View style={[styles.statIcon, { backgroundColor: color + '20' }]}>
-        <Ionicons name={icon} size={20} color={color} />
-      </View>
-      <View style={styles.statContent}>
-        <Text style={styles.statValue}>{value}</Text>
-        <Text style={styles.statTitle}>{title}</Text>
-        {subtitle && <Text style={styles.statSubtitle}>{subtitle}</Text>}
-      </View>
+  const renderStatCard = (title, value, subtitle, colorStart, colorEnd, icon) => (
+    <Animated.View entering={FadeInUp.delay(100)} style={styles.statCardContainer}>
+      <LinearGradient
+        colors={[colorStart, colorEnd]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.statCard}
+      >
+        <View style={styles.statIconContainer}>
+          <Ionicons name={icon} size={20} color="#FFF" />
+        </View>
+        <View>
+          <Text style={styles.statValue}>{value}</Text>
+          <Text style={styles.statTitle}>{title}</Text>
+          <Text style={styles.statSubtitle}>{subtitle}</Text>
+        </View>
+      </LinearGradient>
     </Animated.View>
   );
 
@@ -216,268 +211,209 @@ export default function ViewCollectionScreen() {
         activeOpacity={0.7}
       >
         <View style={styles.cardLeft}>
-          <View style={styles.statusIndicator}>
-            {item.synced ? (
-              <Ionicons name="cloud-done" size={20} color="#0b8a2f" />
-            ) : (
-              <Ionicons name="cloud-upload-outline" size={20} color="#ff9500" />
-            )}
-          </View>
+          <View style={[styles.statusIndicator, item.synced === 1 ? styles.syncedDot : styles.pendingDot]} />
 
           <View style={styles.collectionDetails}>
             <Text style={styles.customerName} numberOfLines={1}>
               {item.customer_name}
             </Text>
-            <Text style={styles.customerCode}>{item.customer_code}</Text>
 
             <View style={styles.metaRow}>
-              <View style={[styles.badge, item.payment_type === 'cash' ? styles.cashBadge : styles.chequeBadge]}>
-                <Ionicons
-                  name={item.payment_type === 'cash' ? "wallet" : "card"}
-                  size={10}
-                  color="#ffffff"
-                />
-                <Text style={styles.badgeText}>
-                  {item.payment_type.toUpperCase()}
+              <Text style={styles.customerCode}>{item.customer_code}</Text>
+              <Text style={styles.dotSeparator}>•</Text>
+              <Text style={styles.dateText}>{formatDate(item.date)}</Text>
+            </View>
+
+            <View style={styles.badgeRow}>
+              <View style={[styles.badge, { backgroundColor: Colors.neutral[100] }]}>
+                <Text style={[styles.badgeText, { color: Colors.text.secondary }]}>
+                  {item.payment_type}
                 </Text>
               </View>
-              <View style={styles.dateContainer}>
-                <Ionicons name="time-outline" size={12} color="#6b7c8a" />
-                <Text style={styles.dateText}>{formatDate(item.date)}</Text>
-              </View>
+              {item.synced === 1 ? (
+                <View style={[styles.badge, { backgroundColor: Colors.success[50] }]}>
+                  <Text style={[styles.badgeText, { color: Colors.success.main }]}>SYNCED</Text>
+                </View>
+              ) : (
+                <View style={[styles.badge, { backgroundColor: Colors.warning[50] }]}>
+                  <Text style={[styles.badgeText, { color: Colors.warning.main }]}>PENDING</Text>
+                </View>
+              )}
             </View>
           </View>
         </View>
 
         <View style={styles.cardRight}>
           <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
-          <View style={[styles.statusBadge, item.synced ? styles.syncedBadge : styles.pendingBadge]}>
-            <Text style={[styles.statusText, item.synced ? styles.syncedText : styles.pendingText]}>
-              {item.synced ? "Synced" : "Pending"}
-            </Text>
-          </View>
+          <TouchableOpacity onPress={() => handleDelete(item)} style={styles.deleteAction}>
+            <Ionicons name="trash-outline" size={18} color={Colors.error.main} />
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
-
-      <View style={styles.cardActions}>
-        <TouchableOpacity style={styles.actionButton} onPress={() => handleViewDetails(item)}>
-          <Ionicons name="eye-outline" size={18} color="#0d3b6c" />
-          <Text style={styles.actionButtonText}>View</Text>
-        </TouchableOpacity>
-        <View style={styles.actionDivider} />
-        <TouchableOpacity style={styles.actionButton} onPress={() => handleDelete(item)}>
-          <Ionicons name="trash-outline" size={18} color="#ff3b30" />
-          <Text style={[styles.actionButtonText, { color: "#ff3b30" }]}>Delete</Text>
-        </TouchableOpacity>
-      </View>
     </Animated.View>
   );
 
-  if (loading) {
+  if (loading && !refreshing) {
     return (
-      <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#0d3b6c" />
-          <Text style={styles.loadingText}>Loading collections...</Text>
-        </View>
+      <LinearGradient colors={Gradients.background} style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={Colors.primary.main} />
       </LinearGradient>
     );
   }
 
   return (
-    <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <Animated.View entering={FadeInUp} style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#0d3b6c" />
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>View Collections</Text>
           <TouchableOpacity onPress={() => setShowFilterModal(true)} style={styles.filterButton}>
-            <Ionicons name="filter" size={22} color="#0d3b6c" />
+            <Ionicons name="filter" size={22} color={Colors.primary.main} />
             {filterStatus !== "all" && <View style={styles.filterDot} />}
           </TouchableOpacity>
-        </Animated.View>
+        </View>
 
         <View style={styles.statsSection}>
-          <View style={styles.statsRow}>
-            {renderStatCard("Total", stats.total, formatCurrency(stats.totalAmount), "#0d3b6c", "layers")}
-            {renderStatCard("Synced", stats.synced, formatCurrency(stats.syncedAmount), "#0b8a2f", "cloud-done")}
-          </View>
-          <View style={styles.statsRow}>
-            {renderStatCard("Pending", stats.pending, formatCurrency(stats.pendingAmount), "#ff9500", "cloud-upload-outline")}
-            <Animated.View entering={FadeInUp.delay(100)} style={[styles.statCard, { borderLeftColor: isOnline ? "#34c759" : "#ff3b30" }]}>
-              <View style={[styles.statIcon, { backgroundColor: (isOnline ? "#34c759" : "#ff3b30") + '20' }]}>
-                <Ionicons name={isOnline ? "wifi" : "wifi-outline"} size={20} color={isOnline ? "#34c759" : "#ff3b30"} />
-              </View>
-              <View style={styles.statContent}>
-                <Text style={styles.statValue}>{isOnline ? "Online" : "Offline"}</Text>
-                <Text style={styles.statTitle}>Network</Text>
-              </View>
-            </Animated.View>
-          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsScroll}>
+            {renderStatCard("Total", stats.total, formatCurrency(stats.totalAmount), Colors.primary.main, Colors.primary[600], "layers")}
+            {renderStatCard("Synced", stats.synced, formatCurrency(stats.syncedAmount), Colors.success.main, Colors.success[600], "cloud-done")}
+            {renderStatCard("Pending", stats.pending, formatCurrency(stats.pendingAmount), Colors.warning.main, Colors.warning[600], "cloud-upload")}
+          </ScrollView>
         </View>
 
         <Animated.View entering={FadeInDown} style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color="#6b7c8a" style={styles.searchIcon} />
+          <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search..."
-            placeholderTextColor="#9aa4b2"
+            placeholder="Search collections..."
+            placeholderTextColor={Colors.text.tertiary}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery("")}>
-              <Ionicons name="close-circle" size={20} color="#6b7c8a" />
+              <Ionicons name="close-circle" size={20} color={Colors.text.tertiary} />
             </TouchableOpacity>
           )}
         </Animated.View>
 
-        {filteredCollections.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="receipt-outline" size={80} color="#9aa4b2" />
-            <Text style={styles.emptyTitle}>No Collections</Text>
-            <Text style={styles.emptySubtitle}>Add your first collection</Text>
-            <TouchableOpacity style={styles.addButton} onPress={() => router.push("/add-collection")}>
-              <Ionicons name="add-circle-outline" size={20} color="#ffffff" />
-              <Text style={styles.addButtonText}>Add Collection</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <FlatList
-            data={filteredCollections}
-            keyExtractor={(item) => item.id}
-            renderItem={renderCollectionItem}
-            contentContainerStyle={styles.listContent}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#0d3b6c" />}
-          />
-        )}
+        <FlatList
+          data={filteredCollections}
+          keyExtractor={(item) => (item.id || Math.random()).toString()}
+          renderItem={renderCollectionItem}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary.main} />}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="file-tray-outline" size={64} color={Colors.primary[200]} />
+              <Text style={styles.emptyTitle}>No Collections Found</Text>
+              <TouchableOpacity style={styles.addButton} onPress={() => router.push("/Collection/AddCollection")}>
+                <Text style={styles.addButtonText}>Add New Collection</Text>
+              </TouchableOpacity>
+            </View>
+          }
+        />
 
-        <Modal visible={showFilterModal} animationType="slide" transparent onRequestClose={() => setShowFilterModal(false)}>
+        {/* Filter Modal */}
+        <Modal visible={showFilterModal} animationType="fade" transparent onRequestClose={() => setShowFilterModal(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.filterModal}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Filter Collections</Text>
                 <TouchableOpacity onPress={() => setShowFilterModal(false)}>
-                  <Ionicons name="close" size={24} color="#0d3b6c" />
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
                 </TouchableOpacity>
               </View>
 
-              <TouchableOpacity style={[styles.filterOption, filterStatus === "all" && styles.filterOptionActive]}
-                onPress={() => { setFilterStatus("all"); setShowFilterModal(false); }}>
-                <Ionicons name="layers-outline" size={22} color={filterStatus === "all" ? "#0d3b6c" : "#6b7c8a"} />
-                <Text style={[styles.filterOptionText, filterStatus === "all" && styles.filterOptionTextActive]}>
-                  All Collections
-                </Text>
-                <Text style={styles.filterCount}>({stats.total})</Text>
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("all"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterStatus === "all" && styles.activeFilterText]}>All Collections</Text>
+                {filterStatus === "all" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.filterOption, filterStatus === "synced" && styles.filterOptionActive]}
-                onPress={() => { setFilterStatus("synced"); setShowFilterModal(false); }}>
-                <Ionicons name="cloud-done-outline" size={22} color={filterStatus === "synced" ? "#0b8a2f" : "#6b7c8a"} />
-                <Text style={[styles.filterOptionText, filterStatus === "synced" && styles.filterOptionTextActive]}>
-                  Synced Only
-                </Text>
-                <Text style={styles.filterCount}>({stats.synced})</Text>
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("synced"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterStatus === "synced" && styles.activeFilterText]}>Synced Only</Text>
+                {filterStatus === "synced" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.filterOption, filterStatus === "pending" && styles.filterOptionActive]}
-                onPress={() => { setFilterStatus("pending"); setShowFilterModal(false); }}>
-                <Ionicons name="cloud-upload-outline" size={22} color={filterStatus === "pending" ? "#ff9500" : "#6b7c8a"} />
-                <Text style={[styles.filterOptionText, filterStatus === "pending" && styles.filterOptionTextActive]}>
-                  Pending Only
-                </Text>
-                <Text style={styles.filterCount}>({stats.pending})</Text>
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("pending"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterStatus === "pending" && styles.activeFilterText]}>Pending Only</Text>
+                {filterStatus === "pending" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
 
+        {/* Detail Modal */}
         <Modal visible={showDetailModal} animationType="slide" transparent onRequestClose={() => setShowDetailModal(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.detailModal}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Collection Details</Text>
+                <Text style={styles.modalTitle}>Details</Text>
                 <TouchableOpacity onPress={() => setShowDetailModal(false)}>
-                  <Ionicons name="close" size={24} color="#0d3b6c" />
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
                 </TouchableOpacity>
               </View>
 
               {selectedCollection && (
-                <ScrollView style={styles.detailScroll}>
-                  <View style={[styles.detailStatusBanner, selectedCollection.synced ? styles.syncedBanner : styles.pendingBanner]}>
-                    <Ionicons name={selectedCollection.synced ? "checkmark-circle" : "time"} size={24} color="#ffffff" />
-                    <Text style={styles.detailStatusText}>
-                      {selectedCollection.synced ? "Successfully Synced" : "Pending Upload"}
+                <ScrollView contentContainerStyle={styles.detailContent}>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Client</Text>
+                    <Text style={styles.detailValue}>{selectedCollection.customer_name}</Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Code</Text>
+                    <Text style={styles.detailValue}>{selectedCollection.customer_code}</Text>
+                  </View>
+                  {selectedCollection.customer_place && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Place</Text>
+                      <Text style={styles.detailValue}>{selectedCollection.customer_place}</Text>
+                    </View>
+                  )}
+                  {selectedCollection.customer_phone && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Phone</Text>
+                      <Text style={styles.detailValue}>{selectedCollection.customer_phone}</Text>
+                    </View>
+                  )}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Amount</Text>
+                    <Text style={[styles.detailValue, { color: Colors.success.main, fontSize: 24 }]}>
+                      {formatCurrency(selectedCollection.amount)}
                     </Text>
                   </View>
-
-                  <View style={styles.detailContent}>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Customer Name</Text>
-                      <Text style={styles.detailValue}>{selectedCollection.customer_name}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Customer Code</Text>
-                      <Text style={styles.detailValue}>{selectedCollection.customer_code}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Amount</Text>
-                      <Text style={[styles.detailValue, styles.amountValue]}>{formatCurrency(selectedCollection.amount)}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Payment Type</Text>
-                      <View style={[styles.badge, selectedCollection.payment_type === 'cash' ? styles.cashBadge : styles.chequeBadge]}>
-                        <Ionicons name={selectedCollection.payment_type === 'cash' ? "wallet" : "card"} size={12} color="#ffffff" />
-                        <Text style={styles.badgeText}>{selectedCollection.payment_type.toUpperCase()}</Text>
-                      </View>
-                    </View>
-
-                    {selectedCollection.cheque_number && (
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Cheque Number</Text>
-                        <Text style={styles.detailValue}>{selectedCollection.cheque_number}</Text>
-                      </View>
-                    )}
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Collection Date</Text>
-                      <Text style={styles.detailValue}>{formatDate(selectedCollection.date)}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Created At</Text>
-                      <Text style={styles.detailValue}>{formatDate(selectedCollection.created_at)}</Text>
-                    </View>
-
-                    {selectedCollection.synced && selectedCollection.synced_at && (
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Synced At</Text>
-                        <Text style={[styles.detailValue, { color: "#0b8a2f" }]}>
-                          {formatDate(selectedCollection.synced_at)}
-                        </Text>
-                      </View>
-                    )}
-
-                    {selectedCollection.remarks && (
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Remarks</Text>
-                        <Text style={[styles.detailValue, styles.remarksValue]}>{selectedCollection.remarks}</Text>
-                      </View>
-                    )}
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Payment Type</Text>
+                    <Text style={styles.detailValue}>{selectedCollection.payment_type}</Text>
                   </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Status</Text>
+                    <View style={[styles.badge, { backgroundColor: selectedCollection.synced === 1 ? Colors.success[50] : Colors.warning[50] }]}>
+                      <Text style={[styles.badgeText, { color: selectedCollection.synced === 1 ? Colors.success.main : Colors.warning.main }]}>
+                        {selectedCollection.synced === 1 ? "SYNCED TO SERVER" : "PENDING UPLOAD"}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Date</Text>
+                    <Text style={styles.detailValue}>{new Date(selectedCollection.date).toLocaleString()}</Text>
+                  </View>
+                  {selectedCollection.remarks && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Remarks</Text>
+                      <Text style={styles.detailValue}>{selectedCollection.remarks}</Text>
+                    </View>
+                  )}
                 </ScrollView>
               )}
             </View>
           </View>
         </Modal>
 
-        <TouchableOpacity style={styles.fab} onPress={() => router.push("/add-collection")}>
-          <Ionicons name="add" size={28} color="#ffffff" />
-        </TouchableOpacity>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -485,77 +421,236 @@ export default function ViewCollectionScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: { flex: 1 },
+  safeArea: { flex: 1, paddingTop: Spacing.xs, paddingBottom: Spacing.md },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 12, fontSize: 16, color: "#6b7c8a" },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: "rgba(13, 59, 108, 0.08)", backgroundColor: "rgba(255, 255, 255, 0.6)" },
-  backButton: { padding: 4 },
-  headerTitle: { flex: 1, fontSize: 20, fontWeight: "700", color: "#0d3b6c", marginLeft: 12 },
-  filterButton: { padding: 4, position: "relative" },
-  filterDot: { position: "absolute", top: 2, right: 2, width: 8, height: 8, borderRadius: 4, backgroundColor: "#ff3b30" },
-  statsSection: { padding: 16, gap: 12 },
-  statsRow: { flexDirection: "row", gap: 12 },
-  statCard: { flex: 1, flexDirection: "row", backgroundColor: "#ffffff", borderRadius: 12, padding: 12, borderLeftWidth: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
-  statIcon: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginRight: 10 },
-  statContent: { flex: 1 },
-  statValue: { fontSize: 20, fontWeight: "700", color: "#0b2a44" },
-  statTitle: { fontSize: 12, color: "#6b7c8a", marginTop: 2 },
-  statSubtitle: { fontSize: 11, color: "#0b8a2f", fontWeight: "600", marginTop: 2 },
-  searchContainer: { flexDirection: "row", alignItems: "center", backgroundColor: "#ffffff", borderRadius: 12, paddingHorizontal: 12, marginHorizontal: 16, marginBottom: 12, height: 45, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
-  searchIcon: { marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 15, color: "#0b2a44" },
-  listContent: { padding: 16, paddingBottom: 100 },
-  collectionCard: { backgroundColor: "#ffffff", borderRadius: 12, marginBottom: 12, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2, overflow: "hidden" },
-  cardContent: { flexDirection: "row", padding: 14, alignItems: "flex-start" },
-  cardLeft: { flex: 1, flexDirection: "row", alignItems: "flex-start" },
-  statusIndicator: { marginRight: 12, marginTop: 2 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+  },
+  backButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: "700",
+    color: Colors.text.primary,
+  },
+  filterButton: {
+    padding: 4,
+  },
+  filterDot: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.error.main,
+  },
+  statsSection: {
+    marginBottom: Spacing.md,
+  },
+  statsScroll: {
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.md,
+    paddingBottom: Spacing.sm,
+  },
+  statCardContainer: {
+    width: 140,
+    ...Shadows.sm,
+  },
+  statCard: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.xl,
+  },
+  statIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  statValue: {
+    color: '#FFFFFF',
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+  },
+  statTitle: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: Typography.sizes.xs,
+    fontWeight: '600',
+  },
+  statSubtitle: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  searchContainer: {
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    height: 48,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+  },
+  searchIcon: { marginRight: Spacing.sm },
+  searchInput: { flex: 1, fontSize: Typography.sizes.base, color: Colors.text.primary },
+  listContent: { paddingHorizontal: Spacing.lg, paddingBottom: 100 },
+  collectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+    overflow: 'hidden',
+  },
+  cardContent: {
+    flexDirection: 'row',
+    padding: Spacing.md,
+  },
+  cardLeft: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  statusIndicator: {
+    width: 4,
+    height: 40,
+    borderRadius: 2,
+    marginRight: Spacing.md,
+    marginTop: 4,
+  },
+  syncedDot: { backgroundColor: Colors.success.main },
+  pendingDot: { backgroundColor: Colors.warning.main },
   collectionDetails: { flex: 1 },
-  customerName: { fontSize: 16, fontWeight: "700", color: "#0b2a44", marginBottom: 4 },
-  customerCode: { fontSize: 13, color: "#6b7c8a", marginBottom: 8 },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  badge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, gap: 4 },
-  cashBadge: { backgroundColor: "#0b8a2f" },
-  chequeBadge: { backgroundColor: "#0d3b6c" },
-  badgeText: { fontSize: 10, fontWeight: "700", color: "#ffffff" },
-  dateContainer: { flexDirection: "row", alignItems: "center", gap: 4 },
-  dateText: { fontSize: 11, color: "#6b7c8a" },
-  cardRight: { alignItems: "flex-end", marginLeft: 12 },
-  amount: { fontSize: 18, fontWeight: "700", color: "#0b8a2f", marginBottom: 6 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
-  syncedBadge: { backgroundColor: "#e8f5e9" },
-  pendingBadge: { backgroundColor: "#fff9e6" },
-  statusText: { fontSize: 11, fontWeight: "700" },
-  syncedText: { color: "#0b8a2f" },
-  pendingText: { color: "#ff9500" },
-  cardActions: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#f5f5f5" },
-  actionButton: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 12, gap: 6 },
-  actionDivider: { width: 1, backgroundColor: "#f5f5f5" },
-  actionButtonText: { fontSize: 14, fontWeight: "600", color: "#0d3b6c" },
-  emptyContainer: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 40 },
-  emptyTitle: { fontSize: 20, fontWeight: "700", color: "#0d3b6c", marginTop: 16, marginBottom: 8 },
-  emptySubtitle: { fontSize: 14, color: "#6b7c8a", textAlign: "center", marginBottom: 24 },
-  addButton: { flexDirection: "row", alignItems: "center", backgroundColor: "#0d3b6c", paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, gap: 8 },
-  addButtonText: { fontSize: 15, fontWeight: "700", color: "#ffffff" },
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.5)", justifyContent: "flex-end" },
-  filterModal: { backgroundColor: "#ffffff", borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 20 },
-  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: "#eef6ff" },
-  modalTitle: { fontSize: 18, fontWeight: "700", color: "#0d3b6c" },
-  filterOption: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: "#f5f5f5" },
-  filterOptionActive: { backgroundColor: "#f0f8ff" },
-  filterOptionText: { flex: 1, fontSize: 15, color: "#6b7c8a", marginLeft: 12 },
-  filterOptionTextActive: { color: "#0d3b6c", fontWeight: "600" },
-  filterCount: { fontSize: 13, color: "#9aa4b2" },
-  detailModal: { backgroundColor: "#ffffff", borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" },
-  detailScroll: { maxHeight: 500 },
-  detailStatusBanner: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 16, gap: 10 },
-  syncedBanner: { backgroundColor: "#0b8a2f" },
-  pendingBanner: { backgroundColor: "#ff9500" },
-  detailStatusText: { fontSize: 16, fontWeight: "700", color: "#ffffff" },
-  detailContent: { padding: 20 },
-  detailRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: "#f5f5f5" },
-  detailLabel: { fontSize: 13, color: "#6b7c8a", marginBottom: 6 },
-  detailValue: { fontSize: 16, color: "#0b2a44", fontWeight: "600" },
-  amountValue: { fontSize: 22, color: "#0b8a2f", fontWeight: "700" },
-  remarksValue: { fontStyle: "italic", fontWeight: "400" },
-  fab: { position: "absolute", right: 20, bottom: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: "#0d3b6c", justifyContent: "center", alignItems: "center", shadowColor: "#000", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 8 },
+  customerName: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: 4,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  customerCode: { fontSize: Typography.sizes.xs, color: Colors.text.tertiary },
+  dotSeparator: { marginHorizontal: 4, color: Colors.text.tertiary, fontSize: 10 },
+  dateText: { fontSize: Typography.sizes.xs, color: Colors.text.tertiary },
+  badgeRow: { flexDirection: 'row', gap: 8 },
+  badge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  cardRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  amount: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  deleteAction: {
+    padding: 4,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 60,
+  },
+  emptyTitle: {
+    marginTop: Spacing.md,
+    fontSize: Typography.sizes.lg,
+    color: Colors.text.secondary,
+    fontWeight: '600',
+    marginBottom: Spacing.lg,
+  },
+  addButton: {
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    backgroundColor: Colors.primary.main,
+    borderRadius: BorderRadius.full,
+  },
+  addButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: Spacing.lg,
+  },
+  filterModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+  },
+  detailModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    maxHeight: '80%',
+    padding: Spacing.lg,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  modalTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  filterOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  filterOptionText: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
+  },
+  activeFilterText: {
+    color: Colors.primary.main,
+    fontWeight: '600',
+  },
+  detailContent: {
+    paddingBottom: Spacing.lg,
+  },
+  detailRow: {
+    marginBottom: Spacing.lg,
+  },
+  detailLabel: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  detailValue: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+    fontWeight: '500',
+  },
 });

@@ -1,18 +1,19 @@
-// app/dashboard.js (or app/dashboard/index.js)
-import React, { useEffect } from "react";
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
+// app/Collection/Collection.js
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from 'expo-router';
+import { useEffect } from "react";
+import {
+  BackHandler,
   SafeAreaView,
   ScrollView,
-  BackHandler
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
-import Animated, { FadeInUp, FadeInDown } from "react-native-reanimated";
-import { useRouter } from 'expo-router';
+import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
+import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 
 export default function CollectionScreen() {
 
@@ -37,87 +38,75 @@ export default function CollectionScreen() {
     {
       id: 1,
       title: "Add Collection",
-      description: "Create new collection entries",
-      icon: "add-circle-outline",
-      color: "#0b8a2f",
-      bgColor: "rgba(11, 138, 47, 0.12)",
-      onPress: () => { router.push("./AddCollection");
-        // Navigate to add collection screen
-        console.log("Navigate to Add Collection");
-      },
+      description: "Record new payments",
+      icon: "add-circle",
+      color: Colors.success.main,
+      bg: Colors.success[50],
+      onPress: () => router.push("./AddCollection"),
+      gradient: Gradients.success
     },
     {
       id: 2,
-      title: "Upload",
-      description: "Upload collection data",
-      icon: "cloud-upload-outline",
-      color: "#ff9500",
-      bgColor: "rgba(255, 149, 0, 0.12)",
-      onPress: () => {router.push("./Upload");
-        // Navigate to upload screen
-        console.log("Navigate to Upload");
-      },
+      title: "Upload Data",
+      description: "Sync offline collections",
+      icon: "cloud-upload",
+      color: Colors.warning.main,
+      bg: Colors.warning[50],
+      onPress: () => router.push("./Upload"),
+      gradient: Gradients.accent
     },
     {
       id: 3,
-      title: "View Collection",
-      description: "Browse all collections",
-      icon: "eye-outline",
-      color: "#0d3b6c",
-      bgColor: "rgba(13, 59, 108, 0.12)",
-      onPress: () => {router.push("./View-Collection");
-        // Navigate to view collection screen
-        console.log("Navigate to View Collection");
-      },
+      title: "View History",
+      description: "Browse past records",
+      icon: "list",
+      color: Colors.primary.main,
+      bg: Colors.primary[50],
+      onPress: () => router.push("./View-Collection"),
+      gradient: Gradients.primary
     },
   ];
 
   return (
-    <LinearGradient colors={["#FFF7F0", "#FFEDE0"]} style={styles.container}>
+    <LinearGradient colors={Gradients.background} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         {/* Header with Back Button */}
-        <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#0d3b6c" />
+            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Collection Dashboard</Text>
-          <View style={styles.headerRight} />
-        </Animated.View>
+          <View style={{ width: 32 }} />
+        </View>
 
-        <ScrollView 
+        <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* Header Section */}
-          {/* <Animated.View entering={FadeInDown.delay(100)} style={styles.header}>
-            <Text style={styles.greeting}>Welcome Back! 👋</Text>
-            <Text style={styles.title}>Collection Dashboard</Text>
-            <Text style={styles.subtitle}>Manage your collections efficiently</Text>
-          </Animated.View> */}
-
-          {/* Stats Cards */}
-          {/* <Animated.View entering={FadeInUp.delay(200)} style={styles.statsContainer}>
-            <View style={styles.statCard}>
-              <View style={[styles.statIcon, { backgroundColor: "rgba(11, 138, 47, 0.12)" }]}>
-                <Ionicons name="wallet-outline" size={24} color="#0b8a2f" />
+          {/* Banner */}
+          <Animated.View entering={FadeInDown.delay(100)} style={styles.bannerContainer}>
+            <LinearGradient
+              colors={Gradients.primary}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.banner}
+            >
+              <View style={styles.bannerContent}>
+                <View style={styles.bannerIcon}>
+                  <Ionicons name="wallet" size={32} color={Colors.primary.main} />
+                </View>
+                <View>
+                  <Text style={styles.bannerTitle}>Payment Center</Text>
+                  <Text style={styles.bannerSubtitle}>Manage collections & sync data</Text>
+                </View>
               </View>
-              <Text style={styles.statValue}>₹0</Text>
-              <Text style={styles.statLabel}>Total Collected</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={[styles.statIcon, { backgroundColor: "rgba(255, 59, 48, 0.12)" }]}>
-                <Ionicons name="time-outline" size={24} color="#ff3b30" />
-              </View>
-              <Text style={styles.statValue}>0</Text>
-              <Text style={styles.statLabel}>Pending</Text>
-            </View>
-          </Animated.View> */}
+            </LinearGradient>
+          </Animated.View>
 
           {/* Quick Actions Section */}
           <Animated.View entering={FadeInUp.delay(300)} style={styles.sectionContainer}>
             <Text style={styles.sectionTitle}>Quick Actions</Text>
-            
+
             <View style={styles.cardsContainer}>
               {sections.map((section, index) => (
                 <Animated.View
@@ -129,17 +118,17 @@ export default function CollectionScreen() {
                     onPress={section.onPress}
                     activeOpacity={0.7}
                   >
-                    <View style={[styles.iconContainer, { backgroundColor: section.bgColor }]}>
-                      <Ionicons name={section.icon} size={32} color={section.color} />
+                    <View style={[styles.iconContainer, { backgroundColor: section.bg }]}>
+                      <Ionicons name={section.icon} size={28} color={section.color} />
                     </View>
-                    
+
                     <View style={styles.cardContent}>
                       <Text style={styles.cardTitle}>{section.title}</Text>
                       <Text style={styles.cardDescription}>{section.description}</Text>
                     </View>
 
                     <View style={styles.arrowContainer}>
-                      <Ionicons name="chevron-forward" size={20} color="#6b7c8a" />
+                      <Ionicons name="chevron-forward" size={20} color={Colors.neutral[400]} />
                     </View>
                   </TouchableOpacity>
                 </Animated.View>
@@ -147,19 +136,14 @@ export default function CollectionScreen() {
             </View>
           </Animated.View>
 
-          {/* Recent Activity Section */}
-          <Animated.View entering={FadeInUp.delay(700)} style={styles.recentSection}>
-            <View style={styles.recentHeader}>
-              <Text style={styles.sectionTitle}>Recent Activity</Text>
-              <TouchableOpacity>
-                <Text style={styles.viewAllText}>View All</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.emptyState}>
-              <Ionicons name="folder-open-outline" size={48} color="#9aa4b2" />
-              <Text style={styles.emptyText}>No recent activity</Text>
-              <Text style={styles.emptySubtext}>Your collection activities will appear here</Text>
+          {/* Recent Activity Placeholder */}
+          <Animated.View entering={FadeInUp.delay(600)} style={styles.recentSection}>
+            <Text style={styles.sectionTitle}>Overview</Text>
+            <View style={styles.infoCard}>
+              <Ionicons name="information-circle-outline" size={20} color={Colors.text.secondary} />
+              <Text style={styles.infoText}>
+                Ensure you upload local collections when you have internet access to keep data synced.
+              </Text>
             </View>
           </Animated.View>
         </ScrollView>
@@ -171,177 +155,129 @@ export default function CollectionScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    // padding:5,
   },
   safeArea: {
     flex: 1,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.md,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(13, 59, 108, 0.08)",
-    backgroundColor: "rgba(255, 255, 255, 0.6)",
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   backButton: {
-    padding: 4,
+    padding: Spacing.xs,
+
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: Typography.sizes.xl,
     fontWeight: "700",
-    color: "#0d3b6c",
-  },
-  headerRight: {
-    width: 32,
+    color: Colors.text.primary,
   },
   scrollContent: {
-    padding: 20,
+    padding: Spacing.lg,
     paddingBottom: 40,
   },
-  greeting: {
-    fontSize: 16,
-    color: "#55606a",
+  bannerContainer: {
+    marginBottom: Spacing.xl,
+  },
+  banner: {
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    ...Shadows.md,
+  },
+  bannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.lg,
+  },
+  bannerIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.sm,
+  },
+  bannerTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: '#FFFFFF',
     marginBottom: 4,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#0d3b6c",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#6b7c8a",
-  },
-  statsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 28,
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#eef6ff",
-    shadowColor: "#0d3b6c",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  statIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#0d3b6c",
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: "#6b7c8a",
-    fontWeight: "500",
+  bannerSubtitle: {
+    fontSize: Typography.sizes.sm,
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: '500',
   },
   sectionContainer: {
-    marginBottom: 28,
+    marginBottom: Spacing.xl,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: Typography.sizes.lg,
     fontWeight: "700",
-    color: "#0d3b6c",
-    marginBottom: 16,
+    color: Colors.text.primary,
+    marginBottom: Spacing.md,
   },
   cardsContainer: {
-    gap: 12,
+    gap: Spacing.md,
   },
   actionCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
     borderWidth: 1,
-    borderColor: "#eef6ff",
-    shadowColor: "#0d3b6c",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    marginBottom: 2,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
   },
   iconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 14,
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.md,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 14,
+    marginRight: Spacing.md,
   },
   cardContent: {
     flex: 1,
   },
   cardTitle: {
-    fontSize: 16,
+    fontSize: Typography.sizes.base,
     fontWeight: "700",
-    color: "#0b2a44",
+    color: Colors.text.primary,
     marginBottom: 4,
   },
   cardDescription: {
-    fontSize: 13,
-    color: "#6b7c8a",
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
   },
   arrowContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(13, 59, 108, 0.06)",
-    justifyContent: "center",
-    alignItems: "center",
+    padding: Spacing.xs,
   },
   recentSection: {
     marginBottom: 20,
   },
-  recentHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  viewAllText: {
-    fontSize: 14,
-    color: "#0d3b6c",
-    fontWeight: "600",
-  },
-  emptyState: {
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: 40,
-    alignItems: "center",
+  infoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
     borderWidth: 1,
-    borderColor: "#eef6ff",
+    borderColor: Colors.border.light,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#55606a",
-    marginTop: 12,
-    marginBottom: 4,
-  },
-  emptySubtext: {
-    fontSize: 13,
-    color: "#9aa4b2",
-    textAlign: "center",
-  },
+  infoText: {
+    flex: 1,
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+    lineHeight: 20,
+  }
 });
