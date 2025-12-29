@@ -700,7 +700,7 @@ export default function OrderDetails() {
               <Ionicons name="search" size={20} color={Colors.text.tertiary} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search by name, code, barcode, brand..."
+                placeholder="Search by name, code, barcode"
                 placeholderTextColor={Colors.text.tertiary}
                 value={query}
                 onChangeText={setQuery}

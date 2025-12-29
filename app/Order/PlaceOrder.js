@@ -620,9 +620,11 @@ export default function PlaceOrder() {
 
   // Filter orders
   const filteredOrders = orders.filter(order => {
-    if (filterStatus === 'all') return true;
-    if (filterStatus === 'uploaded') return order.uploadStatus === 'uploaded';
     if (filterStatus === 'pending') return !order.uploadStatus || order.uploadStatus === 'pending';
+    if (filterStatus === 'uploaded') return order.uploadStatus === 'uploaded';
+    if (filterStatus === 'all') return true;
+   
+  
     if (filterStatus === 'failed') return order.uploadStatus === 'failed' || order.uploadStatus === 'partial';
     return true;
   });
@@ -669,9 +671,10 @@ export default function PlaceOrder() {
               <View style={styles.statusRow}>
                 <Text style={styles.orderTime}>{formatDate(order.timestamp)}</Text>
                 <Text style={[styles.statusText, 
+                order.uploadStatus === 'partial' && styles.statusTextWarning,
                   order.uploadStatus === 'uploaded' && styles.statusTextSuccess,
                   order.uploadStatus === 'failed' && styles.statusTextError,
-                  order.uploadStatus === 'partial' && styles.statusTextWarning
+                  
                 ]}>
                   • {statusConfig.text}
                 </Text>
@@ -907,14 +910,17 @@ export default function PlaceOrder() {
         {/* Filter Tabs */}
         <View style={styles.filterContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabs}>
-            <TouchableOpacity
-              style={[styles.filterTab, filterStatus === 'all' && styles.filterTabActive]}
-              onPress={() => setFilterStatus('all')}
+
+           <TouchableOpacity
+              style={[styles.filterTab, filterStatus === 'pending' && styles.filterTabActive]}
+              onPress={() => setFilterStatus('pending')}
             >
-              <Text style={[styles.filterTabText, filterStatus === 'all' && styles.filterTabTextActive]}>
-                All ({orders.length})
+              <Ionicons name="time" size={16} color={filterStatus === 'pending' ? '#FFF' : Colors.warning.main} />
+              <Text style={[styles.filterTabText, filterStatus === 'pending' && styles.filterTabTextActive]}>
+                Pending ({pendingCount})
               </Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.filterTab, filterStatus === 'uploaded' && styles.filterTabActive]}
               onPress={() => setFilterStatus('uploaded')}
@@ -924,15 +930,17 @@ export default function PlaceOrder() {
                 Uploaded ({uploadedCount})
               </Text>
             </TouchableOpacity>
+
             <TouchableOpacity
-              style={[styles.filterTab, filterStatus === 'pending' && styles.filterTabActive]}
-              onPress={() => setFilterStatus('pending')}
+              style={[styles.filterTab, filterStatus === 'all' && styles.filterTabActive]}
+              onPress={() => setFilterStatus('all')}
             >
-              <Ionicons name="time" size={16} color={filterStatus === 'pending' ? '#FFF' : Colors.warning.main} />
-              <Text style={[styles.filterTabText, filterStatus === 'pending' && styles.filterTabTextActive]}>
-                Pending ({pendingCount})
+              <Text style={[styles.filterTabText, filterStatus === 'all' && styles.filterTabTextActive]}>
+                All ({orders.length})
               </Text>
             </TouchableOpacity>
+            
+            
             <TouchableOpacity
               style={[styles.filterTab, filterStatus === 'failed' && styles.filterTabActive]}
               onPress={() => setFilterStatus('failed')}
