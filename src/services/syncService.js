@@ -1,5 +1,6 @@
-// src/services/syncService.js
+// src/services/syncService.js - OPTIMIZED VERSION
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import batchService from './batchService';
 import dbService from './database';
 
 const API_BASE_URL = 'https://tasksas.com/api';
@@ -10,16 +11,22 @@ class SyncService {
         this.isUploading = false;
         this.downloadProgress = 0;
         this.progressCallback = null;
+        this.abortController = null;
     }
 
     setProgressCallback(callback) {
         this.progressCallback = callback;
     }
 
-    updateProgress(message, progress) {
+    updateProgress(stage, message, progress, completed = false) {
         this.downloadProgress = progress;
         if (this.progressCallback) {
-            this.progressCallback({ message, progress });
+            this.progressCallback({ 
+                stage,      // 'customers', 'products', 'batches', 'areas'
+                message, 
+                progress,
+                completed 
+            });
         }
     }
 
@@ -36,57 +43,193 @@ class SyncService {
         }
     }
 
-    // ==================== DOWNLOAD ALL DATA ====================
+    // ==================== CHECK IF DATA EXISTS ====================
+    async hasDownloadedData() {
+        try {
+            await dbService.init();
+            const stats = await dbService.getDataStats();
+            return stats.customers > 0 && stats.products > 0;
+        } catch (error) {
+            console.error('Error checking downloaded data:', error);
+            return false;
+        }
+    }
 
-    async downloadAllData() {
+    // ==================== DOWNLOAD ALL DATA (OPTIMIZED) ====================
+    async downloadAllData(forceRefresh = false) {
         if (this.isDownloading) {
             throw new Error('Download already in progress');
         }
 
         this.isDownloading = true;
         this.downloadProgress = 0;
+        this.abortController = new AbortController();
+
+        const stages = {
+            customers: false,
+            products: false,
+            batches: false,
+            areas: false
+        };
 
         try {
-            // Initialize database if not already done
+            // Initialize database
             await dbService.init();
 
-            this.updateProgress('Clearing old data...', 5);
+            // If force refresh, clear old data
+            if (forceRefresh) {
+                this.updateProgress('init', 'Clearing old data...', 5);
+                await dbService.clearDownloadableData();
+            }
 
-            // Clear old customers and products data to ensure fresh data
-            await dbService.clearDownloadableData();
+            // Stage 1: Download customers
+            this.updateProgress('customers', 'Downloading customers...', 10);
+            try {
+                await this.downloadCustomers();
+                stages.customers = true;
+                this.updateProgress('customers', 'Customers downloaded', 25, true);
+            } catch (error) {
+                console.error('Customer download failed:', error);
+                this.updateProgress('customers', 'Customers failed', 25, false);
+            }
 
-            this.updateProgress('Downloading customers...', 15);
+            // Stage 2: Download products (with better error handling)
+            this.updateProgress('products', 'Downloading products...', 30);
+            try {
+                const productCount = await this.downloadProductsOptimized();
+                if (productCount > 0) {
+                    stages.products = true;
+                    this.updateProgress('products', `${productCount} products downloaded`, 50, true);
+                } else {
+                    this.updateProgress('products', 'No products found', 50, false);
+                }
+            } catch (error) {
+                console.error('Product download failed:', error);
+                this.updateProgress('products', 'Products failed', 50, false);
+            }
 
-            // Download customers
-            await this.downloadCustomers();
-            this.updateProgress('Downloading products...', 50);
+            // Stage 3: Download batches (only if products exist)
+            if (stages.products) {
+                this.updateProgress('batches', 'Downloading batches...', 55);
+                try {
+                    const batchCount = await this.downloadProductBatches();
+                    stages.batches = true;
+                    this.updateProgress('batches', `${batchCount} batches downloaded`, 75, true);
+                } catch (error) {
+                    console.error('Batch download failed:', error);
+                    this.updateProgress('batches', 'Batches failed', 75, false);
+                }
+            }
 
-            // Download products
-            await this.downloadProducts();
-            this.updateProgress('Finalizing...', 90);
+            // Stage 4: Download areas
+            this.updateProgress('areas', 'Downloading areas...', 80);
+            try {
+                await this.downloadAreas();
+                stages.areas = true;
+                this.updateProgress('areas', 'Areas downloaded', 90, true);
+            } catch (error) {
+                console.error('Area download failed:', error);
+                this.updateProgress('areas', 'Areas failed', 90, false);
+            }
 
             // Set last sync time
             await dbService.setLastSyncTime(new Date().toISOString());
 
-            this.updateProgress('Download complete!', 100);
+            this.updateProgress('complete', 'Download complete!', 100, true);
 
             return {
                 success: true,
-                message: 'All data downloaded successfully'
+                stages,
+                message: 'Data synchronized successfully'
             };
         } catch (error) {
             console.error('Download error:', error);
-            this.updateProgress('Download failed', 0);
+            this.updateProgress('error', 'Download failed', 0);
             throw error;
         } finally {
             this.isDownloading = false;
+            this.abortController = null;
+        }
+    }
+
+    // ==================== OPTIMIZED PRODUCT DOWNLOAD ====================
+    async downloadProductsOptimized() {
+        try {
+            const token = await this.getAuthToken();
+
+            // Primary endpoint (most reliable based on your code)
+            const primaryEndpoint = `${API_BASE_URL}/product/get-product-details`;
+            
+            console.log(`[Sync] Fetching products from: ${primaryEndpoint}`);
+            
+            const response = await fetch(primaryEndpoint, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                signal: this.abortController?.signal
+            });
+
+            if (!response.ok) {
+                throw new Error(`API returned ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log(`[Sync] Product API response type:`, typeof data);
+
+            // Parse response
+            let products = [];
+            if (Array.isArray(data)) {
+                products = data;
+            } else if (data.data && Array.isArray(data.data)) {
+                products = data.data;
+            } else if (data.products && Array.isArray(data.products)) {
+                products = data.products;
+            }
+
+            if (products.length === 0) {
+                console.warn('[Sync] No products found in response');
+                return 0;
+            }
+
+            console.log(`[Sync] Found ${products.length} products`);
+
+            // Normalize and validate products
+            const normalizedProducts = products
+                .map(p => ({
+                    code: p.code || p.productcode || p.PRODUCTCODE || '',
+                    name: p.name || p.productname || p.PRODUCTNAME || '',
+                    barcode: p.barcode || p.BARCODE || p.code || '',
+                    price: parseFloat(p.price || p['NET RATE'] || p.netrate || p.PRICE || 0),
+                    mrp: parseFloat(p.mrp || p.MRP || 0),
+                    stock: parseFloat(p.stock || p.STOCK || 0),
+                    unit: p.unit || p.packing || p.PACKING || '',
+                    brand: p.brand || p.BRAND || '',
+                    category: p.category || p.product || p.PRODUCT || '',
+                    taxcode: p.taxcode || p.TAXCODE || '',
+                    description: p.description || '',
+                }))
+                .filter(p => p.code && p.name); // Only valid products
+
+            console.log(`[Sync] Normalized ${normalizedProducts.length} valid products`);
+
+            if (normalizedProducts.length > 0) {
+                // Save in batches for better performance
+                await dbService.saveProducts(normalizedProducts);
+                console.log(`[Sync] ✅ Saved ${normalizedProducts.length} products`);
+            }
+
+            return normalizedProducts.length;
+        } catch (error) {
+            console.error('[Sync] Error downloading products:', error);
+            throw error;
         }
     }
 
     async downloadCustomers() {
         try {
-            this.updateProgress('Downloading customers...', 10);
-
             const token = await this.getAuthToken();
             const response = await fetch(`${API_BASE_URL}/debtors/get-debtors/`, {
                 method: 'GET',
@@ -94,6 +237,7 @@ class SyncService {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
+                signal: this.abortController?.signal
             });
 
             if (!response.ok) {
@@ -112,123 +256,76 @@ class SyncService {
                 customers = data.debtors;
             }
 
-            this.updateProgress(`Saving ${customers.length} customers...`, 25);
-
             // Save to database
             await dbService.saveCustomers(customers);
 
-            console.log(`Downloaded and saved ${customers.length} customers`);
-
+            console.log(`[Sync] ✅ Downloaded ${customers.length} customers`);
             return customers.length;
         } catch (error) {
-            console.error('Error downloading customers:', error);
-            throw new Error(`Failed to download customers: ${error.message}`);
+            console.error('[Sync] Error downloading customers:', error);
+            throw error;
         }
     }
 
-    async downloadProducts() {
+    async downloadProductBatches() {
         try {
-            this.updateProgress('Downloading products...', 40);
+            console.log('[Sync] Fetching batches...');
+            const stats = await batchService.downloadAndCache();
 
-            const token = await this.getAuthToken();
-
-            // Try different possible product endpoints (matching OrderDetails.js)
-            const endpoints = [
-                `${API_BASE_URL}/product/get-product-details`,  // Main endpoint used in OrderDetails
-                `${API_BASE_URL}/products/`,
-                `${API_BASE_URL}/product`,
-                `${API_BASE_URL}/stock`,
-                `${API_BASE_URL}/inventory`,
-            ];
-
-            let products = [];
-            let success = false;
-            let successfulEndpoint = null;
-
-            for (const endpoint of endpoints) {
-                try {
-                    console.log(`[Sync] Trying product endpoint: ${endpoint}`);
-                    const response = await fetch(endpoint, {
-                        method: 'GET',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json',
-                        },
-                    });
-
-                    if (response.ok) {
-                        const data = await response.json();
-                        console.log(`[Sync] Response from ${endpoint}:`, typeof data, Array.isArray(data) ? `Array(${data.length})` : 'Object');
-
-                        // Handle different response formats
-                        if (Array.isArray(data)) {
-                            products = data;
-                        } else if (data.data && Array.isArray(data.data)) {
-                            products = data.data;
-                        } else if (data.products && Array.isArray(data.products)) {
-                            products = data.products;
-                        } else if (data.stock && Array.isArray(data.stock)) {
-                            products = data.stock;
-                        } else if (data.inventory && Array.isArray(data.inventory)) {
-                            products = data.inventory;
-                        }
-
-                        if (products.length > 0) {
-                            success = true;
-                            successfulEndpoint = endpoint;
-                            console.log(`[Sync] ✅ Found ${products.length} products from ${endpoint}`);
-                            break;
-                        }
-                    } else {
-                        console.log(`[Sync] ${endpoint} returned ${response.status}`);
-                    }
-                } catch (err) {
-                    console.log(`[Sync] Failed to fetch from ${endpoint}:`, err.message);
-                    continue;
-                }
-            }
-
-            if (!success || products.length === 0) {
-                console.warn('[Sync] ⚠️ No products downloaded - will retry with all endpoints');
+            if (!stats) {
+                console.warn('[Sync] No batch data');
                 return 0;
             }
 
-            this.updateProgress(`Saving ${products.length} products...`, 70);
-
-            // Normalize product data before saving
-            const normalizedProducts = products.map(p => ({
-                code: p.code || p.productcode || p.PRODUCTCODE || p.id || '',
-                name: p.name || p.productname || p.PRODUCTNAME || 'Unknown',
-                barcode: p.barcode || p.BARCODE || p.code || '',
-                price: parseFloat(p.price || p['NET RATE'] || p.netrate || p.PRICE || 0),
-                mrp: parseFloat(p.mrp || p.MRP || 0),
-                stock: parseFloat(p.stock || p.STOCK || 0),
-                unit: p.unit || p.packing || p.PACKING || '',
-                brand: p.brand || p.BRAND || '',
-                category: p.category || p.product || p.PRODUCT || '',
-                taxcode: p.taxcode || p.TAXCODE || '',
-                description: p.description || '',
-            })).filter(p => p.code && p.name);  // Only save products with code and name
-
-            console.log(`[Sync] Normalized ${normalizedProducts.length} valid products`);
-
-            // Save to database
-            await dbService.saveProducts(normalizedProducts);
-
-            console.log(`[Sync] ✅ Downloaded and saved ${normalizedProducts.length} products from ${successfulEndpoint}`);
-
-            return normalizedProducts.length;
+            console.log(`[Sync] ✅ Downloaded ${stats.batches} batches`);
+            return stats.batches;
         } catch (error) {
-            console.error('[Sync] Error downloading products:', error);
-            console.error('[Sync] Error details:', error.stack);
-            // Don't throw - allow sync to continue for customers
-            return 0;
+            console.error('[Sync] Error downloading batches:', error);
+            throw error;
+        }
+    }
+
+    async downloadAreas() {
+        try {
+            const token = await this.getAuthToken();
+            const response = await fetch(`${API_BASE_URL}/area/list/`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                signal: this.abortController?.signal
+            });
+
+            if (!response.ok) {
+                console.warn(`[Sync] Area API returned ${response.status}`);
+                return 0;
+            }
+
+            const data = await response.json();
+
+            let areas = [];
+            if (data.success && data.areas && Array.isArray(data.areas)) {
+                areas = data.areas;
+            } else if (Array.isArray(data)) {
+                areas = data;
+            }
+
+            const validAreas = areas.filter(area => 
+                area && typeof area === 'string' && area.trim() !== ''
+            );
+
+            await dbService.saveAreas(validAreas);
+
+            console.log(`[Sync] ✅ Downloaded ${validAreas.length} areas`);
+            return validAreas.length;
+        } catch (error) {
+            console.error('[Sync] Error downloading areas:', error);
+            throw error;
         }
     }
 
     // ==================== UPLOAD PENDING DATA ====================
-
     async uploadPendingData() {
         if (this.isUploading) {
             throw new Error('Upload already in progress');
@@ -238,11 +335,7 @@ class SyncService {
 
         try {
             const token = await this.getAuthToken();
-
-            // Upload pending collections
             const collectionsUploaded = await this.uploadPendingCollections(token);
-
-            // Upload pending orders
             const ordersUploaded = await this.uploadPendingOrders(token);
 
             return {
@@ -263,11 +356,7 @@ class SyncService {
         try {
             const pendingCollections = await dbService.getOfflineCollections(false);
 
-            if (pendingCollections.length === 0) {
-                return 0;
-            }
-
-            console.log(`Uploading ${pendingCollections.length} pending collections`);
+            if (pendingCollections.length === 0) return 0;
 
             let uploaded = 0;
             for (const collection of pendingCollections) {
@@ -292,15 +381,12 @@ class SyncService {
                     if (response.ok) {
                         await dbService.markCollectionAsSynced(collection.local_id);
                         uploaded++;
-                    } else {
-                        console.error(`Failed to upload collection ${collection.local_id}`);
                     }
                 } catch (error) {
-                    console.error(`Error uploading collection ${collection.local_id}:`, error);
+                    console.error(`Error uploading collection:`, error);
                 }
             }
 
-            console.log(`Successfully uploaded ${uploaded}/${pendingCollections.length} collections`);
             return uploaded;
         } catch (error) {
             console.error('Error in uploadPendingCollections:', error);
@@ -312,16 +398,11 @@ class SyncService {
         try {
             const pendingOrders = await dbService.getOfflineOrders(false);
 
-            if (pendingOrders.length === 0) {
-                return 0;
-            }
-
-            console.log(`Uploading ${pendingOrders.length} pending orders`);
+            if (pendingOrders.length === 0) return 0;
 
             let uploaded = 0;
             for (const order of pendingOrders) {
                 try {
-                    // Adjust endpoint based on your API
                     const response = await fetch(`${API_BASE_URL}/orders/save/`, {
                         method: 'POST',
                         headers: {
@@ -342,15 +423,12 @@ class SyncService {
                     if (response.ok) {
                         await dbService.markOrderAsSynced(order.local_id);
                         uploaded++;
-                    } else {
-                        console.error(`Failed to upload order ${order.local_id}`);
                     }
                 } catch (error) {
-                    console.error(`Error uploading order ${order.local_id}:`, error);
+                    console.error(`Error uploading order:`, error);
                 }
             }
 
-            console.log(`Successfully uploaded ${uploaded}/${pendingOrders.length} orders`);
             return uploaded;
         } catch (error) {
             console.error('Error in uploadPendingOrders:', error);
@@ -359,14 +437,9 @@ class SyncService {
     }
 
     // ==================== UTILITY ====================
-
     async getStats() {
         try {
-            // Initialize database if not already done
-            await dbService.init().catch(err => {
-                console.log('Database already initialized or init failed:', err.message);
-            });
-
+            await dbService.init();
             const stats = await dbService.getDataStats();
             const lastSync = await dbService.getLastSyncTime();
 
@@ -378,7 +451,6 @@ class SyncService {
             };
         } catch (error) {
             console.error('Error getting stats:', error);
-            // Return default stats instead of null to prevent crashes
             return {
                 customers: 0,
                 products: 0,
@@ -403,9 +475,15 @@ class SyncService {
             return false;
         }
     }
+
+    // Cancel ongoing download
+    cancelDownload() {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.isDownloading = false;
+        }
+    }
 }
 
-// Create singleton instance
 const syncService = new SyncService();
-
 export default syncService;

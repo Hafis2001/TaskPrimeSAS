@@ -1,0 +1,384 @@
+// src/services/batchService.js
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import dbService from './database';
+
+const API_BASE_URL = 'https://tasksas.com/api';
+
+class BatchService {
+    constructor() {
+        this.isFetching = false;
+    }
+
+    async getAuthToken() {
+        try {
+            const token = await AsyncStorage.getItem('authToken');
+            if (!token) {
+                throw new Error('No auth token found. Please login again.');
+            }
+            return token;
+        } catch (error) {
+            console.error('Error getting auth token:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Fetch products with batches from API
+     * Tries multiple possible endpoints
+     */
+    async fetchProductsWithBatches() {
+        if (this.isFetching) {
+            console.log('[BatchService] Fetch already in progress');
+            return null;
+        }
+
+        this.isFetching = true;
+
+        try {
+            const token = await this.getAuthToken();
+
+            // Try different possible endpoints
+            const endpoints = [
+                `${API_BASE_URL}/product/get-products-with-batches`,
+                `${API_BASE_URL}/products/batches`,
+                `${API_BASE_URL}/product/get-product-details`, // Fallback to existing endpoint
+            ];
+
+            let productsData = null;
+
+            for (const endpoint of endpoints) {
+                try {
+                    console.log(`[BatchService] Trying endpoint: ${endpoint}`);
+                    const response = await fetch(endpoint, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                        },
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log(`[BatchService] Response from ${endpoint}:`, typeof data);
+
+                        // Handle different response formats
+                        if (data.success && Array.isArray(data.products)) {
+                            productsData = data.products;
+                        } else if (Array.isArray(data)) {
+                            productsData = data;
+                        } else if (data.data && Array.isArray(data.data)) {
+                            productsData = data.data;
+                        }
+
+                        if (productsData && productsData.length > 0) {
+                            console.log(`[BatchService] ✅ Found ${productsData.length} products from ${endpoint}`);
+                            break;
+                        }
+                    } else {
+                        console.log(`[BatchService] ${endpoint} returned ${response.status}`);
+                    }
+                } catch (err) {
+                    console.log(`[BatchService] Failed to fetch from ${endpoint}:`, err.message);
+                    continue;
+                }
+            }
+
+            if (!productsData || productsData.length === 0) {
+                console.warn('[BatchService] ⚠️ No products with batches found from API');
+                return null;
+            }
+
+            return productsData;
+        } catch (error) {
+            console.error('[BatchService] Error fetching products with batches:', error);
+            throw error;
+        } finally {
+            this.isFetching = false;
+        }
+    }
+
+    /**
+     * Cache product batches to database
+     */
+    async cacheProductBatches(productsData) {
+        try {
+            console.log(`[BatchService] Caching ${productsData.length} products with batches...`);
+
+            await dbService.init();
+
+            let totalBatches = 0;
+            let totalPhotos = 0;
+            let totalGoddowns = 0;
+            let processedCount = 0;
+
+            // Process in chunks to show progress
+            const chunkSize = 100;
+            for (let i = 0; i < productsData.length; i += chunkSize) {
+                const chunk = productsData.slice(i, i + chunkSize);
+
+                for (const product of chunk) {
+                    const productCode = product.code;
+
+                    if (!productCode) {
+                        continue;
+                    }
+
+                    // Save batches
+                    if (product.batches && Array.isArray(product.batches) && product.batches.length > 0) {
+                        await dbService.saveBatches(productCode, product.batches);
+                        totalBatches += product.batches.length;
+                    }
+
+                    // Save photos
+                    if (product.photos && Array.isArray(product.photos) && product.photos.length > 0) {
+                        await dbService.saveProductPhotos(productCode, product.photos);
+                        totalPhotos += product.photos.length;
+                    }
+
+                    // Save goddowns
+                    if (product.goddowns && Array.isArray(product.goddowns) && product.goddowns.length > 0) {
+                        await dbService.saveProductGoddowns(productCode, product.goddowns);
+                        totalGoddowns += product.goddowns.length;
+                    }
+
+                    processedCount++;
+                }
+
+                // Log progress every 500 products
+                if (processedCount % 500 === 0 || processedCount === productsData.length) {
+                    console.log(`[BatchService] Progress: ${processedCount}/${productsData.length} products (${totalBatches} batches)`);
+                }
+            }
+
+            console.log(`[BatchService] ✅ Cached ${totalBatches} batches, ${totalPhotos} photos, ${totalGoddowns} goddowns`);
+
+            return {
+                products: productsData.length,
+                batches: totalBatches,
+                photos: totalPhotos,
+                goddowns: totalGoddowns
+            };
+        } catch (error) {
+            console.error('[BatchService] Error caching product batches:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get products with batches from offline database
+     */
+    async getProductBatchesOffline() {
+        try {
+            console.log('[BatchService] Loading batches from offline database...');
+
+            await dbService.init();
+
+            // Get all products
+            const products = await dbService.getProducts();
+
+            if (products.length === 0) {
+                console.log('[BatchService] No products found in database');
+                return [];
+            }
+
+            // Get all batches
+            const allBatches = await dbService.getAllBatches();
+
+            // Group batches by product code
+            const batchesByProduct = {};
+            for (const batch of allBatches) {
+                if (!batchesByProduct[batch.product_code]) {
+                    batchesByProduct[batch.product_code] = [];
+                }
+                batchesByProduct[batch.product_code].push(batch);
+            }
+
+            // Combine products with their batches
+            const productsWithBatches = [];
+
+            for (const product of products) {
+                const batches = batchesByProduct[product.code] || [];
+                const photos = await dbService.getProductPhotos(product.code);
+                const goddowns = await dbService.getProductGoddowns(product.code);
+
+                productsWithBatches.push({
+                    ...product,
+                    batches,
+                    photos,
+                    goddowns
+                });
+            }
+
+            console.log(`[BatchService] ✅ Loaded ${productsWithBatches.length} products with batches from database`);
+
+            return productsWithBatches;
+        } catch (error) {
+            console.error('[BatchService] Error getting product batches offline:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Helper function to safely parse float values
+     */
+    parsePrice(value) {
+        if (value === null || value === undefined || value === '') {
+            return 0;
+        }
+        const parsed = parseFloat(value);
+        return isNaN(parsed) ? 0 : parsed;
+    }
+
+    /**
+     * Transform products with batches into flat batch card list
+     * Each batch becomes a separate card
+     */
+    transformBatchesToCards(productsWithBatches) {
+        try {
+            console.log(`[BatchService] Transforming ${productsWithBatches.length} products to batch cards...`);
+
+            const batchCards = [];
+
+            for (const product of productsWithBatches) {
+                // If product has batches, create a card for each batch
+                if (product.batches && product.batches.length > 0) {
+                    for (const batch of product.batches) {
+                        // Parse all price fields carefully
+                        const mrp = this.parsePrice(batch.MRP || batch.mrp);
+                        const retail = this.parsePrice(batch.RETAIL || batch.retail);
+                        const dp = this.parsePrice(batch['D.P'] || batch.dp);
+                        const cb = this.parsePrice(batch.CB || batch.cb);
+                        const cost = this.parsePrice(batch.COST || batch.cost);
+                        const netRate = this.parsePrice(batch['NET RATE'] || batch.net_rate || batch.netrate);
+                        const pkShop = this.parsePrice(batch['PK SHOP'] || batch.pk_shop || batch.pkshop);
+                        const quantity = this.parsePrice(batch.quantity);
+
+                        batchCards.push({
+                            // Unique ID for the card
+                            id: `${product.code}_${batch.barcode || batch.id}`,
+
+                            // Product info
+                            code: product.code,
+                            name: product.name,
+                            brand: product.brand || '',
+                            unit: product.unit || '',
+                            taxcode: product.taxcode || '',
+                            productCategory: product.category || product.product || '',
+
+                            // Batch-specific info
+                            batchId: batch.id || batch.batch_id,
+                            barcode: batch.barcode || '',
+                            mrp: mrp,
+                            price: retail > 0 ? retail : mrp, // Use retail as price, fallback to MRP
+                            stock: quantity,
+
+                            // Additional batch prices
+                            retail: retail,
+                            dp: dp,
+                            cb: cb,
+                            cost: cost,
+                            secondPrice: this.parsePrice(batch.second_price),
+                            thirdPrice: this.parsePrice(batch.third_price),
+                            netRate: netRate,
+                            pkShop: pkShop,
+                            expiryDate: batch.expirydate || batch.expiry_date || null,
+
+                            // Photos (shared across all batches of same product)
+                            photos: product.photos || [],
+
+                            // Goddowns matching this batch's barcode
+                            goddowns: (product.goddowns || []).filter(g => g.barcode === batch.barcode),
+
+                            // Full batch object for reference
+                            batch: batch
+                        });
+
+                        // Debug log for first few items
+                        if (batchCards.length <= 3) {
+                            console.log(`[BatchService] Sample card ${batchCards.length}:`, {
+                                name: product.name,
+                                mrp: mrp,
+                                retail: retail,
+                                price: retail > 0 ? retail : mrp,
+                                photos: product.photos?.length || 0
+                            });
+                        }
+                    }
+                } else {
+                    // If no batches, create a single card from product data
+                    const productMrp = this.parsePrice(product.mrp);
+                    const productPrice = this.parsePrice(product.price);
+
+                    batchCards.push({
+                        id: product.code,
+                        code: product.code,
+                        name: product.name,
+                        brand: product.brand || '',
+                        unit: product.unit || '',
+                        taxcode: product.taxcode || '',
+                        productCategory: product.category || '',
+                        batchId: null,
+                        barcode: product.barcode || product.code,
+                        mrp: productMrp,
+                        price: productPrice > 0 ? productPrice : productMrp,
+                        stock: this.parsePrice(product.stock),
+                        retail: productPrice,
+                        dp: 0,
+                        cb: 0,
+                        cost: 0,
+                        secondPrice: 0,
+                        thirdPrice: 0,
+                        netRate: productPrice,
+                        pkShop: 0,
+                        expiryDate: null,
+                        photos: product.photos || [],
+                        goddowns: product.goddowns || [],
+                        batch: null
+                    });
+                }
+            }
+
+            console.log(`[BatchService] ✅ Created ${batchCards.length} batch cards`);
+
+            return batchCards;
+        } catch (error) {
+            console.error('[BatchService] Error transforming batches to cards:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Download and cache products with batches
+     */
+    async downloadAndCache() {
+        try {
+            console.log('[BatchService] Starting download and cache...');
+
+            // Fetch from API
+            const productsData = await this.fetchProductsWithBatches();
+
+            if (!productsData) {
+                console.log('[BatchService] No data fetched from API');
+                return null;
+            }
+
+            // Cache to database
+            const stats = await this.cacheProductBatches(productsData);
+
+            console.log('[BatchService] ✅ Download and cache complete:', stats);
+
+            return stats;
+        } catch (error) {
+            console.error('[BatchService] Error in download and cache:', error);
+            throw error;
+        }
+    }
+}
+
+
+
+// Create singleton instance
+const batchService = new BatchService();
+
+export default batchService;

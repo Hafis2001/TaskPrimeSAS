@@ -1,7 +1,8 @@
 module.exports = {
   expo: {
+     owner: "demoadila",  
     name: "TaskSAS",
-    slug: "TaskSAS",
+    slug: "TaskSAS1",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/app-icon.png",
@@ -55,7 +56,7 @@ module.exports = {
     extra: {
       router: {},
       eas: {
-        projectId: "4f4081d1-61b4-4250-935e-da63b15ce651"
+        projectId: "aca0c95c-06e4-4cef-b0bb-6a40dd9cf18b"
       }
     },
     experiments: {
