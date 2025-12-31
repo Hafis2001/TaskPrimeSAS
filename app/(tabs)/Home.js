@@ -1,8 +1,9 @@
 // app/(tabs)/Home.js
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -24,8 +25,24 @@ const Home = ({ navigation }) => {
   const router = useRouter();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
+  const [username, setUsername] = useState('User');
 
   useEffect(() => {
+    // Load username from storage
+    const loadUsername = async () => {
+      try {
+        const storedUsername = await AsyncStorage.getItem('username');
+        if (storedUsername) {
+          setUsername(storedUsername);
+        }
+      } catch (error) {
+        console.error('Error loading username:', error);
+      }
+    };
+
+    loadUsername();
+
+    // Animations
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -73,15 +90,6 @@ const Home = ({ navigation }) => {
       gradient: Gradients.secondary,
       shadowColor: Colors.secondary.main,
     },
-    {
-      icon: 'receipt-outline',
-      title: 'VIEW ORDERS',
-      description: 'View all placed orders',
-      onPress: () => router.push("/Order/PlaceOrder"),
-      gradient: Gradients.ocean,
-      shadowColor: Colors.secondary[600],
-      highlight: true,
-    },
   ];
 
   const getCurrentDate = () => {
@@ -110,7 +118,7 @@ const Home = ({ navigation }) => {
           >
             <View style={styles.headerRow}>
               <View style={styles.headerLeft}>
-                <Text style={styles.greeting}>Hello, User</Text>
+                <Text style={styles.greeting}>Hello, {username}</Text>
                 <Text style={styles.date}>{getCurrentDate()}</Text>
               </View>
               <View>

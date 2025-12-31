@@ -3,12 +3,13 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  BackHandler,
   Dimensions,
   FlatList,
   Image,
@@ -48,6 +49,13 @@ export default function OrderDetails() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isOnline, setIsOnline] = useState(true);
 
+  // Pagination state for optimized loading
+  const [loadedCount, setLoadedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const PRODUCTS_PER_PAGE = 500; // Increased to load more products initially
+
   // Track last processed barcode to prevent duplicates
   const lastProcessedBarcode = useRef(null);
 
@@ -73,21 +81,26 @@ export default function OrderDetails() {
   const sheetAnim = useRef(new Animated.Value(height)).current;
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // Load all products with batches from database
+  // For highlighting scanned items
+  const [highlightedProductId, setHighlightedProductId] = useState(null);
+  const flatListRef = useRef(null);
+
+  // OPTIMIZED: Load products with pagination for better performance
   async function fetchAllProducts(isRefresh = false) {
     if (!isRefresh) {
       setLoading(true);
     }
 
     try {
-      console.log('[OrderDetails] Loading products with batches from database...');
+      console.log('[OrderDetails] Loading first batch of products...');
       await dbService.init();
 
-      const productsWithBatches = await batchService.getProductBatchesOffline();
+      // Get total count first
+      const countResult = await dbService.db.getFirstAsync('SELECT COUNT(*) as count FROM products');
+      const total = countResult?.count || 0;
+      setTotalCount(total);
 
-      console.log(`[OrderDetails] Found ${productsWithBatches.length} products in database`);
-
-      if (productsWithBatches.length === 0) {
+      if (total === 0) {
         Alert.alert(
           "No Products Available",
           "No product data found. Please download products from Home screen first.",
@@ -98,17 +111,22 @@ export default function OrderDetails() {
         );
         setAllProducts([]);
         setFilteredProducts([]);
+        setHasMore(false);
         return;
       }
 
+      // Load first page with LIMIT
+      const productsWithBatches = await batchService.getProductBatchesOffline(PRODUCTS_PER_PAGE, 0);
       const batchCards = batchService.transformBatchesToCards(productsWithBatches);
 
-      console.log(`[OrderDetails] Transformed to ${batchCards.length} batch cards`);
+      console.log(`[OrderDetails] Loaded first ${batchCards.length} batch cards (Total products: ${total})`);
 
       setAllProducts(batchCards);
       setFilteredProducts(batchCards);
+      setLoadedCount(batchCards.length);
+      setHasMore(batchCards.length < total * 2); // Rough estimate (products can have multiple batches)
 
-      // Extract filter options
+      // Extract filter options from first batch only
       extractFilterOptions(batchCards);
     } catch (error) {
       console.error('[OrderDetails] Error loading products:', error);
@@ -126,42 +144,84 @@ export default function OrderDetails() {
     }
   }
 
+  // Load more products (pagination)
+  async function loadMoreProducts() {
+    if (loadingMore || !hasMore || loading) return;
+
+    setLoadingMore(true);
+    try {
+      console.log(`[OrderDetails] Loading more products... (current: ${loadedCount})`);
+
+      const currentProductCount = Math.floor(loadedCount / 2); // Rough estimate
+      const productsWithBatches = await batchService.getProductBatchesOffline(
+        PRODUCTS_PER_PAGE,
+        currentProductCount
+      );
+
+      if (productsWithBatches.length === 0) {
+        console.log('[OrderDetails] No more products to load');
+        setHasMore(false);
+        return;
+      }
+
+      const newBatchCards = batchService.transformBatchesToCards(productsWithBatches);
+      console.log(`[OrderDetails] Loaded ${newBatchCards.length} more batch cards`);
+
+      setAllProducts(prev => [...prev, ...newBatchCards]);
+      setFilteredProducts(prev => [...prev, ...newBatchCards]);
+      setLoadedCount(prev => prev + newBatchCards.length);
+
+      // Update filter options with new products
+      extractFilterOptions([...allProducts, ...newBatchCards]);
+
+      if (newBatchCards.length < PRODUCTS_PER_PAGE) {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error('[OrderDetails] Error loading more products:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
   // Extract unique brands and products for filtering
   function extractFilterOptions(products) {
     console.log('[OrderDetails] Extracting filter options from', products.length, 'products');
-    
+
     const brandsMap = new Map();
-    const productsMap = new Map();
-    
+    const categoriesMap = new Map(); // Extract CATEGORIES, not product names
+
     products.forEach(p => {
       const brand = (p.brand || '').trim();
       if (brand) {
         brandsMap.set(brand, (brandsMap.get(brand) || 0) + 1);
       }
-      
-      const productName = (p.name || '').trim();
-      if (productName) {
-        productsMap.set(productName, (productsMap.get(productName) || 0) + 1);
+
+
+      // Extract CATEGORY (like "CHOCOLATE", "RICE") from productCategory field
+      const category = (p.productCategory || '').trim();
+      if (category) {
+        categoriesMap.set(category, (categoriesMap.get(category) || 0) + 1);
       }
     });
-    
+
     const brands = Array.from(brandsMap.keys()).sort();
-    const productNames = Array.from(productsMap.keys()).sort();
-    
+    const categories = Array.from(categoriesMap.keys()).sort();
+
     console.log('[OrderDetails] Extracted brands:', brands.length);
     console.log('[OrderDetails] Sample brands:', brands.slice(0, 5));
-    console.log('[OrderDetails] Extracted products:', productNames.length);
-    console.log('[OrderDetails] Sample products:', productNames.slice(0, 3));
-    
+    console.log('[OrderDetails] Extracted categories:', categories.length);
+    console.log('[OrderDetails] Sample categories:', categories.slice(0, 5));
+
     setAvailableBrands(brands);
-    setAvailableProducts(productNames);
+    setAvailableProducts(categories); // This contains categories now, not product names
   }
 
   // Apply filters
   function applyFilters() {
     console.log('[OrderDetails] === APPLYING FILTERS ===');
     console.log('Selected Brands:', selectedBrands);
-    console.log('Selected Products:', selectedProducts);
+    console.log('Selected Categories:', selectedProducts); // Still called selectedProducts but contains categories
     console.log('Search Query:', query);
     console.log('Total Products:', allProducts.length);
 
@@ -175,12 +235,13 @@ export default function OrderDetails() {
       console.log(`After brand filter: ${filtered.length} products`);
     }
 
+    // Filter by CATEGORY (like "CHOCOLATE") instead of product name
     if (selectedProducts.length > 0) {
       filtered = filtered.filter(p => {
-        const productName = (p.name || '').trim();
-        return selectedProducts.includes(productName);
+        const productCategory = (p.productCategory || '').trim();
+        return selectedProducts.includes(productCategory);
       });
-      console.log(`After product filter: ${filtered.length} products`);
+      console.log(`After category filter: ${filtered.length} products`);
     }
 
     if (query.trim()) {
@@ -190,7 +251,8 @@ export default function OrderDetails() {
         const matchCode = (p.code || '').toLowerCase().includes(searchQuery);
         const matchBarcode = (p.barcode || '').toLowerCase().includes(searchQuery);
         const matchBrand = (p.brand || '').toLowerCase().includes(searchQuery);
-        return matchName || matchCode || matchBarcode || matchBrand;
+        const matchCategory = (p.productCategory || '').toLowerCase().includes(searchQuery);
+        return matchName || matchCode || matchBarcode || matchBrand || matchCategory;
       });
       console.log(`After search filter: ${filtered.length} products`);
     }
@@ -201,7 +263,7 @@ export default function OrderDetails() {
 
     if (filtered.length === 0) {
       Alert.alert(
-        "No Results", 
+        "No Results",
         "No products match your current filters. Try adjusting your selection."
       );
     }
@@ -273,7 +335,7 @@ export default function OrderDetails() {
       if (!product) {
         console.log('[OrderDetails] Product not found in database');
         Alert.alert(
-          "Not Found", 
+          "Not Found",
           `Product with barcode "${cleanBarcode}" not found in database.\n\nPlease ensure:\n• Product data is downloaded\n• Barcode is correct`
         );
         return null;
@@ -325,15 +387,29 @@ export default function OrderDetails() {
     };
   }, []);
 
+  // Handle hardware back button
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        handleBackPress();
+        return true; // Prevent default back behavior
+      };
+
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+
+      return () => subscription.remove();
+    }, [cart]) // Re-register when cart changes to have latest cart state in handleBackPress
+  );
+
   // Handle barcode scanning - IMPROVED VERSION
   useEffect(() => {
     if (scanned && scanned !== lastProcessedBarcode.current) {
       console.log('[OrderDetails] New barcode received:', scanned);
       lastProcessedBarcode.current = scanned;
-      
+
       const code = String(scanned).trim();
       handleScannedBarcode(code);
-      
+
       // Clear the scanned param after processing
       setTimeout(() => {
         router.setParams({
@@ -355,33 +431,101 @@ export default function OrderDetails() {
     applyFilters();
   };
 
-  // Handle scanned barcode - IMPROVED VERSION
+  // Handle scanned barcode - ENHANCED VERSION with highlighting and scrolling
   async function handleScannedBarcode(code) {
     console.log('[OrderDetails] Processing barcode:', code);
-    
+
     // First, check in already loaded products
-    const existingProduct = allProducts.find((p) =>
+    let productToShow = allProducts.find((p) =>
       p.barcode === code || p.code === code
     );
 
-    if (existingProduct) {
-      console.log('[OrderDetails] Product found in loaded products:', existingProduct.name);
-      openQuantityModal(existingProduct);
+    if (productToShow) {
+      console.log('[OrderDetails] Product found in loaded products:', productToShow.name);
+
+      // Ensure it's in the filtered list (might be filtered out)
+      const isInFilteredList = filteredProducts.find(p => p.id === productToShow.id);
+      if (!isInFilteredList) {
+        console.log('[OrderDetails] Product was filtered out, adding to view...');
+        setFilteredProducts(prev => [productToShow, ...prev]);
+      }
+
+      // Highlight and scroll to the product
+      highlightAndScrollToProduct(productToShow);
+
+      // Open quantity modal
+      openQuantityModal(productToShow);
       return;
     }
 
     // If not found in loaded products, search database
     console.log('[OrderDetails] Product not in loaded list, searching database...');
-    setLoading(true);
+    setSearchLoading(true);
     const fetchedProduct = await fetchProductByBarcode(code);
-    setLoading(false);
+    setSearchLoading(false);
 
     if (fetchedProduct) {
-      console.log('[OrderDetails] Opening quantity modal for:', fetchedProduct.name);
-      openQuantityModal(fetchedProduct);
+      console.log('[OrderDetails] Product found in database:', fetchedProduct.name);
+
+      // Transform to match the expected structure if needed
+      const productCard = {
+        ...fetchedProduct,
+        id: fetchedProduct.id || fetchedProduct.code,
+        photos: fetchedProduct.photos || [],
+        // Ensure all required fields are present
+        mrp: fetchedProduct.mrp || 0,
+        price: fetchedProduct.price || 0,
+        stock: fetchedProduct.stock || 0,
+        brand: fetchedProduct.brand || '',
+        unit: fetchedProduct.unit || '',
+        productCategory: fetchedProduct.productCategory || fetchedProduct.category || '',
+      };
+
+      // Add to both lists if not already there
+      const existsInAll = allProducts.find(p => p.id === productCard.id || p.code === productCard.code);
+      if (!existsInAll) {
+        setAllProducts(prev => [productCard, ...prev]);
+      }
+
+      const existsInFiltered = filteredProducts.find(p => p.id === productCard.id || p.code === productCard.code);
+      if (!existsInFiltered) {
+        setFilteredProducts(prev => [productCard, ...prev]);
+      }
+
+      // Highlight and scroll to product
+      highlightAndScrollToProduct(productCard);
+
+      // Open quantity modal
+      openQuantityModal(productCard);
     } else {
-      console.log('[OrderDetails] Product not found');
+      console.log('[OrderDetails] Product not found in database');
     }
+  }
+
+  // Highlight and scroll to a product in the list
+  function highlightAndScrollToProduct(product) {
+    console.log('[OrderDetails] Highlighting product:', product.name);
+
+    // Set highlighted state
+    setHighlightedProductId(product.id);
+
+    // Clear highlight after 3 seconds
+    setTimeout(() => {
+      setHighlightedProductId(null);
+    }, 3000);
+
+    // Scroll to the product
+    setTimeout(() => {
+      const index = filteredProducts.findIndex(p => p.id === product.id);
+      if (index >= 0 && flatListRef.current) {
+        console.log('[OrderDetails] Scrolling to index:', index);
+        flatListRef.current.scrollToIndex({
+          index: index,
+          animated: true,
+          viewPosition: 0.5 // Center in view
+        });
+      }
+    }, 300); // Small delay to ensure the product is in the list
   }
 
   function openQuantityModal(product) {
@@ -468,6 +612,38 @@ export default function OrderDetails() {
     setDetailsModalVisible(false);
     setSelectedBatchDetails(null);
     setCurrentPhotoIndex(0);
+  }
+
+  function handleBackPress() {
+    // If cart has items, show confirmation
+    if (cart.length > 0) {
+      Alert.alert(
+        "Cart Not Empty",
+        `You have ${cart.length} item(s) in your cart. What would you like to do?`,
+        [
+          {
+            text: "Place Order",
+            onPress: handlePlaceOrder,
+            style: "default"
+          },
+          {
+            text: "Discard Cart",
+            onPress: () => {
+              setCart([]);
+              router.replace("/Order/Entry");
+            },
+            style: "destructive"
+          },
+          {
+            text: "Cancel",
+            style: "cancel"
+          }
+        ]
+      );
+    } else {
+      // Cart is empty, just go back to Entry
+      router.replace("/Order/Entry");
+    }
   }
 
   async function handlePlaceOrder() {
@@ -582,7 +758,7 @@ export default function OrderDetails() {
   const getFilteredBrands = () => {
     if (!filterSearchQuery.trim()) return availableBrands;
     const search = filterSearchQuery.toLowerCase();
-    return availableBrands.filter(brand => 
+    return availableBrands.filter(brand =>
       brand.toLowerCase().includes(search)
     );
   };
@@ -590,7 +766,7 @@ export default function OrderDetails() {
   const getFilteredProductNames = () => {
     if (!filterSearchQuery.trim()) return availableProducts;
     const search = filterSearchQuery.toLowerCase();
-    return availableProducts.filter(product => 
+    return availableProducts.filter(product =>
       product.toLowerCase().includes(search)
     );
   };
@@ -600,8 +776,9 @@ export default function OrderDetails() {
     return allProducts.filter(p => (p.brand || '').trim() === brand).length;
   };
 
-  const getProductCount = (productName) => {
-    return allProducts.filter(p => (p.name || '').trim() === productName).length;
+  // Changed to get category count instead of product name count
+  const getProductCount = (category) => {
+    return allProducts.filter(p => (p.productCategory || '').trim() === category).length;
   };
 
   return (
@@ -611,7 +788,7 @@ export default function OrderDetails() {
 
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Order Details</Text>
@@ -678,7 +855,16 @@ export default function OrderDetails() {
             >
               <Ionicons name="refresh" size={20} color={Colors.primary.main} />
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
+              style={styles.actionIconButton}
+              onPress={() => {
+                console.log('[OrderDetails] View Orders button pressed');
+                router.push("/Order/PlaceOrder");
+              }}
+            >
+              <Ionicons name="receipt-outline" size={20} color={Colors.primary.main} />
+            </TouchableOpacity>
+            <TouchableOpacity
               style={[styles.actionIconButton, itemCount > 0 && styles.actionIconButtonActive]}
               onPress={() => {
                 console.log('[OrderDetails] Cart button pressed');
@@ -708,8 +894,8 @@ export default function OrderDetails() {
                 returnKeyType="search"
               />
               {query.length > 0 && (
-                <TouchableOpacity onPress={() => { 
-                  setQuery(""); 
+                <TouchableOpacity onPress={() => {
+                  setQuery("");
                   let filtered = [...allProducts];
                   if (selectedBrands.length > 0) {
                     filtered = filtered.filter(p => selectedBrands.includes((p.brand || '').trim()));
@@ -780,6 +966,7 @@ export default function OrderDetails() {
           {/* Product List */}
           {!loading && !searchLoading && (
             <FlatList
+              ref={flatListRef}
               data={filteredProducts}
               keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={styles.listContent}
@@ -793,6 +980,58 @@ export default function OrderDetails() {
                 />
               }
               ListEmptyComponent={renderEmptyState}
+              onEndReached={loadMoreProducts}
+              onEndReachedThreshold={0.5}
+              onScrollToIndexFailed={(info) => {
+                console.warn('[OrderDetails] Scroll to index failed:', info);
+                // Fallback: scroll to offset
+                flatListRef.current?.scrollToOffset({
+                  offset: info.averageItemLength * info.index,
+                  animated: true,
+                });
+                // Retry scrolling after a delay
+                setTimeout(() => {
+                  flatListRef.current?.scrollToIndex({
+                    index: info.index,
+                    animated: true,
+                    viewPosition: 0.5,
+                  });
+                }, 100);
+              }}
+              ListFooterComponent={() => {
+                if (loadingMore) {
+                  return (
+                    <View style={{ padding: 20, alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color={Colors.primary.main} />
+                      <Text style={{ marginTop: 8, color: Colors.text.secondary, fontSize: 12 }}>
+                        Loading more products...
+                      </Text>
+                    </View>
+                  );
+                }
+                if (!hasMore && filteredProducts.length > 0) {
+                  return (
+                    <View style={{ padding: 20, alignItems: 'center' }}>
+                      <Text style={{ color: Colors.text.tertiary, fontSize: 12 }}>
+                        All products loaded ({loadedCount} items)
+                      </Text>
+                    </View>
+                  );
+                }
+                if (hasMore && filteredProducts.length > 0 && !loading) {
+                  return (
+                    <TouchableOpacity
+                      style={{ padding: 20, alignItems: 'center' }}
+                      onPress={loadMoreProducts}
+                    >
+                      <Text style={{ color: Colors.primary.main, fontSize: 14, fontWeight: '600' }}>
+                        Load More Products
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                }
+                return null;
+              }}
               renderItem={({ item }) => {
                 const cartItem = cart.find(c => c.product.id === item.id);
                 const currentQty = cartItem?.qty || 0;
@@ -800,6 +1039,7 @@ export default function OrderDetails() {
                 const inStock = true;
                 const stockQty = item.stock || 0;
                 const isInCart = currentQty > 0;
+                const isHighlighted = highlightedProductId === item.id;
 
                 return (
                   <CodeItem
@@ -809,6 +1049,7 @@ export default function OrderDetails() {
                     currentQty={currentQty}
                     displayValue={displayValue}
                     isInCart={isInCart}
+                    isHighlighted={isHighlighted}
                     setEditingQty={setEditingQty}
                     changeQty={changeQty}
                     removeItem={removeItem}
@@ -1094,7 +1335,7 @@ export default function OrderDetails() {
                       keyboardType="numeric"
                       onChangeText={(text) => {
                         const cleaned = text.replace(/[^0-9]/g, '');
-                        setTempQuantity(cleaned || "1");
+                        setTempQuantity(cleaned);
                       }}
                       selectTextOnFocus
                     />
@@ -1293,8 +1534,12 @@ export default function OrderDetails() {
 }
 
 // Separated Component for better performance
-const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart, setEditingQty, changeQty, removeItem, addToCart, openImageModal, openDetailsModal }) => (
-  <View style={[styles.productCard, isInCart && styles.productCardInCart]}>
+const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart, isHighlighted, setEditingQty, changeQty, removeItem, addToCart, openImageModal, openDetailsModal }) => (
+  <View style={[
+    styles.productCard,
+    isInCart && styles.productCardInCart,
+    isHighlighted && styles.productCardHighlighted
+  ]}>
     <View style={styles.productContainer}>
       <TouchableOpacity onPress={() => openImageModal(item.photos)}>
         {item.photos && item.photos.length > 0 ? (
@@ -1351,9 +1596,15 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
             style={styles.qtyInput}
             value={displayValue}
             keyboardType="numeric"
+            selectTextOnFocus={true}
+            onFocus={() => {
+              // Initialize editing value with current quantity when user starts editing
+              setEditingQty(prev => ({ ...prev, [item.id]: String(currentQty) }));
+            }}
             onChangeText={(text) => {
-              const num = parseInt(text.replace(/[^0-9]/g, ''), 10);
-              setEditingQty(prev => ({ ...prev, [item.id]: text }));
+              const cleaned = text.replace(/[^0-9]/g, '');
+              const num = parseInt(cleaned, 10);
+              setEditingQty(prev => ({ ...prev, [item.id]: cleaned }));
               if (!isNaN(num)) changeQty(item.id, num);
             }}
             onBlur={() => {
@@ -1571,6 +1822,12 @@ const styles = StyleSheet.create({
     borderColor: '#81C784',
     borderWidth: 2,
   },
+  productCardHighlighted: {
+    backgroundColor: '#E3F2FD',
+    borderColor: '#2196F3',
+    borderWidth: 3,
+    ...Shadows.colored.primary,
+  },
   productContainer: { flexDirection: 'row', gap: Spacing.md },
   productImage: { width: 60, height: 60, borderRadius: BorderRadius.md, backgroundColor: Colors.neutral[50] },
   placeholderImage: { width: 60, height: 60, borderRadius: BorderRadius.md, backgroundColor: Colors.neutral[100], justifyContent: 'center', alignItems: 'center' },
@@ -1589,17 +1846,17 @@ const styles = StyleSheet.create({
   productMeta: { fontSize: 11, color: Colors.text.tertiary, marginTop: 2 },
   productBrand: { fontSize: 11, color: Colors.text.secondary, fontStyle: 'italic', marginBottom: 4 },
   productBarcode: { fontSize: Typography.sizes.sm, color: Colors.text.secondary, marginTop: 2 },
-  priceColumn: { 
+  priceColumn: {
     marginTop: 4,
   },
-  mrpLabel: { 
-    fontSize: Typography.sizes.sm, 
+  mrpLabel: {
+    fontSize: Typography.sizes.sm,
     color: Colors.text.secondary,
     marginBottom: 2,
   },
-  price: { 
-    fontSize: Typography.sizes.base, 
-    fontWeight: '700', 
+  price: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
     color: Colors.primary.main,
   },
 
@@ -1772,6 +2029,7 @@ const styles = StyleSheet.create({
   filterActions: {
     flexDirection: 'row',
     padding: Spacing.lg,
+    paddingBottom: Spacing['2xl'], // Extra padding for phone's navigation bar
     gap: Spacing.md,
     borderTopWidth: 1,
     borderTopColor: Colors.border.light,

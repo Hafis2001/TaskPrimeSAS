@@ -145,19 +145,35 @@ export default function UploadScreen() {
         try {
           // Prepare upload data according to API structure
           const uploadData = {
-            code: collection.customer_code,
-            name: collection.customer_name,
-            amount: parseFloat(collection.amount),
-            type: collection.payment_type
+            code: collection.customer_code || '',
+            name: collection.customer_name || '',
+            place: collection.customer_place || '',
+            phone: collection.customer_phone || '',
+            amount: parseFloat(collection.amount) || 0,
+            type: collection.payment_type || ''
           };
 
-          // Add optional fields only if they exist
-          if (collection.customer_place) {
-            uploadData.place = collection.customer_place;
+          // Add optional fields only if they exist and have values
+          // Handle cheque_no (DB uses cheque_number)
+          if (collection.cheque_number || collection.cheque_no) {
+            uploadData.cheque_no = collection.cheque_number || collection.cheque_no;
+            // Also map to ref_no if not present, based on user example
+            if (!uploadData.ref_no) {
+              uploadData.ref_no = uploadData.cheque_no;
+            }
           }
-          if (collection.customer_phone) {
-            uploadData.phone = collection.customer_phone;
+
+          // Handle ref_no if explicitly present
+          if (collection.ref_no) {
+            uploadData.ref_no = collection.ref_no;
           }
+
+          // Handle remark (DB uses remarks)
+          if (collection.remarks || collection.remark) {
+            uploadData.remark = collection.remarks || collection.remark;
+          }
+
+          console.log('[Upload] Uploading collection:', JSON.stringify(uploadData, null, 2));
 
           const response = await fetch(API_UPLOAD_COLLECTION, {
             method: "POST",
@@ -169,10 +185,16 @@ export default function UploadScreen() {
             body: JSON.stringify(uploadData),
           });
 
+          console.log('[Upload] Response status:', response.status);
+
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
+            console.log('[Upload] Error response:', errorData);
             throw new Error(errorData.message || `Upload failed: ${response.status}`);
           }
+
+          const responseData = await response.json().catch(() => ({}));
+          console.log('[Upload] Success response:', responseData);
 
           // Mark as synced locally using local_id
           await dbService.markCollectionAsSynced(collection.local_id);
@@ -359,7 +381,7 @@ export default function UploadScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: { flex: 1, paddingTop: Spacing.xs, paddingBottom: Spacing.md },
+  safeArea: { flex: 1, marginTop: 35, paddingBottom: Spacing.md },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   header: {
     flexDirection: "row",

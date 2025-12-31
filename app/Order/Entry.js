@@ -2,11 +2,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Modal,
   SafeAreaView,
@@ -47,6 +48,12 @@ export default function EntryScreen() {
   const [filteredAreas, setFilteredAreas] = useState([]);
   const [filteredCustomers, setFilteredCustomers] = useState([]);
 
+  // Handle back press
+  const handleBackPress = useCallback(() => {
+    router.replace("/(tabs)/Home");
+    return true;
+  }, [router]);
+
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(state.isConnected);
@@ -56,6 +63,14 @@ export default function EntryScreen() {
 
     return () => unsubscribe();
   }, []);
+
+  // Handle hardware back button
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', handleBackPress);
+      return () => subscription.remove();
+    }, [handleBackPress])
+  );
 
   // Filter areas based on search
   useEffect(() => {
@@ -201,7 +216,7 @@ export default function EntryScreen() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="dark-content" />
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>New Order</Text>
@@ -448,7 +463,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
-    marginTop:30,
+    marginTop: 30,
   },
   headerTitle: {
     fontSize: Typography.sizes.xl,

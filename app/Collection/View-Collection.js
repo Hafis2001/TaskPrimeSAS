@@ -421,7 +421,7 @@ export default function ViewCollectionScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: { flex: 1, paddingTop: Spacing.xs, paddingBottom: Spacing.md },
+  safeArea: { flex: 1, marginTop: 35, paddingBottom: Spacing.md },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   header: {
     flexDirection: "row",

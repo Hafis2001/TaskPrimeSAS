@@ -167,25 +167,40 @@ class BatchService {
 
     /**
      * Get products with batches from offline database
+     * OPTIMIZED: Uses bulk queries to avoid N+1 query problem
+     * @param {number} limit - Optional limit for pagination (null = all)
+     * @param {number} offset - Optional offset for pagination (default 0)
      */
-    async getProductBatchesOffline() {
+    async getProductBatchesOffline(limit = null, offset = 0) {
         try {
+            const startTime = Date.now();
             console.log('[BatchService] Loading batches from offline database...');
 
             await dbService.init();
 
-            // Get all products
-            const products = await dbService.getProducts();
+            // Get products with optional pagination
+            let query = 'SELECT * FROM products ORDER BY name ASC';
+            const params = [];
+
+            if (limit !== null) {
+                query += ' LIMIT ? OFFSET ?';
+                params.push(limit, offset);
+                console.log(`[BatchService] Pagination: limit=${limit}, offset=${offset}`);
+            }
+
+            const products = await dbService.db.getAllAsync(query, params);
 
             if (products.length === 0) {
                 console.log('[BatchService] No products found in database');
                 return [];
             }
 
-            // Get all batches
+            console.log(`[BatchService] ✅ Loaded ${products.length} products from database`);
+
+            // OPTIMIZED: Get ALL batches in a single query instead of N queries
             const allBatches = await dbService.getAllBatches();
 
-            // Group batches by product code
+            // Group batches by product code for O(1) lookup
             const batchesByProduct = {};
             for (const batch of allBatches) {
                 if (!batchesByProduct[batch.product_code]) {
@@ -194,13 +209,17 @@ class BatchService {
                 batchesByProduct[batch.product_code].push(batch);
             }
 
-            // Combine products with their batches
+            // OPTIMIZED: Get ALL photos and goddowns in single queries instead of N queries each
+            const allPhotos = await dbService.getAllProductPhotos(); // Returns Map<product_code, photos[]>
+            const allGoddowns = await dbService.getAllProductGoddowns(); // Returns Map<product_code, goddowns[]>
+
+            // Combine products with their batches, photos, and goddowns
             const productsWithBatches = [];
 
             for (const product of products) {
                 const batches = batchesByProduct[product.code] || [];
-                const photos = await dbService.getProductPhotos(product.code);
-                const goddowns = await dbService.getProductGoddowns(product.code);
+                const photos = allPhotos.get(product.code) || [];
+                const goddowns = allGoddowns.get(product.code) || [];
 
                 productsWithBatches.push({
                     ...product,
@@ -210,7 +229,9 @@ class BatchService {
                 });
             }
 
-            console.log(`[BatchService] ✅ Loaded ${productsWithBatches.length} products with batches from database`);
+            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+            console.log(`[BatchService] ✅ Loaded ${productsWithBatches.length} products with batches in ${duration}s`);
+            console.log(`[BatchService] Total batches: ${allBatches.length}, photos: ${allPhotos.size} products, goddowns: ${allGoddowns.size} products`);
 
             return productsWithBatches;
         } catch (error) {
@@ -261,10 +282,10 @@ class BatchService {
                             // Product info
                             code: product.code,
                             name: product.name,
-                            brand: product.brand || '',
+                            brand: product.brand || '', // Brand for filtering
                             unit: product.unit || '',
                             taxcode: product.taxcode || '',
-                            productCategory: product.category || product.product || '',
+                            productCategory: product.category || '', // Category for filtering (from 'product' field in API),
 
                             // Batch-specific info
                             batchId: batch.id || batch.batch_id,

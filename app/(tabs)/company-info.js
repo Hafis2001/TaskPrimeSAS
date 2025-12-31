@@ -196,7 +196,7 @@ export default function CompanyInfoScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  safeArea: { flex: 1, paddingTop: Spacing.xs, paddingBottom: Spacing.md },
+  safeArea: { flex: 1, marginTop: 35, paddingBottom: Spacing.md },
   center: {
     flex: 1,
     justifyContent: 'center',

@@ -5,11 +5,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   LayoutAnimation,
+  Modal,
   Platform,
   SafeAreaView,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -17,9 +20,6 @@ import {
   TouchableOpacity,
   UIManager,
   View,
-  ActivityIndicator,
-  Modal,
-  ScrollView,
 } from 'react-native';
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 
@@ -158,11 +158,16 @@ export default function PlaceOrder() {
       const username = await AsyncStorage.getItem('username');
       const clientId = await AsyncStorage.getItem('client_id');
       const authToken = await AsyncStorage.getItem('authToken');
+      const deviceId = (await AsyncStorage.getItem('device_hardware_id')) || (await AsyncStorage.getItem('deviceId'));
 
-      console.log('[Upload] Auth check:', { username, clientId, hasToken: !!authToken });
+      console.log('[Upload] Auth check:', { username, clientId, deviceId, hasToken: !!authToken });
 
       if (!username || !clientId) {
         throw new Error('Missing authentication credentials. Please login again.');
+      }
+
+      if (!deviceId) {
+        throw new Error('Device ID not found. Please restart the app.');
       }
 
       // Upload results for each item
@@ -173,10 +178,9 @@ export default function PlaceOrder() {
       // Upload each item separately
       for (let i = 0; i < order.items.length; i++) {
         const item = order.items[i];
-        
-        // Try different payload formats to find what works
+
+        // Prepare payload matching the API requirements
         const payload = {
-          client_id: String(clientId).trim(),
           customer_name: String(order.customer || ''),
           customer_code: String(order.customerCode || ''),
           area: String(order.area || ''),
@@ -184,10 +188,12 @@ export default function PlaceOrder() {
           item_code: String(item.code || ''),
           barcode: String(item.barcode || item.code || ''),
           payment_type: String(order.payment || ''),
-          price: String(item.price || 0),
-          quantity: String(item.qty || 0),
-          amount: String(item.total || 0),
+          price: Number(item.price || 0),          // Numeric value
+          quantity: Number(item.qty || 0),          // Numeric value
+          amount: Number(item.total || 0),          // Numeric value
           username: String(username).trim(),
+          remark: String(order.remark || ''),      // Include remark field
+          device_id: String(deviceId).trim(),      // Required device_id
         };
 
         console.log(`[Upload] Item ${i + 1}/${order.items.length}:`, JSON.stringify(payload, null, 2));
@@ -219,7 +225,7 @@ export default function PlaceOrder() {
           if (!response.ok) {
             let errorText = '';
             let errorDetails = null;
-            
+
             try {
               // Try to parse as JSON first
               errorDetails = await response.json();
@@ -265,7 +271,7 @@ export default function PlaceOrder() {
               console.log(`[Upload] Success for item ${i + 1} (no JSON response)`);
               responseData = { success: true };
             }
-            
+
             uploadResults.push({
               itemIndex: i,
               itemName: item.name,
@@ -357,7 +363,7 @@ export default function PlaceOrder() {
       });
 
       console.log('[API Test 1] Response status:', response1.status);
-      
+
       const responseClone1 = response1.clone();
       let result1 = '';
 
@@ -401,7 +407,7 @@ export default function PlaceOrder() {
         });
 
         console.log('[API Test 2] Response status:', response2.status);
-        
+
         const responseClone2 = response2.clone();
         let result2 = '';
 
@@ -447,7 +453,7 @@ export default function PlaceOrder() {
           text: 'Confirm & Upload',
           onPress: async () => {
             setUploadingOrder(orderId);
-            
+
             try {
               const order = orders.find(o => o.id === orderId);
               if (!order) {
@@ -464,7 +470,7 @@ export default function PlaceOrder() {
                     const result = uploadResult.results?.find(r => r.itemIndex === index);
                     return {
                       ...item,
-                      uploadStatus: result?.success ? 'uploaded' : 'failed',
+                      uploadStatus: result?.success ? 'uploaded to server' : 'failed',
                       uploadError: result?.error || null,
                       uploadedAt: result?.success ? new Date().toISOString() : null,
                     };
@@ -472,10 +478,10 @@ export default function PlaceOrder() {
 
                   return {
                     ...o,
-                    status: uploadResult.success ? 'uploaded' : 
-                            uploadResult.partialSuccess ? 'partial' : 'failed',
-                    uploadStatus: uploadResult.success ? 'uploaded' : 
-                                  uploadResult.partialSuccess ? 'partial' : 'failed',
+                    status: uploadResult.success ? 'uploaded to server' :
+                      uploadResult.partialSuccess ? 'partial' : 'failed',
+                    uploadStatus: uploadResult.success ? 'uploaded to server' :
+                      uploadResult.partialSuccess ? 'partial' : 'failed',
                     uploadedAt: uploadResult.success ? new Date().toISOString() : null,
                     uploadError: uploadResult.error || null,
                     items: itemsWithStatus,
@@ -492,12 +498,12 @@ export default function PlaceOrder() {
                 Alert.alert('Success', `All ${uploadResult.successCount} items uploaded successfully!`);
               } else if (uploadResult.partialSuccess) {
                 Alert.alert(
-                  'Partial Upload', 
+                  'Partial Upload',
                   `${uploadResult.successCount} of ${uploadResult.totalCount} items uploaded successfully.\n\nCheck details for failed items.`,
                   [
                     { text: 'OK' },
-                    { 
-                      text: 'View Details', 
+                    {
+                      text: 'View Details',
                       onPress: () => {
                         const orderDetails = updatedOrders.find(o => o.id === orderId);
                         setSelectedOrderDetails(orderDetails);
@@ -507,19 +513,19 @@ export default function PlaceOrder() {
                   ]
                 );
               } else {
-                const errorMsg = uploadResult.error || 
-                  (uploadResult.results && uploadResult.results.length > 0 
-                    ? uploadResult.results[0].error 
+                const errorMsg = uploadResult.error ||
+                  (uploadResult.results && uploadResult.results.length > 0
+                    ? uploadResult.results[0].error
                     : 'Failed to upload order');
-                
+
                 Alert.alert(
-                  'Upload Failed', 
+                  'Upload Failed',
                   `${errorMsg}\n\nPlease check your connection and try again.`,
                   [
                     { text: 'OK' },
                     { text: 'Retry', onPress: () => confirmOrder(orderId) },
-                    { 
-                      text: 'View Details', 
+                    {
+                      text: 'View Details',
                       onPress: () => {
                         const orderDetails = updatedOrders.find(o => o.id === orderId);
                         setSelectedOrderDetails(orderDetails);
@@ -586,6 +592,7 @@ export default function PlaceOrder() {
   function getStatusBadgeConfig(status) {
     switch (status) {
       case 'uploaded':
+      case 'uploaded to server':
         return {
           gradient: Gradients.success,
           icon: 'cloud-done',
@@ -621,16 +628,16 @@ export default function PlaceOrder() {
   // Filter orders
   const filteredOrders = orders.filter(order => {
     if (filterStatus === 'pending') return !order.uploadStatus || order.uploadStatus === 'pending';
-    if (filterStatus === 'uploaded') return order.uploadStatus === 'uploaded';
+    if (filterStatus === 'uploaded') return order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
     if (filterStatus === 'all') return true;
-   
-  
+
+
     if (filterStatus === 'failed') return order.uploadStatus === 'failed' || order.uploadStatus === 'partial';
     return true;
   });
 
   // Get counts
-  const uploadedCount = orders.filter(o => o.uploadStatus === 'uploaded').length;
+  const uploadedCount = orders.filter(o => o.uploadStatus === 'uploaded' || o.uploadStatus === 'uploaded to server').length;
   const pendingCount = orders.filter(o => !o.uploadStatus || o.uploadStatus === 'pending').length;
   const failedCount = orders.filter(o => o.uploadStatus === 'failed' || o.uploadStatus === 'partial').length;
 
@@ -670,11 +677,11 @@ export default function PlaceOrder() {
               </Text>
               <View style={styles.statusRow}>
                 <Text style={styles.orderTime}>{formatDate(order.timestamp)}</Text>
-                <Text style={[styles.statusText, 
+                <Text style={[styles.statusText,
                 order.uploadStatus === 'partial' && styles.statusTextWarning,
-                  order.uploadStatus === 'uploaded' && styles.statusTextSuccess,
-                  order.uploadStatus === 'failed' && styles.statusTextError,
-                  
+                order.uploadStatus === 'uploaded' && styles.statusTextSuccess,
+                order.uploadStatus === 'failed' && styles.statusTextError,
+
                 ]}>
                   • {statusConfig.text}
                 </Text>
@@ -711,7 +718,7 @@ export default function PlaceOrder() {
                     <View style={styles.itemNameRow}>
                       <Text style={styles.itemName}>{item.name}</Text>
                       {item.uploadStatus && (
-                        <Ionicons 
+                        <Ionicons
                           name={item.uploadStatus === 'uploaded' ? 'checkmark-circle' : 'close-circle'}
                           size={16}
                           color={item.uploadStatus === 'uploaded' ? Colors.success.main : Colors.error.main}
@@ -911,7 +918,7 @@ export default function PlaceOrder() {
         <View style={styles.filterContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabs}>
 
-           <TouchableOpacity
+            <TouchableOpacity
               style={[styles.filterTab, filterStatus === 'pending' && styles.filterTabActive]}
               onPress={() => setFilterStatus('pending')}
             >
@@ -939,8 +946,8 @@ export default function PlaceOrder() {
                 All ({orders.length})
               </Text>
             </TouchableOpacity>
-            
-            
+
+
             <TouchableOpacity
               style={[styles.filterTab, filterStatus === 'failed' && styles.filterTabActive]}
               onPress={() => setFilterStatus('failed')}
@@ -964,7 +971,7 @@ export default function PlaceOrder() {
                 {orders.length === 0 ? 'No orders placed yet' : 'No orders found'}
               </Text>
               <Text style={styles.emptySubtitle}>
-                {orders.length === 0 
+                {orders.length === 0
                   ? 'Start by creating a new order'
                   : `No ${filterStatus} orders available`
                 }
@@ -1026,10 +1033,10 @@ export default function PlaceOrder() {
                     </View>
                     <View style={styles.modalInfoRow}>
                       <Text style={styles.modalLabel}>Status:</Text>
-                      <Text style={[styles.modalValue, 
-                        selectedOrderDetails.uploadStatus === 'uploaded' && { color: Colors.success.main },
-                        selectedOrderDetails.uploadStatus === 'failed' && { color: Colors.error.main },
-                        selectedOrderDetails.uploadStatus === 'partial' && { color: Colors.warning.main }
+                      <Text style={[styles.modalValue,
+                      selectedOrderDetails.uploadStatus === 'uploaded' && { color: Colors.success.main },
+                      selectedOrderDetails.uploadStatus === 'failed' && { color: Colors.error.main },
+                      selectedOrderDetails.uploadStatus === 'partial' && { color: Colors.warning.main }
                       ]}>
                         {getStatusBadgeConfig(selectedOrderDetails.uploadStatus).text}
                       </Text>

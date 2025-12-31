@@ -86,9 +86,6 @@ export default function Scanner() {
         facing="back"
         flash={flash}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-        barcodeScannerSettings={{
-          barcodeTypes: ["all"],
-        }}
       />
 
       {/* Overlay */}

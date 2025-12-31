@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    paddingTop: Spacing.xs,
+    marginTop: 35,
     paddingBottom: Spacing.md,
   },
   header: {

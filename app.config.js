@@ -1,6 +1,6 @@
 module.exports = {
   expo: {
-     owner: "demoadila",  
+    owner: "demoadila",
     name: "TaskSAS",
     slug: "TaskSAS1",
     version: "1.0.0",
@@ -10,7 +10,7 @@ module.exports = {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     splash: {
-      image: "./assets/images/logo.png",
+      image: "./assets/images/splash.png",
       resizeMode: "contain",
       backgroundColor: "#ffffff"
     },
@@ -43,11 +43,12 @@ module.exports = {
         "expo-splash-screen",
         {
           image: "./assets/images/splash.png",
-          imageWidth: 200,
+          imageWidth: 300,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
           dark: {
-            backgroundColor: "#000000"
+            image: "./assets/images/splash.png",
+            backgroundColor: "#1a1a1a"
           }
         }
       ],

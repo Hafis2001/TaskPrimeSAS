@@ -1,6 +1,5 @@
 // src/services/syncService.js - OPTIMIZED VERSION
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import batchService from './batchService';
 import dbService from './database';
 
 const API_BASE_URL = 'https://tasksas.com/api';
@@ -21,11 +20,11 @@ class SyncService {
     updateProgress(stage, message, progress, completed = false) {
         this.downloadProgress = progress;
         if (this.progressCallback) {
-            this.progressCallback({ 
+            this.progressCallback({
                 stage,      // 'customers', 'products', 'batches', 'areas'
-                message, 
+                message,
                 progress,
-                completed 
+                completed
             });
         }
     }
@@ -41,6 +40,32 @@ class SyncService {
             console.error('Error getting auth token:', error);
             throw error;
         }
+    }
+
+    // ==================== RETRY HELPER ====================
+    async retryWithBackoff(fn, maxRetries = 3, operationName = 'Operation') {
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`[Sync] ${operationName} - attempt ${attempt}/${maxRetries}`);
+                return await fn();
+            } catch (error) {
+                lastError = error;
+                console.error(`[Sync] ${operationName} attempt ${attempt} failed:`, error.message);
+
+                if (attempt === maxRetries) {
+                    throw new Error(`${operationName} failed after ${maxRetries} attempts: ${error.message}`);
+                }
+
+                // Exponential backoff: 2s, 4s, 8s
+                const waitTime = Math.pow(2, attempt) * 1000;
+                console.log(`[Sync] Retrying in ${waitTime / 1000} seconds...`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
+        }
+
+        throw lastError;
     }
 
     // ==================== CHECK IF DATA EXISTS ====================
@@ -82,54 +107,50 @@ class SyncService {
                 await dbService.clearDownloadableData();
             }
 
-            // Stage 1: Download customers
-            this.updateProgress('customers', 'Downloading customers...', 10);
-            try {
-                await this.downloadCustomers();
+            // OPTIMIZATION: Download customers and areas in PARALLEL (they're independent)
+            // This saves time by not waiting for each to complete sequentially
+            this.updateProgress('parallel', 'Downloading customers and areas...', 10);
+
+            const parallelDownloads = await Promise.allSettled([
+                this.downloadCustomers(),
+                this.downloadAreas()
+            ]);
+
+            // Process results
+            if (parallelDownloads[0].status === 'fulfilled') {
                 stages.customers = true;
-                this.updateProgress('customers', 'Customers downloaded', 25, true);
-            } catch (error) {
-                console.error('Customer download failed:', error);
-                this.updateProgress('customers', 'Customers failed', 25, false);
+                this.updateProgress('customers', 'Customers downloaded', 20, true);
+            } else {
+                console.error('Customer download failed:', parallelDownloads[0].reason);
+                this.updateProgress('customers', 'Customers failed', 20, false);
             }
 
-            // Stage 2: Download products (with better error handling)
-            this.updateProgress('products', 'Downloading products...', 30);
-            try {
-                const productCount = await this.downloadProductsOptimized();
-                if (productCount > 0) {
-                    stages.products = true;
-                    this.updateProgress('products', `${productCount} products downloaded`, 50, true);
-                } else {
-                    this.updateProgress('products', 'No products found', 50, false);
-                }
-            } catch (error) {
-                console.error('Product download failed:', error);
-                this.updateProgress('products', 'Products failed', 50, false);
-            }
-
-            // Stage 3: Download batches (only if products exist)
-            if (stages.products) {
-                this.updateProgress('batches', 'Downloading batches...', 55);
-                try {
-                    const batchCount = await this.downloadProductBatches();
-                    stages.batches = true;
-                    this.updateProgress('batches', `${batchCount} batches downloaded`, 75, true);
-                } catch (error) {
-                    console.error('Batch download failed:', error);
-                    this.updateProgress('batches', 'Batches failed', 75, false);
-                }
-            }
-
-            // Stage 4: Download areas
-            this.updateProgress('areas', 'Downloading areas...', 80);
-            try {
-                await this.downloadAreas();
+            if (parallelDownloads[1].status === 'fulfilled') {
                 stages.areas = true;
-                this.updateProgress('areas', 'Areas downloaded', 90, true);
+                this.updateProgress('areas', 'Areas downloaded', 25, true);
+            } else {
+                console.error('Area download failed:', parallelDownloads[1].reason);
+                this.updateProgress('areas', 'Areas failed', 25, false);
+            }
+
+            // Stage 2: Download products WITH batches/photos/goddowns (SINGLE CALL WITH RETRY)
+            this.updateProgress('products', 'Downloading products with batches...', 30);
+            try {
+                const stats = await this.retryWithBackoff(
+                    () => this.downloadProductsOptimized(),
+                    3,
+                    'Product download'
+                );
+                if (stats.products > 0) {
+                    stages.products = true;
+                    stages.batches = true; // Batches downloaded with products
+                    this.updateProgress('products', `${stats.products} products, ${stats.batches} batches downloaded`, 90, true);
+                } else {
+                    this.updateProgress('products', 'No products found', 90, false);
+                }
             } catch (error) {
-                console.error('Area download failed:', error);
-                this.updateProgress('areas', 'Areas failed', 90, false);
+                console.error('Product download failed after all retries:', error);
+                this.updateProgress('products', 'Products failed - check connection', 90, false);
             }
 
             // Set last sync time
@@ -152,25 +173,42 @@ class SyncService {
         }
     }
 
-    // ==================== OPTIMIZED PRODUCT DOWNLOAD ====================
+    // ==================== OPTIMIZED PRODUCT DOWNLOAD (WITH BATCHES) ====================
     async downloadProductsOptimized() {
         try {
             const token = await this.getAuthToken();
 
-            // Primary endpoint (most reliable based on your code)
+            // Primary endpoint (returns products with batches, photos, goddowns)
             const primaryEndpoint = `${API_BASE_URL}/product/get-product-details`;
-            
-            console.log(`[Sync] Fetching products from: ${primaryEndpoint}`);
-            
-            const response = await fetch(primaryEndpoint, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                },
-                signal: this.abortController?.signal
-            });
+
+            console.log(`[Sync] Fetching products with batches from: ${primaryEndpoint}`);
+
+            // Create AbortController with longer timeout for large data (2 minutes)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                controller.abort();
+                console.error('[Sync] Product download timed out after 2 minutes');
+            }, 120000);
+
+            let response;
+            try {
+                response = await fetch(primaryEndpoint, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+            } catch (fetchError) {
+                clearTimeout(timeoutId);
+                if (fetchError.name === 'AbortError') {
+                    throw new Error('Product download timed out. The server may be slow or the data is too large. Please try again.');
+                }
+                throw fetchError;
+            }
 
             if (!response.ok) {
                 throw new Error(`API returned ${response.status}`);
@@ -191,7 +229,7 @@ class SyncService {
 
             if (products.length === 0) {
                 console.warn('[Sync] No products found in response');
-                return 0;
+                return { products: 0, batches: 0, photos: 0, goddowns: 0 };
             }
 
             console.log(`[Sync] Found ${products.length} products`);
@@ -206,8 +244,8 @@ class SyncService {
                     mrp: parseFloat(p.mrp || p.MRP || 0),
                     stock: parseFloat(p.stock || p.STOCK || 0),
                     unit: p.unit || p.packing || p.PACKING || '',
-                    brand: p.brand || p.BRAND || '',
-                    category: p.category || p.product || p.PRODUCT || '',
+                    brand: p.brand || p.BRAND || '', // Brand field
+                    category: p.product || p.category || p.PRODUCT || '', // Category from 'product' field
                     taxcode: p.taxcode || p.TAXCODE || '',
                     description: p.description || '',
                 }))
@@ -215,13 +253,81 @@ class SyncService {
 
             console.log(`[Sync] Normalized ${normalizedProducts.length} valid products`);
 
+            // Counters for batches, photos, goddowns
+            let totalBatches = 0;
+            let totalPhotos = 0;
+            let totalGoddowns = 0;
+
             if (normalizedProducts.length > 0) {
-                // Save in batches for better performance
+                // Save products first
                 await dbService.saveProducts(normalizedProducts);
                 console.log(`[Sync] ✅ Saved ${normalizedProducts.length} products`);
+
+                // Now extract and save batches, photos, goddowns from the SAME response
+                // OPTIMIZED: Collect ALL data first, then bulk insert
+                console.log(`[Sync] Collecting batches, photos, and goddowns for bulk insert...`);
+
+                const allBatches = [];
+                const allPhotos = [];
+                const allGoddowns = [];
+
+                for (const product of products) {
+                    const productCode = product.code || product.productcode || product.PRODUCTCODE;
+
+                    if (!productCode) continue;
+
+                    // Collect batches with product_code
+                    if (product.batches && Array.isArray(product.batches) && product.batches.length > 0) {
+                        for (const batch of product.batches) {
+                            allBatches.push({ ...batch, product_code: productCode });
+                        }
+                        totalBatches += product.batches.length;
+                    }
+
+                    // Collect photos with product_code
+                    if (product.photos && Array.isArray(product.photos) && product.photos.length > 0) {
+                        for (let i = 0; i < product.photos.length; i++) {
+                            const photo = product.photos[i];
+                            allPhotos.push({
+                                photo: photo,
+                                product_code: productCode,
+                                order_index: i
+                            });
+                        }
+                        totalPhotos += product.photos.length;
+                    }
+
+                    // Collect goddowns with product_code
+                    if (product.goddowns && Array.isArray(product.goddowns) && product.goddowns.length > 0) {
+                        for (const godown of product.goddowns) {
+                            allGoddowns.push({ ...godown, product_code: productCode });
+                        }
+                        totalGoddowns += product.goddowns.length;
+                    }
+                }
+
+                // Bulk insert all collected data
+                console.log(`[Sync] Bulk inserting ${totalBatches} batches, ${totalPhotos} photos, ${totalGoddowns} goddowns...`);
+
+                if (allBatches.length > 0) {
+                    await dbService.saveBatchesBulk(allBatches);
+                }
+                if (allPhotos.length > 0) {
+                    await dbService.savePhotosBulk(allPhotos);
+                }
+                if (allGoddowns.length > 0) {
+                    await dbService.saveGoddownsBulk(allGoddowns);
+                }
+
+                console.log(`[Sync] ✅ Saved ${totalBatches} batches, ${totalPhotos} photos, ${totalGoddowns} goddowns`);
             }
 
-            return normalizedProducts.length;
+            return {
+                products: normalizedProducts.length,
+                batches: totalBatches,
+                photos: totalPhotos,
+                goddowns: totalGoddowns
+            };
         } catch (error) {
             console.error('[Sync] Error downloading products:', error);
             throw error;
@@ -267,23 +373,24 @@ class SyncService {
         }
     }
 
-    async downloadProductBatches() {
-        try {
-            console.log('[Sync] Fetching batches...');
-            const stats = await batchService.downloadAndCache();
+    // ==================== DEPRECATED - Batches now downloaded with products ====================
+    // async downloadProductBatches() {
+    //     try {
+    //         console.log('[Sync] Fetching batches...');
+    //         const stats = await batchService.downloadAndCache();
 
-            if (!stats) {
-                console.warn('[Sync] No batch data');
-                return 0;
-            }
+    //         if (!stats) {
+    //             console.warn('[Sync] No batch data');
+    //             return 0;
+    //         }
 
-            console.log(`[Sync] ✅ Downloaded ${stats.batches} batches`);
-            return stats.batches;
-        } catch (error) {
-            console.error('[Sync] Error downloading batches:', error);
-            throw error;
-        }
-    }
+    //         console.log(`[Sync] ✅ Downloaded ${stats.batches} batches`);
+    //         return stats.batches;
+    //     } catch (error) {
+    //         console.error('[Sync] Error downloading batches:', error);
+    //         throw error;
+    //     }
+    // }
 
     async downloadAreas() {
         try {
@@ -311,7 +418,7 @@ class SyncService {
                 areas = data;
             }
 
-            const validAreas = areas.filter(area => 
+            const validAreas = areas.filter(area =>
                 area && typeof area === 'string' && area.trim() !== ''
             );
 
