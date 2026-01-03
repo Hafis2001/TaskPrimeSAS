@@ -22,7 +22,7 @@ export default function CollectionScreen() {
   // Handle Android back button
   useEffect(() => {
     const backAction = () => {
-      router.back();
+      router.replace("/(tabs)/Home");
       return true;
     };
 
@@ -72,7 +72,7 @@ export default function CollectionScreen() {
       <SafeAreaView style={styles.safeArea}>
         {/* Header with Back Button */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => router.replace("/(tabs)/Home")} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Collection Dashboard</Text>

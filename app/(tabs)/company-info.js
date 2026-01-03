@@ -28,24 +28,46 @@ export default function CompanyInfoScreen() {
 
   useEffect(() => {
     (async () => {
-      const stored = await AsyncStorage.getItem('user');
-      if (stored) {
-        const p = JSON.parse(stored);
-        setUser({ name: p.name || '', clientId: p.clientId || '' });
+      try {
+        const [storedUser, storedToken, storedClientId] = await Promise.all([
+          AsyncStorage.getItem('user'),
+          AsyncStorage.getItem('authToken'),
+          AsyncStorage.getItem('client_id') // or 'clientId' depending on exact save, LoginScreen uses "client_id" for the user field but "clientId" for the license check. Login saves "client_id" at line 203.
+        ]);
 
-        try {
-          const res = await fetch(`${API_URL}?client_id=${p.clientId}`, {
-            headers: { Accept: 'application/json', Authorization: `Bearer ${p.token}` },
+        if (storedUser) {
+          const p = JSON.parse(storedUser);
+          setUser({ name: p.name || '', clientId: storedClientId || p.client_id || '' });
+        }
+
+        const token = storedToken;
+        // detailed check: LoginScreen saves "client_id" in line 203. "clientId" in line 137 (license).
+        // Best to use the one explicitly saved during login success if available, or license one.
+        const activeClientId = storedClientId;
+
+        if (activeClientId && token) {
+          console.log('[CompanyInfo] Fetching for clientId:', activeClientId);
+          const res = await fetch(`${API_URL}?client_id=${activeClientId}`, {
+            headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
           });
           const json = await res.json();
-          if (json && Array.isArray(json.data) && json.data.length) {
-            setCompany(json.data[0]);
+          console.log('[CompanyInfo] API Response:', JSON.stringify(json, null, 2));
+
+          if (json?.data) {
+            if (Array.isArray(json.data) && json.data.length > 0) {
+              setCompany(json.data[0]);
+            } else if (typeof json.data === 'object') {
+              setCompany(json.data);
+            }
           }
-        } catch (e) {
-          console.warn("company fetch failed", e);
+        } else {
+          console.warn('[CompanyInfo] Missing token or client_id', { token: !!token, clientId: activeClientId });
         }
+      } catch (e) {
+        console.error("[CompanyInfo] Fetch failed:", e);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     })();
   }, []);
 
@@ -107,12 +129,17 @@ export default function CompanyInfoScreen() {
             <View style={styles.cardBody}>
               <InfoRow
                 label="Address"
-                value={`${company?.address || ''} ${company?.address1 || ''} ${company?.address2 || ''}`}
+                value={[
+                  company?.address,
+                  company?.address1,
+                  company?.address2,
+                  company?.address3
+                ].filter(Boolean).join(', ')}
                 icon="location-outline"
               />
               <InfoRow
                 label="Phone"
-                value={company?.phones || company?.mobile}
+                value={[company?.phones, company?.mobile].filter(Boolean).join(' / ')}
                 icon="call-outline"
               />
               <InfoRow

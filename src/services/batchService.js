@@ -171,21 +171,45 @@ class BatchService {
      * @param {number} limit - Optional limit for pagination (null = all)
      * @param {number} offset - Optional offset for pagination (default 0)
      */
-    async getProductBatchesOffline(limit = null, offset = 0) {
+    async getProductBatchesOffline(limit = null, offset = 0, filters = {}) {
         try {
             const startTime = Date.now();
-            console.log('[BatchService] Loading batches from offline database...');
+            console.log('[BatchService] Loading batches from offline database...', { limit, offset, filters });
 
             await dbService.init();
 
-            // Get products with optional pagination
-            let query = 'SELECT * FROM products ORDER BY name ASC';
+            // Get products with optional pagination and filters
+            let query = 'SELECT * FROM products WHERE 1=1';
             const params = [];
+
+            // Apply filters
+            if (filters.brands && filters.brands.length > 0) {
+                const placeholders = filters.brands.map(() => '?').join(',');
+                query += ` AND brand IN (${placeholders})`;
+                params.push(...filters.brands);
+            }
+
+            if (filters.categories && filters.categories.length > 0) {
+                const placeholders = filters.categories.map(() => '?').join(',');
+                query += ` AND category IN (${placeholders})`;
+                params.push(...filters.categories);
+            }
+
+            if (filters.search) {
+                const term = `%${filters.search}%`;
+                query += ` AND (name LIKE ? OR code LIKE ? OR barcode LIKE ? OR brand LIKE ? OR category LIKE ?)`;
+                params.push(term, term, term, term, term);
+            }
+
+            if (filters.inStock) {
+                query += ' AND stock > 0';
+            }
+
+            query += ' ORDER BY name ASC';
 
             if (limit !== null) {
                 query += ' LIMIT ? OFFSET ?';
                 params.push(limit, offset);
-                console.log(`[BatchService] Pagination: limit=${limit}, offset=${offset}`);
             }
 
             const products = await dbService.db.getAllAsync(query, params);
@@ -308,8 +332,8 @@ class BatchService {
                             // Photos (shared across all batches of same product)
                             photos: product.photos || [],
 
-                            // Goddowns matching this batch's barcode
-                            goddowns: (product.goddowns || []).filter(g => g.barcode === batch.barcode),
+                            // Goddowns (apply product godowns to all batches since they lack barcode)
+                            goddowns: product.goddowns || [],
 
                             // Full batch object for reference
                             batch: batch

@@ -36,7 +36,7 @@ export default function PlaceOrder() {
   const [editingQty, setEditingQty] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingOrder, setUploadingOrder] = useState(null);
-  const [filterStatus, setFilterStatus] = useState('all'); // all, uploaded, pending, failed
+  const [filterStatus, setFilterStatus] = useState('pending'); // all, uploaded, pending, failed
   const [uploadDetailsModal, setUploadDetailsModal] = useState(false);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
 
@@ -49,9 +49,31 @@ export default function PlaceOrder() {
     try {
       const storedOrders = await AsyncStorage.getItem('placed_orders');
       if (storedOrders) {
-        const parsedOrders = JSON.parse(storedOrders);
+        let parsedOrders = JSON.parse(storedOrders);
+
+        // Filter out orders uploaded more than 7 days ago
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const validOrders = parsedOrders.filter(order => {
+          // If not uploaded, keep it
+          if (order.uploadStatus !== 'uploaded' && order.uploadStatus !== 'uploaded to server') {
+            return true;
+          }
+
+          // If uploaded, check date (prefer uploadedAt, fallback to timestamp)
+          const dateToCheck = order.uploadedAt ? new Date(order.uploadedAt) : new Date(order.timestamp);
+          return dateToCheck > sevenDaysAgo;
+        });
+
+        // If we filtered out any orders, update AsyncStorage
+        if (validOrders.length !== parsedOrders.length) {
+          console.log(`[PlaceOrder] Removed ${parsedOrders.length - validOrders.length} expired orders.`);
+          await AsyncStorage.setItem('placed_orders', JSON.stringify(validOrders));
+        }
+
         // Sort by timestamp, newest first
-        const sortedOrders = parsedOrders.sort((a, b) =>
+        const sortedOrders = validOrders.sort((a, b) =>
           new Date(b.timestamp) - new Date(a.timestamp)
         );
         setOrders(sortedOrders);
@@ -170,153 +192,106 @@ export default function PlaceOrder() {
         throw new Error('Device ID not found. Please restart the app.');
       }
 
-      // Upload results for each item
-      const uploadResults = [];
+      // Prepare items payload
+      const itemsPayload = order.items.map(item => ({
+        product_name: String(item.name || ''),
+        item_code: String(item.code || ''),
+        barcode: String(item.barcode || item.code || ''),
+        price: Number(item.price || 0),
+        quantity: Number(item.qty || 0),
+        amount: Number(item.total || 0)
+      }));
 
-      console.log(`[Upload] Starting upload for ${order.items.length} items`);
+      // Prepare main payload
+      const payload = {
+        client_id: String(clientId || '').trim(),
+        customer_name: String(order.customer || ''),
+        customer_code: String(order.customerCode || ''),
+        area: String(order.area || ''),
+        payment_type: String(order.payment || ''),
+        username: String(username).trim(),
+        remark: String(order.remark || ''),
+        device_id: String(deviceId).trim(),
+        items: itemsPayload
+      };
 
-      // Upload each item separately
-      for (let i = 0; i < order.items.length; i++) {
-        const item = order.items[i];
+      console.log('[Upload] Sending order payload:', JSON.stringify(payload, null, 2));
 
-        // Prepare payload matching the API requirements
-        const payload = {
-          customer_name: String(order.customer || ''),
-          customer_code: String(order.customerCode || ''),
-          area: String(order.area || ''),
-          product_name: String(item.name || ''),
-          item_code: String(item.code || ''),
-          barcode: String(item.barcode || item.code || ''),
-          payment_type: String(order.payment || ''),
-          price: Number(item.price || 0),          // Numeric value
-          quantity: Number(item.qty || 0),          // Numeric value
-          amount: Number(item.total || 0),          // Numeric value
-          username: String(username).trim(),
-          remark: String(order.remark || ''),      // Include remark field
-          device_id: String(deviceId).trim(),      // Required device_id
-        };
+      const headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
 
-        console.log(`[Upload] Item ${i + 1}/${order.items.length}:`, JSON.stringify(payload, null, 2));
-
-        try {
-          const headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          };
-
-          // Add auth token if available
-          if (authToken) {
-            headers['Authorization'] = `Bearer ${authToken}`;
-          }
-
-          console.log('[Upload] Headers:', headers);
-
-          const response = await fetch('https://tasksas.com/api/item-orders/create', {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(payload),
-          });
-
-          console.log(`[Upload] Response status for item ${i + 1}:`, response.status);
-
-          // Clone response to read it multiple times if needed
-          const responseClone = response.clone();
-
-          if (!response.ok) {
-            let errorText = '';
-            let errorDetails = null;
-
-            try {
-              // Try to parse as JSON first
-              errorDetails = await response.json();
-              errorText = JSON.stringify(errorDetails, null, 2);
-              console.log(`[Upload] Error JSON for item ${i + 1}:`, errorDetails);
-            } catch {
-              // If JSON parsing fails, get text
-              try {
-                errorText = await responseClone.text();
-                console.log(`[Upload] Error text for item ${i + 1}:`, errorText);
-              } catch (e) {
-                errorText = `HTTP ${response.status}`;
-                console.log(`[Upload] Could not read error body for item ${i + 1}`);
-              }
-            }
-
-            // Extract meaningful error message
-            let userFriendlyError = errorText;
-            if (errorDetails) {
-              if (errorDetails.message) {
-                userFriendlyError = errorDetails.message;
-              } else if (errorDetails.error) {
-                userFriendlyError = errorDetails.error;
-              } else if (errorDetails.detail) {
-                userFriendlyError = errorDetails.detail;
-              }
-            }
-
-            uploadResults.push({
-              itemIndex: i,
-              itemName: item.name,
-              success: false,
-              error: userFriendlyError || `HTTP ${response.status}: Server error`,
-              statusCode: response.status,
-            });
-          } else {
-            let responseData = null;
-            try {
-              responseData = await response.json();
-              console.log(`[Upload] Success for item ${i + 1}:`, responseData);
-            } catch (e) {
-              // If response is not JSON, that's OK for success
-              console.log(`[Upload] Success for item ${i + 1} (no JSON response)`);
-              responseData = { success: true };
-            }
-
-            uploadResults.push({
-              itemIndex: i,
-              itemName: item.name,
-              success: true,
-              data: responseData,
-            });
-          }
-        } catch (error) {
-          console.error(`[Upload] Exception for item ${i + 1}:`, error);
-          uploadResults.push({
-            itemIndex: i,
-            itemName: item.name,
-            success: false,
-            error: `Network error: ${error.message}`,
-          });
-        }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
       }
 
-      // Check if all items uploaded successfully
-      const allSuccess = uploadResults.every(r => r.success);
-      const anySuccess = uploadResults.some(r => r.success);
-      const successCount = uploadResults.filter(r => r.success).length;
-
-      console.log('[Upload] Results:', {
-        total: uploadResults.length,
-        successful: successCount,
-        failed: uploadResults.length - successCount,
-        allSuccess,
-        anySuccess
+      // Send single request
+      const response = await fetch('https://tasksas.com/api/item-orders/create', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(payload),
       });
 
+      console.log('[Upload] Response status:', response.status);
+
+      const responseClone = response.clone();
+      let responseData = null;
+      let errorText = '';
+
+      if (!response.ok) {
+        try {
+          const errorJson = await response.json();
+          errorText = errorJson.message || errorJson.error || JSON.stringify(errorJson);
+          console.log('[Upload] Error JSON:', errorJson);
+        } catch {
+          errorText = await responseClone.text();
+          console.log('[Upload] Error Text:', errorText);
+        }
+
+        throw new Error(errorText || `HTTP ${response.status}`);
+      }
+
+      try {
+        responseData = await response.json();
+        console.log('[Upload] Success response:', responseData);
+      } catch (e) {
+        console.log('[Upload] Success (no JSON body)');
+        responseData = { success: true };
+      }
+
+      // Generate success results for all items
+      const uploadResults = order.items.map((item, index) => ({
+        itemIndex: index,
+        itemName: item.name,
+        success: true,
+        data: responseData,
+      }));
+
       return {
-        success: allSuccess,
-        partialSuccess: anySuccess && !allSuccess,
+        success: true,
+        partialSuccess: false,
         results: uploadResults,
-        successCount,
-        totalCount: uploadResults.length,
+        successCount: order.items.length,
+        totalCount: order.items.length,
       };
+
     } catch (error) {
-      console.error('[Upload] Fatal error:', error);
+      console.error('[Upload] Error:', error);
+
+      // Generate failure results for all items
+      const uploadResults = order.items.map((item, index) => ({
+        itemIndex: index,
+        itemName: item.name,
+        success: false,
+        error: error.message,
+      }));
+
       return {
         success: false,
         partialSuccess: false,
         error: error.message,
-        results: [],
+        results: uploadResults,
       };
     }
   }
@@ -646,6 +621,7 @@ export default function PlaceOrder() {
     const isExpanded = expandedOrder === order.id;
     const statusConfig = getStatusBadgeConfig(order.uploadStatus || order.status);
     const isUploading = uploadingOrder === order.id;
+    const isUploaded = order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
 
     return (
       <View style={styles.orderCard}>
@@ -690,7 +666,7 @@ export default function PlaceOrder() {
           </View>
 
           <View style={styles.orderHeaderRight}>
-            <Text style={styles.orderTotal}>₹{order.total.toFixed(2)}</Text>
+            <Text style={styles.orderTotal}>{order.total.toFixed(2)}</Text>
             <Text style={styles.itemCount}>{order.items.length} items</Text>
             <Ionicons
               name={isExpanded ? "chevron-up" : "chevron-down"}
@@ -725,80 +701,84 @@ export default function PlaceOrder() {
                         />
                       )}
                     </View>
-                    <Text style={styles.itemPrice}>₹{item.price.toFixed(2)} × {item.qty}</Text>
+                    <Text style={styles.itemPrice}>{item.price.toFixed(2)} × {item.qty}</Text>
                   </View>
 
-                  {/* Quantity Controls */}
-                  <View style={styles.qtyControls}>
-                    <TouchableOpacity
-                      style={styles.qtyBtn}
-                      onPress={() => {
-                        const newQty = Math.max(1, item.qty - 1);
-                        updateItemQty(order.id, index, newQty);
-                      }}
-                      disabled={order.uploadStatus === 'uploaded'}
-                    >
-                      <Ionicons name="remove" size={16} color={Colors.text.primary} />
-                    </TouchableOpacity>
+                  {/* Quantity Controls - Read Only if Uploaded */}
+                  {isUploaded ? (
+                    <View style={styles.qtyControls}>
+                      <Text style={[styles.qtyInput, { backgroundColor: Colors.neutral[50], borderWidth: 0 }]}>
+                        Qty: {item.qty}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.qtyControls}>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => {
+                          const newQty = Math.max(1, item.qty - 1);
+                          updateItemQty(order.id, index, newQty);
+                        }}
+                      >
+                        <Ionicons name="remove" size={16} color={Colors.text.primary} />
+                      </TouchableOpacity>
 
-                    <TextInput
-                      style={styles.qtyInput}
-                      value={displayValue}
-                      onChangeText={(text) => {
-                        if (text === "") {
-                          setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
-                          return;
-                        }
+                      <TextInput
+                        style={styles.qtyInput}
+                        value={displayValue}
+                        onChangeText={(text) => {
+                          if (text === "") {
+                            setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
+                            return;
+                          }
 
-                        const cleaned = text.replace(/[^0-9]/g, '');
-                        if (cleaned === "") {
-                          setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
-                          return;
-                        }
+                          const cleaned = text.replace(/[^0-9]/g, '');
+                          if (cleaned === "") {
+                            setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
+                            return;
+                          }
 
-                        const num = parseInt(cleaned, 10);
-                        if (!isNaN(num) && num > 0) {
-                          setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: cleaned }));
-                          updateItemQty(order.id, index, num);
-                        }
-                      }}
-                      onFocus={() => {
-                        setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: String(item.qty) }));
-                      }}
-                      onBlur={() => {
-                        setEditingQty(prev => {
-                          const newState = { ...prev };
-                          delete newState[`${order.id}_${index}`];
-                          return newState;
-                        });
+                          const num = parseInt(cleaned, 10);
+                          if (!isNaN(num) && num > 0) {
+                            setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: cleaned }));
+                            updateItemQty(order.id, index, num);
+                          }
+                        }}
+                        onFocus={() => {
+                          setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: String(item.qty) }));
+                        }}
+                        onBlur={() => {
+                          setEditingQty(prev => {
+                            const newState = { ...prev };
+                            delete newState[`${order.id}_${index}`];
+                            return newState;
+                          });
 
-                        if (item.qty === 0) {
-                          updateItemQty(order.id, index, 1);
-                        }
-                      }}
-                      keyboardType="numeric"
-                      selectTextOnFocus={true}
-                      editable={order.uploadStatus !== 'uploaded'}
-                    />
+                          if (item.qty === 0) {
+                            updateItemQty(order.id, index, 1);
+                          }
+                        }}
+                        keyboardType="numeric"
+                        selectTextOnFocus={true}
+                      />
 
-                    <TouchableOpacity
-                      style={styles.qtyBtn}
-                      onPress={() => updateItemQty(order.id, index, item.qty + 1)}
-                      disabled={order.uploadStatus === 'uploaded'}
-                    >
-                      <Ionicons name="add" size={16} color={Colors.text.primary} />
-                    </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.qtyBtn}
+                        onPress={() => updateItemQty(order.id, index, item.qty + 1)}
+                      >
+                        <Ionicons name="add" size={16} color={Colors.text.primary} />
+                      </TouchableOpacity>
 
-                    <TouchableOpacity
-                      onPress={() => removeItem(order.id, index)}
-                      style={styles.removeBtn}
-                      disabled={order.uploadStatus === 'uploaded'}
-                    >
-                      <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
-                    </TouchableOpacity>
-                  </View>
+                      <TouchableOpacity
+                        onPress={() => removeItem(order.id, index)}
+                        style={styles.removeBtn}
+                      >
+                        <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
 
-                  <Text style={styles.itemTotal}>₹{item.total.toFixed(2)}</Text>
+                  <Text style={styles.itemTotal}>{item.total.toFixed(2)}</Text>
                 </View>
               );
             })}
@@ -878,19 +858,21 @@ export default function PlaceOrder() {
                 </>
               )}
 
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => deleteOrder(order.id)}
-                disabled={isUploading}
-              >
-                <LinearGradient
-                  colors={Gradients.danger}
-                  style={styles.actionButtonGradient}
+              {!isUploaded && (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => deleteOrder(order.id)}
+                  disabled={isUploading}
                 >
-                  <Ionicons name="trash-outline" size={18} color="#fff" />
-                  <Text style={styles.actionButtonText}>Delete Order</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+                  <LinearGradient
+                    colors={Gradients.danger}
+                    style={styles.actionButtonGradient}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Delete Order</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         )}
@@ -1000,6 +982,13 @@ export default function PlaceOrder() {
               refreshing={refreshing}
               onRefresh={handleRefresh}
               showsVerticalScrollIndicator={false}
+              ListFooterComponent={
+                (filterStatus === 'uploaded' || filterStatus === 'all') && (
+                  <Text style={styles.expirationNotice}>
+                    Uploaded orders are automatically removed after 7 days.
+                  </Text>
+                )
+              }
             />
           )}
         </View>
@@ -1029,7 +1018,7 @@ export default function PlaceOrder() {
                     </View>
                     <View style={styles.modalInfoRow}>
                       <Text style={styles.modalLabel}>Total:</Text>
-                      <Text style={styles.modalValue}>₹{selectedOrderDetails.total.toFixed(2)}</Text>
+                      <Text style={styles.modalValue}>{selectedOrderDetails.total.toFixed(2)}</Text>
                     </View>
                     <View style={styles.modalInfoRow}>
                       <Text style={styles.modalLabel}>Status:</Text>
@@ -1050,7 +1039,7 @@ export default function PlaceOrder() {
                         <View style={styles.modalItemInfo}>
                           <Text style={styles.modalItemName}>{item.name}</Text>
                           <Text style={styles.modalItemMeta}>
-                            Qty: {item.qty} × ₹{item.price.toFixed(2)}
+                            Qty: {item.qty} × {item.price.toFixed(2)}
                           </Text>
                         </View>
                         <View style={styles.modalItemStatus}>
@@ -1495,6 +1484,20 @@ const styles = StyleSheet.create({
     color: Colors.error.main,
     marginTop: 2,
     maxWidth: 150,
+  },
+  errorText: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.error.main,
+    marginTop: 2,
+    maxWidth: 150,
+  },
+  expirationNotice: {
+    textAlign: 'center',
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xs,
+    fontStyle: 'italic',
   },
   modalFooter: {
     padding: Spacing.lg,

@@ -1,8 +1,9 @@
+
 // src/services/database.js - COMPLETE FIXED VERSION
 import * as SQLite from 'expo-sqlite';
 
-const DB_NAME = 'taskprime.db';
-const DB_VERSION = 3;
+const DB_NAME = 'taskprime_v2.db';
+const DB_VERSION = 5;
 
 class DatabaseService {
     constructor() {
@@ -17,14 +18,11 @@ class DatabaseService {
         }
 
         try {
-            console.log('[DB] Initializing database...');
+            console.log('[DB] Initializing database:', DB_NAME);
             this.db = await SQLite.openDatabaseAsync(DB_NAME);
 
-            if (!this.db) {
-                throw new Error('Failed to open database - db is null');
-            }
-
-            console.log('[DB] Database opened successfully');
+            // Simple connection test
+            await this.db.getFirstAsync('SELECT 1');
 
             await this.checkAndMigrate();
             await this.createTables();
@@ -36,6 +34,7 @@ class DatabaseService {
             console.error('[DB] ❌ Database initialization error:', error);
             this.isInitialized = false;
             this.db = null;
+            // No more complex delete logic - if v2 fails, we need manual intervention or next version bump
             throw error;
         }
     }
@@ -46,32 +45,41 @@ class DatabaseService {
                 throw new Error('Database not initialized in checkAndMigrate');
             }
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS db_version (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    version INTEGER NOT NULL
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS db_version (id INTEGER PRIMARY KEY CHECK(id = 1), version INTEGER NOT NULL);'
+            );
 
             const result = await this.db.getFirstAsync('SELECT version FROM db_version WHERE id = 1');
             const currentVersion = result?.version || 0;
 
-            console.log(`[DB] Current version: ${currentVersion}, Required: ${DB_VERSION}`);
+            console.log('[DB] Current version: ' + currentVersion + ', Required: ' + DB_VERSION);
 
             if (currentVersion < DB_VERSION) {
-                console.log('[DB] ⚠️ Schema update needed - migrating...');
+                console.log('[DB] Schema update needed - migrating...');
+
+                // Migration for v5 (Ensure mrp/taxcode exist)
+                if (currentVersion < 5) {
+                    try {
+                        console.log('[DB] Migrating to v5 - Ensuring mrp and taxcode exist...');
+                        try {
+                            await this.db.runAsync('ALTER TABLE products ADD COLUMN mrp REAL DEFAULT 0');
+                        } catch (e) { /* ignore */ }
+
+                        try {
+                            await this.db.runAsync("ALTER TABLE products ADD COLUMN taxcode TEXT DEFAULT ''");
+                        } catch (e) { /* ignore */ }
+                    } catch (e) {
+                        console.log('[DB] Migration minor error (ignored):', e);
+                    }
+                }
+
+                // Update version
                 await this.db.runAsync('INSERT OR REPLACE INTO db_version (id, version) VALUES (1, ?)', [DB_VERSION]);
-                console.log('[DB] ✅ Schema updated to version', DB_VERSION);
+                console.log('[DB] ✅ Migration complete to version ' + DB_VERSION);
             }
         } catch (error) {
-            console.error('[DB] Error checking version:', error);
-            if (this.db) {
-                try {
-                    await this.db.runAsync('INSERT OR REPLACE INTO db_version (id, version) VALUES (1, ?)', [DB_VERSION]);
-                } catch (e) {
-                    console.error('[DB] Error setting initial version:', e);
-                }
-            }
+            console.error('[DB] Migration failed:', error);
+            throw error;
         }
     }
 
@@ -83,116 +91,70 @@ class DatabaseService {
 
             console.log('[DB] Creating/verifying tables...');
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS customers (
-                    code TEXT PRIMARY KEY, name TEXT NOT NULL, place TEXT, area TEXT,
-                    phone TEXT, phone2 TEXT, super_code TEXT, balance REAL DEFAULT 0,
-                    master_debit REAL DEFAULT 0, master_credit REAL DEFAULT 0,
-                    created_at TEXT, updated_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS customers (code TEXT PRIMARY KEY, name TEXT NOT NULL, place TEXT, area TEXT, phone TEXT, phone2 TEXT, super_code TEXT, balance REAL DEFAULT 0, master_debit REAL DEFAULT 0, master_credit REAL DEFAULT 0, created_at TEXT, updated_at TEXT);'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS products (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, name TEXT NOT NULL,
-                    barcode TEXT, price REAL DEFAULT 0, stock REAL DEFAULT 0, unit TEXT,
-                    brand TEXT, category TEXT, description TEXT, created_at TEXT, updated_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, name TEXT NOT NULL, barcode TEXT, price REAL DEFAULT 0, stock REAL DEFAULT 0, unit TEXT, brand TEXT, category TEXT, description TEXT, mrp REAL DEFAULT 0, taxcode TEXT DEFAULT '', created_at TEXT, updated_at TEXT);"
+            );
 
             // Migration: Add brand column if it doesn't exist (for existing databases)
             try {
-                await this.db.execAsync(`ALTER TABLE products ADD COLUMN brand TEXT;`);
+                await this.db.runAsync('ALTER TABLE products ADD COLUMN brand TEXT');
                 console.log('[DB] ✅ Added brand column to products table');
             } catch (error) {
                 // Column already exists, ignore error
-                if (!error.message.includes('duplicate column')) {
-                    console.log('[DB] Brand column already exists or migration not needed');
+                if (error && error.message && !error.message.includes('duplicate column')) {
+                    // ignore
                 }
             }
 
-            await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);`);
+            await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)');
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS company_info (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT UNIQUE, name TEXT,
-                    address TEXT, phone TEXT, email TEXT, data TEXT, created_at TEXT, updated_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS company_info (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT UNIQUE, name TEXT, address TEXT, phone TEXT, email TEXT, data TEXT, created_at TEXT, updated_at TEXT)'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS offline_collections (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, local_id TEXT UNIQUE,
-                    customer_code TEXT, customer_name TEXT, customer_place TEXT,
-                    customer_phone TEXT, amount REAL, payment_type TEXT, cheque_number TEXT,
-                    remarks TEXT, date TEXT, synced INTEGER DEFAULT 0, created_at TEXT, synced_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS offline_collections (id INTEGER PRIMARY KEY AUTOINCREMENT, local_id TEXT UNIQUE, customer_code TEXT, customer_name TEXT, customer_place TEXT, customer_phone TEXT, amount REAL, payment_type TEXT, cheque_number TEXT, remarks TEXT, date TEXT, synced INTEGER DEFAULT 0, created_at TEXT, synced_at TEXT)'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS offline_orders (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, local_id TEXT UNIQUE,
-                    customer_code TEXT, customer_name TEXT, area TEXT, payment_type TEXT,
-                    items TEXT, total_amount REAL, date TEXT, synced INTEGER DEFAULT 0,
-                    created_at TEXT, synced_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS offline_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, local_id TEXT UNIQUE, customer_code TEXT, customer_name TEXT, area TEXT, payment_type TEXT, items TEXT, total_amount REAL, date TEXT, synced INTEGER DEFAULT 0, created_at TEXT, synced_at TEXT)'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS customer_ledger (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, customer_code TEXT, voucher_no TEXT,
-                    date TEXT, particulars TEXT, debit REAL DEFAULT 0, credit REAL DEFAULT 0,
-                    balance REAL DEFAULT 0, created_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS customer_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_code TEXT, voucher_no TEXT, date TEXT, particulars TEXT, debit REAL DEFAULT 0, credit REAL DEFAULT 0, balance REAL DEFAULT 0, created_at TEXT)'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS areas (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
-                    created_at TEXT, updated_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS areas (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, created_at TEXT, updated_at TEXT)'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS sync_metadata (
-                    key TEXT PRIMARY KEY, value TEXT, updated_at TEXT
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS sync_metadata (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)'
+            );
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS batches (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, product_code TEXT NOT NULL,
-                    batch_id INTEGER, barcode TEXT, mrp REAL DEFAULT 0, retail REAL DEFAULT 0,
-                    dp REAL DEFAULT 0, cb REAL DEFAULT 0, cost REAL DEFAULT 0, quantity REAL DEFAULT 0,
-                    expiry_date TEXT, second_price REAL DEFAULT 0, third_price REAL DEFAULT 0,
-                    net_rate REAL DEFAULT 0, pk_shop REAL DEFAULT 0, created_at TEXT, updated_at TEXT,
-                    FOREIGN KEY (product_code) REFERENCES products(code)
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS batches (id INTEGER PRIMARY KEY AUTOINCREMENT, product_code TEXT NOT NULL, batch_id INTEGER, barcode TEXT, mrp REAL DEFAULT 0, retail REAL DEFAULT 0, dp REAL DEFAULT 0, cb REAL DEFAULT 0, cost REAL DEFAULT 0, quantity REAL DEFAULT 0, expiry_date TEXT, second_price REAL DEFAULT 0, third_price REAL DEFAULT 0, net_rate REAL DEFAULT 0, pk_shop REAL DEFAULT 0, created_at TEXT, updated_at TEXT, FOREIGN KEY(product_code) REFERENCES products(code))'
+            );
 
-            await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_batches_product_code ON batches(product_code);`);
-            await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_batches_barcode ON batches(barcode);`);
+            await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_batches_product_code ON batches(product_code)');
+            await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_batches_barcode ON batches(barcode)');
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS product_photos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, product_code TEXT NOT NULL,
-                    url TEXT NOT NULL, order_index INTEGER DEFAULT 0, created_at TEXT,
-                    FOREIGN KEY (product_code) REFERENCES products(code)
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS product_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, product_code TEXT NOT NULL, url TEXT NOT NULL, order_index INTEGER DEFAULT 0, created_at TEXT, FOREIGN KEY(product_code) REFERENCES products(code))'
+            );
 
-            await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_product_photos_code ON product_photos(product_code);`);
+            await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_product_photos_code ON product_photos(product_code)');
 
-            await this.db.execAsync(`
-                CREATE TABLE IF NOT EXISTS product_goddowns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, product_code TEXT NOT NULL,
-                    barcode TEXT, name TEXT NOT NULL, quantity REAL DEFAULT 0, created_at TEXT,
-                    FOREIGN KEY (product_code) REFERENCES products(code)
-                );
-            `);
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS product_goddowns (id INTEGER PRIMARY KEY AUTOINCREMENT, product_code TEXT NOT NULL, barcode TEXT, name TEXT NOT NULL, quantity REAL DEFAULT 0, created_at TEXT, FOREIGN KEY(product_code) REFERENCES products(code))'
+            );
 
-            await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_goddowns_product_code ON product_goddowns(product_code);`);
-            await this.db.execAsync(`CREATE INDEX IF NOT EXISTS idx_goddowns_barcode ON product_goddowns(barcode);`);
+            await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_goddowns_product_code ON product_goddowns(product_code)');
+            await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_goddowns_barcode ON product_goddowns(barcode)');
 
             console.log('[DB] ✅ All tables created/verified');
         } catch (error) {
@@ -204,18 +166,16 @@ class DatabaseService {
     // ==================== CUSTOMERS ====================
     async saveCustomers(customers) {
         try {
-            console.log(`[DB] Saving ${customers.length} customers...`);
+            console.log('[DB] Saving ' + customers.length + ' customers...');
             for (const customer of customers) {
                 await this.db.runAsync(
-                    `INSERT OR REPLACE INTO customers 
-                    (code, name, place, area, phone, phone2, super_code, balance, master_debit, master_credit, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    'INSERT OR REPLACE INTO customers (code, name, place, area, phone, phone2, super_code, balance, master_debit, master_credit, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     [customer.code, customer.name, customer.place || '', customer.area || '', customer.phone || '',
                     customer.phone2 || '', customer.super_code || '', customer.balance || 0,
                     customer.master_debit || 0, customer.master_credit || 0, new Date().toISOString()]
                 );
             }
-            console.log(`[DB] ✅ Saved ${customers.length} customers`);
+            console.log('[DB] ✅ Saved ' + customers.length + ' customers');
             return true;
         } catch (error) {
             console.error('[DB] Error saving customers:', error);
@@ -252,8 +212,8 @@ class DatabaseService {
 
     async searchCustomers(query, superCode = null) {
         try {
-            let sql = `SELECT * FROM customers WHERE (name LIKE ? OR code LIKE ? OR phone LIKE ? OR area LIKE ?)`;
-            const searchTerm = `%${query}%`;
+            let sql = 'SELECT * FROM customers WHERE(name LIKE ? OR code LIKE ? OR phone LIKE ? OR area LIKE ?)';
+            const searchTerm = '% ' + query + '% ';
             let params = [searchTerm, searchTerm, searchTerm, searchTerm];
             if (superCode) {
                 sql += ' AND super_code = ?';
@@ -269,54 +229,59 @@ class DatabaseService {
     }
 
     // ==================== PRODUCTS ====================
+    async getDistinctBrands() {
+        try {
+            const result = await this.db.getAllAsync('SELECT DISTINCT brand FROM products WHERE brand IS NOT NULL AND brand != "" ORDER BY brand ASC');
+            return (result || []).map(row => row.brand);
+        } catch (error) {
+            console.error('[DB] Error getting distinct brands:', error);
+            return [];
+        }
+    }
+
+    async getDistinctCategories() {
+        try {
+            const result = await this.db.getAllAsync('SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != "" ORDER BY category ASC');
+            return (result || []).map(row => row.category);
+        } catch (error) {
+            console.error('[DB] Error getting distinct categories:', error);
+            return [];
+        }
+    }
+
     async saveProducts(products) {
         try {
-            console.log(`[DB] Saving ${products.length} products...`);
-            const batchSize = 1000; // Increased from 500
-            let savedCount = 0;
+            console.log('[DB] Saving ' + products.length + ' products...');
 
-            // Use single transaction for all products
-            await this.db.execAsync('BEGIN TRANSACTION');
+            await this.db.runAsync('BEGIN TRANSACTION');
 
             try {
-                for (let i = 0; i < products.length; i += batchSize) {
-                    const batch = products.slice(i, i + batchSize);
-                    const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
-                    const values = [];
-
-                    for (const product of batch) {
-                        values.push(
+                for (const product of products) {
+                    await this.db.runAsync(
+                        'INSERT OR REPLACE INTO products (code, name, barcode, price, stock, unit, brand, category, description, mrp, taxcode, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [
                             product.code || product.id,
                             product.name,
                             product.barcode || '',
                             product.price || 0,
                             product.stock || 0,
                             product.unit || '',
-                            product.brand || '', // Add brand field
+                            product.brand || '',
                             product.category || '',
                             product.description || '',
+                            product.mrp || 0,
+                            product.taxcode || '',
                             new Date().toISOString()
-                        );
-                    }
-
-                    await this.db.runAsync(
-                        `INSERT OR REPLACE INTO products 
-                        (code, name, barcode, price, stock, unit, brand, category, description, updated_at)
-                        VALUES ${placeholders}`, values
+                        ]
                     );
-
-                    savedCount += batch.length;
-                    // Only log every 5000 to reduce overhead
-                    if (savedCount % 5000 === 0 || savedCount === products.length) {
-                        console.log(`[DB] Progress: ${savedCount}/${products.length} products`);
-                    }
                 }
 
-                await this.db.execAsync('COMMIT');
-                console.log(`[DB] ✅ Saved ${products.length} products`);
+                await this.db.runAsync('COMMIT');
+                console.log('[DB] ✅ Saved ' + products.length + ' products');
                 return true;
             } catch (error) {
-                await this.db.execAsync('ROLLBACK');
+                console.error('[DB] Error executing batch:', error);
+                await this.db.runAsync('ROLLBACK');
                 throw error;
             }
         } catch (error) {
@@ -346,12 +311,7 @@ class DatabaseService {
             if (!result) {
                 console.log('[DB] Not found in products table, searching batches...');
                 const batchResult = await this.db.getFirstAsync(
-                    `SELECT p.*, b.barcode as batch_barcode, b.mrp, b.retail, b.dp, b.cb, b.cost, 
-                     b.quantity as batch_quantity, b.batch_id, b.expiry_date
-                     FROM batches b
-                     JOIN products p ON b.product_code = p.code
-                     WHERE b.barcode = ?
-                     LIMIT 1`,
+                    'SELECT p.*, b.barcode as batch_barcode, b.mrp, b.retail, b.dp, b.cb, b.cost, b.quantity as batch_quantity, b.batch_id, b.expiry_date FROM batches b JOIN products p ON b.product_code = p.code WHERE b.barcode = ? LIMIT 1',
                     [barcode]
                 );
 
@@ -381,18 +341,11 @@ class DatabaseService {
 
     async searchProducts(query) {
         try {
-            const searchTerm = `%${query}%`;
+            const searchTerm = '% ' + query + '% ';
 
             // Search both products table and batches table
             const result = await this.db.getAllAsync(
-                `SELECT DISTINCT p.* FROM products p 
-                 WHERE p.name LIKE ? OR p.code LIKE ? OR p.barcode LIKE ?
-                 UNION
-                 SELECT DISTINCT p.* FROM products p
-                 JOIN batches b ON b.product_code = p.code
-                 WHERE b.barcode LIKE ?
-                 ORDER BY name ASC 
-                 LIMIT 50`,
+                'SELECT DISTINCT p.* FROM products p WHERE p.name LIKE ? OR p.code LIKE ? OR p.barcode LIKE ? UNION SELECT DISTINCT p.* FROM products p JOIN batches b ON b.product_code = p.code WHERE b.barcode LIKE ? ORDER BY name ASC LIMIT 50',
                 [searchTerm, searchTerm, searchTerm, searchTerm]
             );
             return result || [];
@@ -405,12 +358,12 @@ class DatabaseService {
     // ==================== AREAS ====================
     async saveAreas(areas) {
         try {
-            console.log(`[DB] Saving ${areas.length} areas...`);
+            console.log('[DB] Saving ' + areas.length + ' areas...');
             for (const area of areas) {
-                await this.db.runAsync(`INSERT OR REPLACE INTO areas (name, updated_at) VALUES (?, ?)`,
+                await this.db.runAsync('INSERT OR REPLACE INTO areas(name, updated_at) VALUES(?, ?)',
                     [area, new Date().toISOString()]);
             }
-            console.log(`[DB] ✅ Saved ${areas.length} areas`);
+            console.log('[DB] ✅ Saved ' + areas.length + ' areas');
             return true;
         } catch (error) {
             console.error('[DB] Error saving areas:', error);
@@ -447,10 +400,7 @@ class DatabaseService {
                 const thirdPrice = parseFloat(batch.third_price || 0);
 
                 await this.db.runAsync(
-                    `INSERT INTO batches 
-                    (product_code, batch_id, barcode, mrp, retail, dp, cb, cost, quantity, expiry_date, 
-                    second_price, third_price, net_rate, pk_shop, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    'INSERT INTO batches (product_code, batch_id, barcode, mrp, retail, dp, cb, cost, quantity, expiry_date, second_price, third_price, net_rate, pk_shop, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     [productCode, batch.id || batch.batch_id || null, batch.barcode || '', mrp, retail,
                         dp, cb, cost, quantity, batch.expirydate || batch.expiry_date || null,
                         secondPrice, thirdPrice, netRate, pkShop, new Date().toISOString(), new Date().toISOString()]
@@ -459,7 +409,7 @@ class DatabaseService {
 
             return true;
         } catch (error) {
-            console.error(`[DB] Error saving batches for ${productCode}:`, error);
+            console.error('[DB] Error saving batches for ' + productCode + ': ', error);
             return false;
         }
     }
@@ -502,71 +452,71 @@ class DatabaseService {
                 return true;
             }
 
-            console.log(`[DB] Bulk inserting ${batchesWithProductCode.length} batches...`);
+            console.log('[DB] Bulk inserting ' + batchesWithProductCode.length + ' batches...');
             const startTime = Date.now();
 
             // Use a single transaction for ALL inserts - this is MUCH faster
-            await this.db.execAsync('BEGIN TRANSACTION');
+            await this.db.runAsync('BEGIN TRANSACTION');
 
             try {
                 // Clear all existing batches first
-                await this.db.execAsync('DELETE FROM batches');
+                await this.db.runAsync('DELETE FROM batches');
 
-                // Insert in chunks of 500 for maximum speed
-                const chunkSize = 500;
+                // Insert in chunks of 50 for maximum safety with parameters (SQLite has ~999 param limit usually)
+                // 50 items * 16 params = 800 params, which is safe
+                const chunkSize = 50;
                 let insertedCount = 0;
 
                 for (let i = 0; i < batchesWithProductCode.length; i += chunkSize) {
                     const chunk = batchesWithProductCode.slice(i, i + chunkSize);
 
-                    // Build multi-value INSERT statement
-                    const rows = [];
+                    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                    const values = [];
+
                     for (const item of chunk) {
                         const batch = item.batch || item;
                         const productCode = item.product_code;
 
-                        const mrp = parseFloat(batch.MRP || batch.mrp || 0);
-                        const retail = parseFloat(batch.RETAIL || batch.retail || 0);
-                        const dp = parseFloat(batch['D.P'] || batch.dp || 0);
-                        const cb = parseFloat(batch.CB || batch.cb || 0);
-                        const cost = parseFloat(batch.COST || batch.cost || 0);
-                        const quantity = parseFloat(batch.quantity || 0);
-                        const netRate = parseFloat(batch['NET RATE'] || batch.net_rate || batch.netrate || 0);
-                        const pkShop = parseFloat(batch['PK SHOP'] || batch.pk_shop || batch.pkshop || 0);
-                        const secondPrice = parseFloat(batch.second_price || 0);
-                        const thirdPrice = parseFloat(batch.third_price || 0);
-                        const batchId = batch.id || batch.batch_id || 'NULL';
-                        const barcode = (batch.barcode || '').replace(/'/g, "''");
-                        const expiryDate = batch.expirydate || batch.expiry_date || 'NULL';
-                        const now = new Date().toISOString();
-
-                        rows.push(`('${productCode}', ${batchId}, '${barcode}', ${mrp}, ${retail}, ${dp}, ${cb}, ${cost}, ${quantity}, ${expiryDate === 'NULL' ? 'NULL' : `'${expiryDate}'`}, ${secondPrice}, ${thirdPrice}, ${netRate}, ${pkShop}, '${now}', '${now}')`);
+                        values.push(
+                            productCode,
+                            batch.id || batch.batch_id || null,
+                            batch.barcode || '',
+                            parseFloat(batch.MRP || batch.mrp || 0),
+                            parseFloat(batch.RETAIL || batch.retail || 0),
+                            parseFloat(batch['D.P'] || batch.dp || 0),
+                            parseFloat(batch.CB || batch.cb || 0),
+                            parseFloat(batch.COST || batch.cost || 0),
+                            parseFloat(batch.quantity || 0),
+                            batch.expirydate || batch.expiry_date || null,
+                            parseFloat(batch.second_price || 0),
+                            parseFloat(batch.third_price || 0),
+                            parseFloat(batch['NET RATE'] || batch.net_rate || batch.netrate || 0),
+                            parseFloat(batch['PK SHOP'] || batch.pk_shop || batch.pkshop || 0),
+                            new Date().toISOString(),
+                            new Date().toISOString()
+                        );
                     }
 
-                    const sql = `INSERT INTO batches 
-                        (product_code, batch_id, barcode, mrp, retail, dp, cb, cost, quantity, expiry_date, 
-                        second_price, third_price, net_rate, pk_shop, created_at, updated_at)
-                        VALUES ${rows.join(',')}`;
-
-                    await this.db.execAsync(sql);
+                    await this.db.runAsync(
+                        'INSERT INTO batches (product_code, batch_id, barcode, mrp, retail, dp, cb, cost, quantity, expiry_date, second_price, third_price, net_rate, pk_shop, created_at, updated_at) VALUES ' + placeholders,
+                        values
+                    );
 
                     insertedCount += chunk.length;
-                    // Only log every 5000 to reduce overhead
-                    if (insertedCount % 5000 === 0) {
-                        console.log(`[DB] Batch progress: ${insertedCount}/${batchesWithProductCode.length}`);
+                    if (insertedCount % 1000 === 0) {
+                        console.log('[DB] Batch progress: ' + insertedCount + '/' + batchesWithProductCode.length);
                     }
                 }
 
-                // Commit the transaction
-                await this.db.execAsync('COMMIT');
+                await this.db.runAsync('COMMIT');
 
                 const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-                console.log(`[DB] ✅ Bulk inserted ${insertedCount} batches in ${duration}s`);
+                console.log('[DB] ✅ Bulk inserted ' + insertedCount + ' batches in ' + duration + 's');
                 return true;
 
             } catch (error) {
                 // Rollback on error
-                await this.db.execAsync('ROLLBACK');
+                await this.db.runAsync('ROLLBACK');
                 throw error;
             }
         } catch (error) {
@@ -584,7 +534,7 @@ class DatabaseService {
             for (let i = 0; i < photos.length; i++) {
                 const photo = photos[i];
                 await this.db.runAsync(
-                    `INSERT INTO product_photos (product_code, url, order_index, created_at) VALUES (?, ?, ?, ?)`,
+                    'INSERT INTO product_photos (product_code, url, order_index, created_at) VALUES (?, ?, ?, ?)',
                     [productCode, photo.url || photo, i, new Date().toISOString()]
                 );
             }
@@ -615,45 +565,48 @@ class DatabaseService {
                 return true;
             }
 
-            console.log(`[DB] Bulk inserting ${photosWithProductCode.length} photos...`);
+            console.log('[DB] Bulk inserting ' + photosWithProductCode.length + ' photos...');
             const startTime = Date.now();
 
-            await this.db.execAsync('BEGIN TRANSACTION');
+            await this.db.runAsync('BEGIN TRANSACTION');
 
             try {
-                await this.db.execAsync('DELETE FROM product_photos');
+                await this.db.runAsync('DELETE FROM product_photos');
 
-                const chunkSize = 1000;
+                const chunkSize = 100; // Safe for 4 params * 100 = 400
                 let insertedCount = 0;
 
                 for (let i = 0; i < photosWithProductCode.length; i += chunkSize) {
                     const chunk = photosWithProductCode.slice(i, i + chunkSize);
-                    const rows = [];
+
+                    const placeholders = chunk.map(() => '(?, ?, ?, ?)').join(',');
+                    const values = [];
 
                     for (const item of chunk) {
                         const photo = item.photo || item;
-                        const productCode = item.product_code;
-                        const orderIndex = item.order_index || 0;
-                        const url = (photo.url || photo).replace(/'/g, "''");
-                        const now = new Date().toISOString();
-
-                        rows.push(`('${productCode}', '${url}', ${orderIndex}, '${now}')`);
+                        values.push(
+                            item.product_code,
+                            photo.url || photo,
+                            item.order_index || 0,
+                            new Date().toISOString()
+                        );
                     }
 
-                    await this.db.execAsync(
-                        `INSERT INTO product_photos (product_code, url, order_index, created_at) VALUES ${rows.join(',')}`
+                    await this.db.runAsync(
+                        'INSERT INTO product_photos (product_code, url, order_index, created_at) VALUES ' + placeholders,
+                        values
                     );
 
                     insertedCount += chunk.length;
                 }
 
-                await this.db.execAsync('COMMIT');
+                await this.db.runAsync('COMMIT');
                 const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-                console.log(`[DB] ✅ Bulk inserted ${insertedCount} photos in ${duration}s`);
+                console.log('[DB] ✅ Bulk inserted ' + insertedCount + ' photos in ' + duration + 's');
                 return true;
 
             } catch (error) {
-                await this.db.execAsync('ROLLBACK');
+                await this.db.runAsync('ROLLBACK');
                 throw error;
             }
         } catch (error) {
@@ -682,7 +635,7 @@ class DatabaseService {
                 photosByProduct.get(photo.product_code).push({ url: photo.url });
             }
 
-            console.log(`[DB] ✅ Loaded ${result?.length || 0} photos for ${photosByProduct.size} products in single query`);
+            console.log('[DB] ✅ Loaded ' + (result?.length || 0) + ' photos for ' + photosByProduct.size + ' products in single query');
             return photosByProduct;
         } catch (error) {
             console.error('[DB] Error getting all photos:', error);
@@ -713,7 +666,7 @@ class DatabaseService {
                 });
             }
 
-            console.log(`[DB] ✅ Loaded ${result?.length || 0} goddowns for ${goddownsByProduct.size} products in single query`);
+            console.log('[DB] ✅ Loaded ' + (result?.length || 0) + ' goddowns for ' + goddownsByProduct.size + ' products in single query');
             return goddownsByProduct;
         } catch (error) {
             console.error('[DB] Error getting all goddowns:', error);
@@ -728,9 +681,10 @@ class DatabaseService {
             await this.db.runAsync('DELETE FROM product_goddowns WHERE product_code = ?', [productCode]);
 
             for (const godown of goddowns) {
+                const name = godown.goddown_name || godown.name || '';
                 await this.db.runAsync(
-                    `INSERT INTO product_goddowns (product_code, barcode, name, quantity, created_at) VALUES (?, ?, ?, ?, ?)`,
-                    [productCode, godown.barcode || '', godown.name || '', parseFloat(godown.quantity || 0), new Date().toISOString()]
+                    'INSERT INTO product_goddowns (product_code, barcode, name, quantity, created_at) VALUES (?, ?, ?, ?, ?)',
+                    [productCode, godown.barcode || '', name, parseFloat(godown.quantity || 0), new Date().toISOString()]
                 );
             }
             return true;
@@ -768,46 +722,51 @@ class DatabaseService {
                 return true;
             }
 
-            console.log(`[DB] Bulk inserting ${goddownsWithProductCode.length} goddowns...`);
+            console.log('[DB] Bulk inserting ' + goddownsWithProductCode.length + ' goddowns...');
             const startTime = Date.now();
 
-            await this.db.execAsync('BEGIN TRANSACTION');
+            await this.db.runAsync('BEGIN TRANSACTION');
 
             try {
-                await this.db.execAsync('DELETE FROM product_goddowns');
+                await this.db.runAsync('DELETE FROM product_goddowns');
 
-                const chunkSize = 1000;
+                const chunkSize = 100; // Safe for 5 params * 100 = 500
                 let insertedCount = 0;
 
                 for (let i = 0; i < goddownsWithProductCode.length; i += chunkSize) {
                     const chunk = goddownsWithProductCode.slice(i, i + chunkSize);
-                    const rows = [];
+
+                    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?)').join(',');
+                    const values = [];
 
                     for (const item of chunk) {
                         const godown = item.godown || item;
-                        const productCode = item.product_code;
-                        const barcode = (godown.barcode || '').replace(/'/g, "''");
-                        const name = (godown.goddown_name || godown.name || '').replace(/'/g, "''");
-                        const quantity = parseFloat(godown.quantity || 0);
-                        const now = new Date().toISOString();
+                        const name = godown.goddown_name || godown.name || '';
 
-                        rows.push(`('${productCode}', '${barcode}', '${name}', ${quantity}, '${now}')`);
+                        values.push(
+                            item.product_code,
+                            godown.barcode || '',
+                            name,
+                            parseFloat(godown.quantity || 0),
+                            new Date().toISOString()
+                        );
                     }
 
-                    await this.db.execAsync(
-                        `INSERT INTO product_goddowns (product_code, barcode, name, quantity, created_at) VALUES ${rows.join(',')}`
+                    await this.db.runAsync(
+                        'INSERT INTO product_goddowns (product_code, barcode, name, quantity, created_at) VALUES ' + placeholders,
+                        values
                     );
 
                     insertedCount += chunk.length;
                 }
 
-                await this.db.execAsync('COMMIT');
+                await this.db.runAsync('COMMIT');
                 const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-                console.log(`[DB] ✅ Bulk inserted ${insertedCount} goddowns in ${duration}s`);
+                console.log('[DB] ✅ Bulk inserted ' + insertedCount + ' goddowns in ' + duration + 's');
                 return true;
 
             } catch (error) {
-                await this.db.execAsync('ROLLBACK');
+                await this.db.runAsync('ROLLBACK');
                 throw error;
             }
         } catch (error) {
@@ -819,11 +778,9 @@ class DatabaseService {
     // ==================== OFFLINE COLLECTIONS ====================
     async saveOfflineCollection(collection) {
         try {
-            const localId = collection.local_id || `col_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const localId = collection.local_id || 'col_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             await this.db.runAsync(
-                `INSERT INTO offline_collections 
-                (local_id, customer_code, customer_name, customer_place, customer_phone, amount, payment_type, cheque_number, remarks, date, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                'INSERT INTO offline_collections (local_id, customer_code, customer_name, customer_place, customer_phone, amount, payment_type, cheque_number, remarks, date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [localId, collection.customer_code || collection.code, collection.customer_name || collection.name,
                     collection.customer_place || collection.place || null, collection.customer_phone || collection.phone || null,
                     collection.amount, collection.payment_type || collection.type, collection.cheque_number || null,
@@ -841,7 +798,7 @@ class DatabaseService {
         try {
             let query = 'SELECT * FROM offline_collections';
             if (syncedOnly !== undefined && syncedOnly !== null) {
-                query += ` WHERE synced = ${syncedOnly ? 1 : 0}`;
+                query += ' WHERE synced = ' + (syncedOnly ? 1 : 0);
             }
             query += ' ORDER BY created_at DESC';
             const result = await this.db.getAllAsync(query);
@@ -876,11 +833,9 @@ class DatabaseService {
     // ==================== OFFLINE ORDERS ====================
     async saveOfflineOrder(order) {
         try {
-            const localId = order.local_id || `ord_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const localId = order.local_id || 'ord_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             await this.db.runAsync(
-                `INSERT INTO offline_orders 
-                (local_id, customer_code, customer_name, area, payment_type, items, total_amount, date, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                'INSERT INTO offline_orders (local_id, customer_code, customer_name, area, payment_type, items, total_amount, date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [localId, order.customer_code, order.customer_name, order.area || '', order.payment_type,
                     JSON.stringify(order.items), order.total_amount, order.date || new Date().toISOString(), new Date().toISOString()]
             );
@@ -896,7 +851,7 @@ class DatabaseService {
         try {
             let query = 'SELECT * FROM offline_orders';
             if (syncedOnly !== null) {
-                query += ` WHERE synced = ${syncedOnly ? 1 : 0}`;
+                query += ' WHERE synced = ' + (syncedOnly ? 1 : 0);
             }
             query += ' ORDER BY created_at DESC';
             const result = await this.db.getAllAsync(query);
@@ -924,9 +879,7 @@ class DatabaseService {
             await this.db.runAsync('DELETE FROM customer_ledger WHERE customer_code = ?', [customerCode]);
             for (const entry of ledgerEntries) {
                 await this.db.runAsync(
-                    `INSERT INTO customer_ledger 
-                    (customer_code, voucher_no, date, particulars, debit, credit, balance, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    'INSERT INTO customer_ledger (customer_code, voucher_no, date, particulars, debit, credit, balance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     [customerCode, entry.voucher_no || '', entry.date || '', entry.particulars || '',
                         entry.debit || 0, entry.credit || 0, entry.balance || 0, new Date().toISOString()]
                 );
@@ -1022,6 +975,31 @@ class DatabaseService {
         } catch (error) {
             console.error('[DB] Error clearing all data:', error);
             return false;
+        }
+    }
+
+    async getLastSyncTime() {
+        try {
+            if (!this.db || !this.isInitialized) await this.init();
+            const result = await this.db.getFirstAsync('SELECT value FROM sync_metadata WHERE key = ?', ['last_sync_time']);
+            return result ? result.value : null;
+        } catch (error) {
+            console.error('[DB] Error getting last sync time:', error);
+            return null;
+        }
+    }
+
+    async setLastSyncTime(timestamp) {
+        try {
+            if (!this.db || !this.isInitialized) await this.init();
+            await this.db.runAsync(
+                'INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, ?)',
+                ['last_sync_time', timestamp, new Date().toISOString()]
+            );
+            return true;
+        } catch (error) {
+            console.error('[DB] Error setting last sync time:', error);
+            throw error;
         }
     }
 

@@ -171,7 +171,7 @@ export default function DebtorsScreen() {
                   { color: balance < 0 ? Colors.error.main : Colors.success.main },
                 ]}
               >
-                ₹{Math.round(balance).toLocaleString("en-IN")}
+                {Math.round(balance).toLocaleString("en-IN")}
               </Text>
             </View>
           </View>
@@ -226,7 +226,7 @@ export default function DebtorsScreen() {
             </View>
             <View>
               <Text style={styles.summaryLabel}>Total Balance</Text>
-              <Text style={styles.summaryValue}>₹{(totalBalance / 1000).toFixed(1)}k</Text>
+              <Text style={styles.summaryValue}>{(totalBalance / 1000).toFixed(1)}k</Text>
             </View>
           </LinearGradient>
         </Animated.View>

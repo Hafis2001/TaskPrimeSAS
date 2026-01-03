@@ -37,6 +37,13 @@ export default function AddCollectionScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredCustomers, setFilteredCustomers] = useState([]);
 
+  // Area Selection Logic
+  const [areaList, setAreaList] = useState([]);
+  const [selectedArea, setSelectedArea] = useState(null);
+  const [showAreaModal, setShowAreaModal] = useState(false);
+  const [areaSearchQuery, setAreaSearchQuery] = useState("");
+  const [filteredAreas, setFilteredAreas] = useState([]);
+
   // Form fields
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedCustomerName, setSelectedCustomerName] = useState("");
@@ -64,9 +71,27 @@ export default function AddCollectionScreen() {
         customer.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         customer.code.toLowerCase().includes(searchQuery.toLowerCase())
       );
-      setFilteredCustomers(filtered);
+
+      // Apply area filter if selected
+      if (selectedArea) {
+        setFilteredCustomers(filtered.filter(c => {
+          const cArea = c.area && c.area.trim() !== "" ? c.area : c.place;
+          return cArea === selectedArea;
+        }));
+      } else {
+        setFilteredCustomers(filtered);
+      }
     }
-  }, [searchQuery, customers]);
+  }, [searchQuery, customers, selectedArea]);
+
+  // Filter areas
+  useEffect(() => {
+    if (areaSearchQuery.trim() === "") {
+      setFilteredAreas(areaList);
+    } else {
+      setFilteredAreas(areaList.filter(a => a.toLowerCase().includes(areaSearchQuery.toLowerCase())));
+    }
+  }, [areaSearchQuery, areaList]);
 
   const checkNetworkStatus = async () => {
     const state = await NetInfo.fetch();
@@ -148,6 +173,7 @@ export default function AddCollectionScreen() {
 
       setCustomers(filteredCustomers);
       setFilteredCustomers(filteredCustomers);
+
     } catch (error) {
       console.error("API fetch error:", error);
       throw error;
@@ -164,6 +190,18 @@ export default function AddCollectionScreen() {
         return [];
       }
 
+      // Load areas logic (similar to Entry.js)
+      let areasFromDb = await dbService.getAreas();
+      if (!areasFromDb || areasFromDb.length === 0) {
+        const uniqueAreas = [...new Set(allCustomers.map((debtor) => {
+          return debtor.area && debtor.area.trim() !== "" ? debtor.area : debtor.place;
+        }))].filter(Boolean).sort();
+        areasFromDb = uniqueAreas;
+      }
+      setAreaList(areasFromDb);
+      setFilteredAreas(areasFromDb);
+
+
       const sortedCustomers = allCustomers.sort((a, b) => {
         const nameA = (a.name || "").toLowerCase();
         const nameB = (b.name || "").toLowerCase();
@@ -175,6 +213,14 @@ export default function AddCollectionScreen() {
       console.error("[AddCollection] Error loading customers from database:", error);
       return [];
     }
+  };
+
+  const handleSelectArea = (area) => {
+    setSelectedArea(area);
+    setSelectedCustomer(null);
+    setSelectedCustomerName("");
+    setShowAreaModal(false);
+    setAreaSearchQuery("");
   };
 
   const handleSelectCustomer = (customer) => {
@@ -222,7 +268,7 @@ export default function AddCollectionScreen() {
       Alert.alert(
         "Saved",
         "Collection saved locally. Please sync when online.",
-        [{ text: "OK", onPress: () => router.back() }]
+        [{ text: "OK", onPress: () => router.replace("/Collection/Collection") }]
       );
 
       resetForm();
@@ -302,6 +348,23 @@ export default function AddCollectionScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {/* Changed from Animated.View to View to ensure visibility */}
+          <View style={styles.formSection}>
+            <Text style={styles.label}>
+              Filter by Area
+            </Text>
+            <TouchableOpacity
+              style={styles.inputBox}
+              onPress={() => setShowAreaModal(true)}
+            >
+              <Ionicons name="location" size={20} color={selectedArea ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
+              <Text style={[styles.inputText, !selectedArea && styles.placeholderText]}>
+                {selectedArea || "Select Area (Optional)"}
+              </Text>
+              <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
+            </TouchableOpacity>
+          </View>
+
           <Animated.View entering={FadeInUp.delay(100)} style={styles.formSection}>
             <Text style={styles.label}>
               Select Customer <Text style={styles.required}>*</Text>
@@ -460,6 +523,60 @@ export default function AddCollectionScreen() {
           </Animated.View>
         </ScrollView>
 
+        {/* Area Selection Modal */}
+        <Modal
+          visible={showAreaModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowAreaModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Area</Text>
+                <TouchableOpacity onPress={() => setShowAreaModal(false)}>
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.searchContainer}>
+                <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search area..."
+                  placeholderTextColor={Colors.text.tertiary}
+                  value={areaSearchQuery}
+                  onChangeText={setAreaSearchQuery}
+                  autoFocus={true}
+                />
+              </View>
+
+              <FlatList
+                data={filteredAreas}
+                keyExtractor={(item, index) => index.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.customerItem}
+                    onPress={() => handleSelectArea(item)}
+                  >
+                    <Ionicons name="location" size={20} color={Colors.primary.main} style={{ marginRight: 12 }} />
+                    <Text style={[styles.customerName, { flex: 1 }]}>{item}</Text>
+                    {selectedArea === item && (
+                      <Ionicons name="checkmark-circle" size={20} color={Colors.success.main} />
+                    )}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No areas found</Text>
+                  </View>
+                }
+                showsVerticalScrollIndicator={true}
+              />
+            </View>
+          </View>
+        </Modal>
+
         {/* Customer Selection Modal */}
         <Modal
           visible={showCustomerModal}
@@ -517,7 +634,7 @@ export default function AddCollectionScreen() {
           </View>
         </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </LinearGradient >
   );
 }
 

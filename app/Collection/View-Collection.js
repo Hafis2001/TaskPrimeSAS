@@ -180,7 +180,7 @@ export default function ViewCollectionScreen() {
   };
 
   const formatCurrency = (amount) => {
-    return `₹${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    return `${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
   const renderStatCard = (title, value, subtitle, colorStart, colorEnd, icon) => (

@@ -31,18 +31,96 @@ import dbService from "../../src/services/database";
 
 const { width, height } = Dimensions.get("window");
 
+const FlyingItem = ({ startX, startY, endX, endY, onComplete }) => {
+  const animatedValue = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(animatedValue, {
+      toValue: 1,
+      duration: 600,
+      useNativeDriver: true,
+      easing: (t) => t * t, // Quadratic easing for "drop" effect
+    }).start(() => {
+      onComplete && onComplete();
+    });
+  }, []);
+
+  const translateX = animatedValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [startX, endX - 20], // Adjust for icon size
+  });
+
+  const translateY = animatedValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [startY, endY - 20],
+  });
+
+  const scale = animatedValue.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.2, 0.2], // Grow then shrink into cart
+  });
+
+  const opacity = animatedValue.interpolate({
+    inputRange: [0, 0.8, 1],
+    outputRange: [1, 1, 0],
+  });
+
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: Colors.primary.main,
+        zIndex: 9999, // Ensure it's on top of everything
+        transform: [
+          { translateX },
+          { translateY },
+          { scale }
+        ],
+        opacity,
+        justifyContent: 'center',
+        alignItems: 'center',
+        ...Shadows.md
+      }}
+    >
+      <Ionicons name="cube" size={16} color="#FFF" />
+    </Animated.View>
+  );
+};
+
 export default function OrderDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { area = "", customer = "", customerCode = "", type = "", payment = "", scanned, timestamp } = params;
 
+  // CRITICAL: Use ref as source of truth for cart to prevent state loss
+  const cartRef = useRef([]);
+  const [cart, setCart] = useState([]);
+
+  // Missing state variables
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
-  const [cart, setCart] = useState([]);
+  const [pendingOrderCount, setPendingOrderCount] = useState(0);
+
+  // DEBUG: Monitor cart changes
+  useEffect(() => {
+    console.log('🛒🛒🛒 CART STATE CHANGED 🛒🛒🛒');
+    console.log('Cart length:', cart.length);
+    cart.forEach((item, idx) => {
+      console.log(`  Cart[${idx}]:`, item.product.name, '- ID:', item.product.id, '- Qty:', item.qty);
+    });
+    console.log('🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒');
+  }, [cart]);
+
+
   const [editingQty, setEditingQty] = useState({});
   const [selectedImage, setSelectedImage] = useState(null);
   const [imageModalVisible, setImageModalVisible] = useState(false);
@@ -62,11 +140,19 @@ export default function OrderDetails() {
   // Filter modal state
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [selectedBrands, setSelectedBrands] = useState([]);
-  const [selectedProducts, setSelectedProducts] = useState([]);
-  const [availableBrands, setAvailableBrands] = useState([]);
-  const [availableProducts, setAvailableProducts] = useState([]);
-  const [filterSearchQuery, setFilterSearchQuery] = useState("");
+  const [selectedProducts, setSelectedProducts] = useState([]); // This is categories
+  const [filterQuery, setFilterQuery] = useState('');
+  const [filterInStock, setFilterInStock] = useState(false);
   const [activeFilterTab, setActiveFilterTab] = useState("brand");
+  const [filterOptions, setFilterOptions] = useState({ brands: [], products: [] });
+
+  // State to hold the currently applied filters (triggers product fetch)
+  const [filters, setFilters] = useState({
+    brands: [],
+    categories: [],
+    search: '',
+    inStock: false
+  });
 
   // Quantity modal state
   const [quantityModalVisible, setQuantityModalVisible] = useState(false);
@@ -81,53 +167,91 @@ export default function OrderDetails() {
   const sheetAnim = useRef(new Animated.Value(height)).current;
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // Flying Animation State
+  const [flyingItems, setFlyingItems] = useState([]);
+  const [cartPosition, setCartPosition] = useState({ x: 0, y: 0 });
+  const cartButtonRef = useRef(null);
+
+  const measureCartPosition = () => {
+    cartButtonRef.current?.measure((x, y, width, height, pageX, pageY) => {
+      setCartPosition({ x: pageX + width / 2, y: pageY + height / 2 });
+    });
+  };
+
+  const triggerFlyAnimation = (startX, startY) => {
+    // If start positions are not provided, default to center of screen
+    const sX = startX || width / 2;
+    const sY = startY || height / 2;
+
+    const id = Date.now() + Math.random();
+    setFlyingItems(prev => [...prev, { id, startX: sX, startY: sY }]);
+  };
+
+  // For highlighting scanned items
   // For highlighting scanned items
   const [highlightedProductId, setHighlightedProductId] = useState(null);
   const flatListRef = useRef(null);
+
+  // Pagination State
+  const [page, setPage] = useState(1);
+  // We don't use loadedCount anymore, we use page * PER_PAGE logic
+  // const [loadedCount, setLoadedCount] = useState(0);
+
+  // Effect to handle scrolling when a product is highlighted
+  useEffect(() => {
+    if (highlightedProductId && filteredProducts.length > 0) {
+      const index = filteredProducts.findIndex(p => p.id === highlightedProductId);
+      if (index >= 0 && flatListRef.current) {
+        console.log('[OrderDetails] Effect: Scrolling to index:', index);
+        setTimeout(() => {
+          flatListRef.current?.scrollToIndex({
+            index: index,
+            animated: true,
+            viewPosition: 0.5
+          });
+        }, 100);
+      }
+    }
+  }, [highlightedProductId, filteredProducts.length]); // Re-run when highlight changes or list length changes
 
   // OPTIMIZED: Load products with pagination for better performance
   async function fetchAllProducts(isRefresh = false) {
     if (!isRefresh) {
       setLoading(true);
+      setAllProducts([]); // Clear existing list
+      setFilteredProducts([]);
+      setPage(0);
+      setHasMore(true);
     }
 
     try {
       console.log('[OrderDetails] Loading first batch of products...');
       await dbService.init();
 
-      // Get total count first
-      const countResult = await dbService.db.getFirstAsync('SELECT COUNT(*) as count FROM products');
-      const total = countResult?.count || 0;
-      setTotalCount(total);
+      const currentFilters = {
+        brands: filters.brands,
+        categories: filters.categories,
+        search: filters.search,
+      };
 
-      if (total === 0) {
-        Alert.alert(
-          "No Products Available",
-          "No product data found. Please download products from Home screen first.",
-          [
-            { text: "Go to Home", onPress: () => router.replace("/(tabs)/Home") },
-            { text: "Cancel", style: "cancel" }
-          ]
-        );
-        setAllProducts([]);
-        setFilteredProducts([]);
-        setHasMore(false);
-        return;
+      console.log('[OrderDetails] Using filters:', currentFilters);
+
+      // Load first page with LIMIT and FILTERS
+      const products = await batchService.getProductBatchesOffline(PRODUCTS_PER_PAGE, 0, currentFilters);
+
+      // Transform to cards (which expands batches)
+      let cards = batchService.transformBatchesToCards(products);
+
+      // Additional Client-side filtering for In Stock
+      if (filters.inStock) {
+        cards = cards.filter(card => card.stock > 0);
       }
 
-      // Load first page with LIMIT
-      const productsWithBatches = await batchService.getProductBatchesOffline(PRODUCTS_PER_PAGE, 0);
-      const batchCards = batchService.transformBatchesToCards(productsWithBatches);
-
-      console.log(`[OrderDetails] Loaded first ${batchCards.length} batch cards (Total products: ${total})`);
-
-      setAllProducts(batchCards);
-      setFilteredProducts(batchCards);
-      setLoadedCount(batchCards.length);
-      setHasMore(batchCards.length < total * 2); // Rough estimate (products can have multiple batches)
-
-      // Extract filter options from first batch only
-      extractFilterOptions(batchCards);
+      console.log(`[OrderDetails] Loaded ${cards.length} cards`);
+      setAllProducts(cards);
+      setFilteredProducts(cards);
+      setPage(1); // Reset page to 1 after initial load
+      setHasMore(products.length >= PRODUCTS_PER_PAGE); // Use products length for pagination check
     } catch (error) {
       console.error('[OrderDetails] Error loading products:', error);
       Alert.alert(
@@ -150,31 +274,42 @@ export default function OrderDetails() {
 
     setLoadingMore(true);
     try {
-      console.log(`[OrderDetails] Loading more products... (current: ${loadedCount})`);
+      console.log(`[OrderDetails] Loading more products... (page: ${page})`);
 
-      const currentProductCount = Math.floor(loadedCount / 2); // Rough estimate
-      const productsWithBatches = await batchService.getProductBatchesOffline(
+      const offset = page * PRODUCTS_PER_PAGE;
+      const currentFilters = {
+        brands: filters.brands,
+        categories: filters.categories,
+        search: filters.search,
+      };
+
+      const products = await batchService.getProductBatchesOffline(
         PRODUCTS_PER_PAGE,
-        currentProductCount
+        offset,
+        currentFilters
       );
 
-      if (productsWithBatches.length === 0) {
+      if (products.length === 0) {
         console.log('[OrderDetails] No more products to load');
         setHasMore(false);
         return;
       }
 
-      const newBatchCards = batchService.transformBatchesToCards(productsWithBatches);
-      console.log(`[OrderDetails] Loaded ${newBatchCards.length} more batch cards`);
+      // Transform to cards
+      let newCards = batchService.transformBatchesToCards(products);
 
-      setAllProducts(prev => [...prev, ...newBatchCards]);
-      setFilteredProducts(prev => [...prev, ...newBatchCards]);
-      setLoadedCount(prev => prev + newBatchCards.length);
+      // Additional Client-side filtering for In Stock
+      if (filters.inStock) {
+        newCards = newCards.filter(card => card.stock > 0);
+      }
 
-      // Update filter options with new products
-      extractFilterOptions([...allProducts, ...newBatchCards]);
+      console.log(`[OrderDetails] Loaded ${newCards.length} more batch cards`);
 
-      if (newBatchCards.length < PRODUCTS_PER_PAGE) {
+      setAllProducts(prev => [...prev, ...newCards]);
+      setFilteredProducts(prev => [...prev, ...newCards]);
+      setPage(prev => prev + 1);
+
+      if (products.length < PRODUCTS_PER_PAGE) {
         setHasMore(false);
       }
     } catch (error) {
@@ -184,101 +319,55 @@ export default function OrderDetails() {
     }
   }
 
-  // Extract unique brands and products for filtering
-  function extractFilterOptions(products) {
-    console.log('[OrderDetails] Extracting filter options from', products.length, 'products');
+  // Load filter options directly from DB
+  async function loadFilterOptions() {
+    try {
+      console.log('[OrderDetails] Loading distinct filter options from DB...');
+      await dbService.init();
+      const brands = await dbService.getDistinctBrands();
+      const categories = await dbService.getDistinctCategories();
 
-    const brandsMap = new Map();
-    const categoriesMap = new Map(); // Extract CATEGORIES, not product names
-
-    products.forEach(p => {
-      const brand = (p.brand || '').trim();
-      if (brand) {
-        brandsMap.set(brand, (brandsMap.get(brand) || 0) + 1);
-      }
-
-
-      // Extract CATEGORY (like "CHOCOLATE", "RICE") from productCategory field
-      const category = (p.productCategory || '').trim();
-      if (category) {
-        categoriesMap.set(category, (categoriesMap.get(category) || 0) + 1);
-      }
-    });
-
-    const brands = Array.from(brandsMap.keys()).sort();
-    const categories = Array.from(categoriesMap.keys()).sort();
-
-    console.log('[OrderDetails] Extracted brands:', brands.length);
-    console.log('[OrderDetails] Sample brands:', brands.slice(0, 5));
-    console.log('[OrderDetails] Extracted categories:', categories.length);
-    console.log('[OrderDetails] Sample categories:', categories.slice(0, 5));
-
-    setAvailableBrands(brands);
-    setAvailableProducts(categories); // This contains categories now, not product names
+      console.log(`[OrderDetails] Loaded ${brands.length} brands and ${categories.length} categories`);
+      setFilterOptions({ brands, products: categories }); // Stores categories
+    } catch (error) {
+      console.error('[OrderDetails] Error loading filter options:', error);
+    }
   }
 
-  // Apply filters
-  function applyFilters() {
-    console.log('[OrderDetails] === APPLYING FILTERS ===');
+  // Apply filters by reloading from DB
+  const applyFilters = () => {
+    console.log('[OrderDetails] === APPLYING FILTERS DB-SIDE ===');
     console.log('Selected Brands:', selectedBrands);
-    console.log('Selected Categories:', selectedProducts); // Still called selectedProducts but contains categories
+    console.log('Selected Categories:', selectedProducts);
     console.log('Search Query:', query);
-    console.log('Total Products:', allProducts.length);
+    console.log('In Stock Only:', filterInStock);
 
-    let filtered = [...allProducts];
-
-    if (selectedBrands.length > 0) {
-      filtered = filtered.filter(p => {
-        const productBrand = (p.brand || '').trim();
-        return selectedBrands.includes(productBrand);
-      });
-      console.log(`After brand filter: ${filtered.length} products`);
-    }
-
-    // Filter by CATEGORY (like "CHOCOLATE") instead of product name
-    if (selectedProducts.length > 0) {
-      filtered = filtered.filter(p => {
-        const productCategory = (p.productCategory || '').trim();
-        return selectedProducts.includes(productCategory);
-      });
-      console.log(`After category filter: ${filtered.length} products`);
-    }
-
-    if (query.trim()) {
-      const searchQuery = query.trim().toLowerCase();
-      filtered = filtered.filter((p) => {
-        const matchName = (p.name || '').toLowerCase().includes(searchQuery);
-        const matchCode = (p.code || '').toLowerCase().includes(searchQuery);
-        const matchBarcode = (p.barcode || '').toLowerCase().includes(searchQuery);
-        const matchBrand = (p.brand || '').toLowerCase().includes(searchQuery);
-        const matchCategory = (p.productCategory || '').toLowerCase().includes(searchQuery);
-        return matchName || matchCode || matchBarcode || matchBrand || matchCategory;
-      });
-      console.log(`After search filter: ${filtered.length} products`);
-    }
-
-    console.log(`Final filtered count: ${filtered.length}`);
-    setFilteredProducts(filtered);
+    setFilters({
+      brands: selectedBrands,
+      categories: selectedProducts, // categories
+      search: query,
+      inStock: filterInStock
+    });
     setFilterModalVisible(false);
-
-    if (filtered.length === 0) {
-      Alert.alert(
-        "No Results",
-        "No products match your current filters. Try adjusting your selection."
-      );
-    }
-  }
+  };
 
   // Clear all filters
-  function clearFilters() {
+  const clearFilters = () => {
     console.log('[OrderDetails] Clearing all filters');
     setSelectedBrands([]);
     setSelectedProducts([]);
-    setFilterSearchQuery("");
-    setQuery("");
-    setFilteredProducts(allProducts);
+    setFilterQuery('');
+    setFilterInStock(false);
+    setQuery(''); // Clear main search query as well
+
+    setFilters({
+      brands: [],
+      categories: [], // categories
+      search: '',
+      inStock: false
+    });
     setFilterModalVisible(false);
-  }
+  };
 
   // Toggle brand selection
   function toggleBrandSelection(brand) {
@@ -292,14 +381,14 @@ export default function OrderDetails() {
     });
   }
 
-  // Toggle product selection
-  function toggleProductSelection(product) {
+  // Toggle product (category) selection
+  function toggleCategorySelection(category) {
     setSelectedProducts(prev => {
-      const isSelected = prev.includes(product);
+      const isSelected = prev.includes(category);
       if (isSelected) {
-        return prev.filter(p => p !== product);
+        return prev.filter(p => p !== category);
       } else {
-        return [...prev, product];
+        return [...prev, category];
       }
     });
   }
@@ -375,7 +464,7 @@ export default function OrderDetails() {
 
   // Initial load and network monitoring
   useEffect(() => {
-    fetchAllProducts();
+    loadFilterOptions();
 
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(state.isConnected);
@@ -386,6 +475,12 @@ export default function OrderDetails() {
       lastProcessedBarcode.current = null;
     };
   }, []);
+
+  // Effect to fetch products when filters change
+  useEffect(() => {
+    console.log('[OrderDetails] Filters changed, fetching products...');
+    fetchAllProducts();
+  }, [filters]);
 
   // Handle hardware back button
   useFocusEffect(
@@ -400,6 +495,32 @@ export default function OrderDetails() {
       return () => subscription.remove();
     }, [cart]) // Re-register when cart changes to have latest cart state in handleBackPress
   );
+
+  // Load pending orders count on focus
+  useFocusEffect(
+    useCallback(() => {
+      loadPendingOrdersCount();
+    }, [])
+  );
+
+  const loadPendingOrdersCount = async () => {
+    try {
+      const existingOrders = await AsyncStorage.getItem('placed_orders');
+      if (existingOrders) {
+        const orders = JSON.parse(existingOrders);
+        // Filter: Count only if status is NOT uploaded
+        const pendingCount = orders.filter(o =>
+          !o.uploadStatus ||
+          (o.uploadStatus !== 'uploaded' && o.uploadStatus !== 'uploaded to server')
+        ).length;
+        setPendingOrderCount(pendingCount);
+      } else {
+        setPendingOrderCount(0);
+      }
+    } catch (error) {
+      console.error('[OrderDetails] Error loading pending orders:', error);
+    }
+  };
 
   // Handle barcode scanning - IMPROVED VERSION
   useEffect(() => {
@@ -423,38 +544,49 @@ export default function OrderDetails() {
         });
       }, 500);
     }
-  }, [scanned, timestamp]);
+  }, [scanned, timestamp, handleScannedBarcode]);
 
   // Handle search by text
   const handleSearch = () => {
     console.log('[OrderDetails] Handle search called');
-    applyFilters();
+    // Update the 'search' part of the filters state
+    setFilters(prev => ({ ...prev, search: query }));
   };
 
   // Handle scanned barcode - ENHANCED VERSION with highlighting and scrolling
-  async function handleScannedBarcode(code) {
-    console.log('[OrderDetails] Processing barcode:', code);
+  const handleScannedBarcode = useCallback(async (code) => {
+    console.log('🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴');
+    console.log('[OrderDetails] 📱 BARCODE SCANNED:', code);
 
     // First, check in already loaded products
     let productToShow = allProducts.find((p) =>
       p.barcode === code || p.code === code
     );
 
+    console.log('[OrderDetails] 🔍 Searching in loaded products...');
     if (productToShow) {
-      console.log('[OrderDetails] Product found in loaded products:', productToShow.name);
+      console.log('[OrderDetails] ✅ Found in loaded products!');
+      console.log('[OrderDetails] Product Name:', productToShow.name);
+      console.log('[OrderDetails] Product ID:', productToShow.id);
+      console.log('[OrderDetails] Product Code:', productToShow.code);
+      console.log('[OrderDetails] Product Barcode:', productToShow.barcode);
+    } else {
+      console.log('[OrderDetails] ❌ NOT found in loaded products');
+    }
 
+    if (productToShow) {
       // Ensure it's in the filtered list (might be filtered out)
-      const isInFilteredList = filteredProducts.find(p => p.id === productToShow.id);
-      if (!isInFilteredList) {
-        console.log('[OrderDetails] Product was filtered out, adding to view...');
-        setFilteredProducts(prev => [productToShow, ...prev]);
-      }
+      setFilteredProducts(prev => {
+        const exists = prev.find(p => p.id === productToShow.id);
+        return exists ? prev : [productToShow, ...prev];
+      });
 
       // Highlight and scroll to the product
       highlightAndScrollToProduct(productToShow);
 
       // Open quantity modal
       openQuantityModal(productToShow);
+      console.log('🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴');
       return;
     }
 
@@ -467,29 +599,67 @@ export default function OrderDetails() {
     if (fetchedProduct) {
       console.log('[OrderDetails] Product found in database:', fetchedProduct.name);
 
-      // Transform to match the expected structure if needed
-      const productCard = {
-        ...fetchedProduct,
-        id: fetchedProduct.id || fetchedProduct.code,
-        photos: fetchedProduct.photos || [],
-        // Ensure all required fields are present
-        mrp: fetchedProduct.mrp || 0,
-        price: fetchedProduct.price || 0,
-        stock: fetchedProduct.stock || 0,
-        brand: fetchedProduct.brand || '',
-        unit: fetchedProduct.unit || '',
-        productCategory: fetchedProduct.productCategory || fetchedProduct.category || '',
-      };
+      // CRITICAL FIX: Check if this product already exists in allProducts or filteredProducts
+      // to ensure we use the SAME ID and avoid duplicates
+      let existingProduct = allProducts.find(p =>
+        p.code === fetchedProduct.code ||
+        p.barcode === code ||
+        p.id.startsWith(`${fetchedProduct.code}_`)
+      );
 
-      // Add to both lists if not already there
-      const existsInAll = allProducts.find(p => p.id === productCard.id || p.code === productCard.code);
-      if (!existsInAll) {
-        setAllProducts(prev => [productCard, ...prev]);
+      if (!existingProduct) {
+        existingProduct = filteredProducts.find(p =>
+          p.code === fetchedProduct.code ||
+          p.barcode === code ||
+          p.id.startsWith(`${fetchedProduct.code}_`)
+        );
       }
 
-      const existsInFiltered = filteredProducts.find(p => p.id === productCard.id || p.code === productCard.code);
-      if (!existsInFiltered) {
-        setFilteredProducts(prev => [productCard, ...prev]);
+      let productCard;
+
+      if (existingProduct) {
+        // Use the existing product card to ensure ID consistency
+        console.log('[OrderDetails] Found existing product in list, using its ID:', existingProduct.id);
+        productCard = existingProduct;
+      } else {
+        // Product not in list yet, create new card with consistent ID
+        // Match the ID format from batchService.transformBatchesToCards
+        let generatedId;
+        if (fetchedProduct.batchId || fetchedProduct.barcode) {
+          // Has batch info - use format: code_barcode
+          generatedId = `${fetchedProduct.code}_${fetchedProduct.barcode || fetchedProduct.batchId}`;
+        } else {
+          // No batch info - just use code
+          generatedId = fetchedProduct.code;
+        }
+
+        productCard = {
+          ...fetchedProduct,
+          id: generatedId,
+          photos: fetchedProduct.photos || [],
+          // Ensure all required fields are present
+          mrp: fetchedProduct.mrp || 0,
+          price: fetchedProduct.price || 0,
+          stock: fetchedProduct.stock || 0,
+          brand: fetchedProduct.brand || '',
+          unit: fetchedProduct.unit || '',
+          productCategory: fetchedProduct.productCategory || fetchedProduct.category || '',
+        };
+
+        console.log('[OrderDetails] Generated new product card with ID:', productCard.id);
+
+        // Add to both lists
+        setAllProducts(prev => {
+          const exists = prev.find(p => p.id === productCard.id);
+          if (!exists) console.log('[OrderDetails] Adding new item to AllProducts:', productCard.id);
+          return exists ? prev : [productCard, ...prev];
+        });
+
+        setFilteredProducts(prev => {
+          const exists = prev.find(p => p.id === productCard.id);
+          if (!exists) console.log('[OrderDetails] Adding new item to filteredProducts:', productCard.id);
+          return exists ? prev : [productCard, ...prev];
+        });
       }
 
       // Highlight and scroll to product
@@ -500,7 +670,7 @@ export default function OrderDetails() {
     } else {
       console.log('[OrderDetails] Product not found in database');
     }
-  }
+  }, [allProducts, filteredProducts, addToCart]); // Dependencies: product lists and addToCart
 
   // Highlight and scroll to a product in the list
   function highlightAndScrollToProduct(product) {
@@ -516,16 +686,25 @@ export default function OrderDetails() {
 
     // Scroll to the product
     setTimeout(() => {
-      const index = filteredProducts.findIndex(p => p.id === product.id);
-      if (index >= 0 && flatListRef.current) {
-        console.log('[OrderDetails] Scrolling to index:', index);
-        flatListRef.current.scrollToIndex({
-          index: index,
-          animated: true,
-          viewPosition: 0.5 // Center in view
-        });
-      }
-    }, 300); // Small delay to ensure the product is in the list
+      // Use a functional update to get the latest list if needed, but we can't inside scrollTo.
+      // Instead, we trust the list has updated. 
+      // We need to find the index IN THE LIST THAT FLATLIST IS RENDERING.
+      // Since we just updated state, we might need to wait for render.
+      // 300ms is usually enough.
+
+      // We will look up the index fresh from the ref if possible or just use the current state
+      // But the state 'filteredProducts' here is from the closure when this function was defined.
+      // This is the bug. The closure has STALE filteredProducts.
+
+      // FIX: We can't easily access the "future" state here.
+      // But we can trigger a side-effect.
+
+      // Let's rely on the fact that if we just added it, it's at index 0 (if we prepended).
+      // If it changed position, we need to know.
+
+      // Better approach: Don't use closure state.
+      // We will use the 'highlightedProductId' effect to handle scrolling.
+    }, 300);
   }
 
   function openQuantityModal(product) {
@@ -550,32 +729,126 @@ export default function OrderDetails() {
       }
       addToCart(selectedProduct, qty);
       closeQuantityModal();
-      Alert.alert("Success", `${selectedProduct.name} added to cart with quantity ${qty}`);
     }
   }
 
-  function addToCart(product, quantity = 1) {
-    console.log('[OrderDetails] Adding to cart:', product.name, 'qty:', quantity);
-    setCart((c) => {
-      const idx = c.findIndex((it) => it.product.id === product.id);
-      if (idx >= 0) {
-        const next = [...c];
-        next[idx].qty += quantity;
-        console.log('[OrderDetails] Updated cart quantity:', next[idx].qty);
-        return next;
+  // Key for persisting temporary cart
+  const TEMP_CART_KEY = 'temp_active_cart';
+
+  // Load cart from storage on mount
+  useEffect(() => {
+    async function loadCart() {
+      try {
+        const savedCart = await AsyncStorage.getItem(TEMP_CART_KEY);
+        if (savedCart) {
+          const parsedCart = JSON.parse(savedCart);
+          console.log('[OrderDetails] 📥 Loaded persisted cart:', parsedCart.length, 'items');
+          setCart(parsedCart);
+          cartRef.current = parsedCart;
+        }
+      } catch (error) {
+        console.error('[OrderDetails] Error loading cart:', error);
       }
-      console.log('[OrderDetails] Added new item to cart');
-      return [{ product, qty: quantity }, ...c];
-    });
-  }
+    }
+    loadCart();
+  }, []);
 
-  function changeQty(productId, qty) {
-    setCart((c) => c.map((it) => (it.product.id === productId ? { ...it, qty: Math.max(0, qty) } : it)).filter((it) => it.qty > 0));
-  }
+  // Save cart to storage whenever it changes (via helper)
+  const saveCartToStorage = async (newCart) => {
+    try {
+      await AsyncStorage.setItem(TEMP_CART_KEY, JSON.stringify(newCart));
+    } catch (error) {
+      console.error('[OrderDetails] Error saving cart:', error);
+    }
+  };
 
-  function removeItem(productId) {
-    setCart((c) => c.filter((it) => it.product.id !== productId));
-  }
+
+
+  // Cart Animation State
+  const cartScale = useRef(new Animated.Value(1)).current;
+
+  const triggerCartAnimation = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(cartScale, {
+        toValue: 1.5,
+        duration: 200, // Faster pop
+        useNativeDriver: true,
+      }),
+      Animated.spring(cartScale, {
+        toValue: 1,
+        friction: 4,
+        tension: 40,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
+  const addToCart = useCallback((product, quantity = 1, startCoords = null) => {
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('[OrderDetails] ➕ ADD TO CART CALLED');
+
+    // Trigger Flying Animation first
+    if (startCoords) {
+      triggerFlyAnimation(startCoords.x, startCoords.y);
+    } else {
+      triggerFlyAnimation(); // Defaults to center (for modal)
+    }
+
+    // CRITICAL FIX: Use cartRef as source of truth
+    const currentCart = [...cartRef.current];
+    const idx = currentCart.findIndex((it) => it.product.id === product.id);
+
+    let newCart;
+    if (idx >= 0) {
+      // Item already exists - update quantity
+      console.log('[OrderDetails] ✏️  Updating existing item');
+      newCart = [...currentCart];
+      newCart[idx] = {
+        ...newCart[idx],
+        qty: newCart[idx].qty + quantity
+      };
+    } else {
+      // New item - add to beginning
+      console.log('[OrderDetails] ➕ Adding NEW item to cart');
+      newCart = [{ product, qty: quantity }, ...currentCart];
+    }
+
+    // Update state, ref, and storage
+    cartRef.current = newCart;
+    setCart(newCart);
+    saveCartToStorage(newCart);
+  }, [triggerCartAnimation]);
+
+  const changeQty = useCallback((productId, qty, event) => {
+    const currentCart = [...cartRef.current];
+    const item = currentCart.find((it) => it.product.id === productId);
+    const oldQty = item ? item.qty : 0;
+
+    // Check if increasing quantity
+    if (qty > oldQty) {
+      // Trigger animation
+      let startCoords = null;
+      if (event && event.nativeEvent) {
+        startCoords = { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY };
+      }
+      triggerFlyAnimation(startCoords?.x, startCoords?.y);
+    }
+
+    const newCart = currentCart.map((it) => (it.product.id === productId ? { ...it, qty: Math.max(0, qty) } : it)).filter((it) => it.qty > 0);
+
+    cartRef.current = newCart;
+    setCart(newCart);
+    saveCartToStorage(newCart);
+  }, []);
+
+  const removeItem = useCallback((productId) => {
+    const currentCart = [...cartRef.current];
+    const newCart = currentCart.filter((it) => it.product.id !== productId);
+
+    cartRef.current = newCart;
+    setCart(newCart);
+    saveCartToStorage(newCart);
+  }, []);
 
   function toggleSheet(open) {
     setSheetOpen(open);
@@ -602,7 +875,6 @@ export default function OrderDetails() {
   }
 
   function openDetailsModal(batchCard) {
-    console.log('[OrderDetails] Opening details for:', batchCard.name);
     setSelectedBatchDetails(batchCard);
     setCurrentPhotoIndex(0);
     setDetailsModalVisible(true);
@@ -614,8 +886,7 @@ export default function OrderDetails() {
     setCurrentPhotoIndex(0);
   }
 
-  function handleBackPress() {
-    // If cart has items, show confirmation
+  function handleBackPress(targetRoute = "/Order/Entry") {
     if (cart.length > 0) {
       Alert.alert(
         "Cart Not Empty",
@@ -628,9 +899,11 @@ export default function OrderDetails() {
           },
           {
             text: "Discard Cart",
-            onPress: () => {
+            onPress: async () => {
               setCart([]);
-              router.replace("/Order/Entry");
+              cartRef.current = [];
+              await AsyncStorage.removeItem(TEMP_CART_KEY);
+              router.replace(targetRoute);
             },
             style: "destructive"
           },
@@ -641,8 +914,7 @@ export default function OrderDetails() {
         ]
       );
     } else {
-      // Cart is empty, just go back to Entry
-      router.replace("/Order/Entry");
+      router.replace(targetRoute);
     }
   }
 
@@ -681,12 +953,16 @@ export default function OrderDetails() {
       orders.push(order);
       await AsyncStorage.setItem('placed_orders', JSON.stringify(orders));
 
+      // Clear cart and storage
       setCart([]);
+      cartRef.current = [];
+      await AsyncStorage.removeItem(TEMP_CART_KEY);
+
       toggleSheet(false);
 
       Alert.alert(
         "Order Placed Successfully",
-        `Order placed for ${customer}\nTotal: ₹ ${order.total.toFixed(2)}`,
+        `Order placed for ${customer}\nTotal:  ${order.total.toFixed(2)}`,
         [
           {
             text: "View Orders",
@@ -752,33 +1028,15 @@ export default function OrderDetails() {
 
   const itemCount = cart.length;
   const total = cart.reduce((s, it) => s + it.qty * it.product.price, 0);
-  const activeFiltersCount = selectedBrands.length + selectedProducts.length;
+  const activeFiltersCount = selectedBrands.length + selectedProducts.length + (filterInStock ? 1 : 0);
 
   // Get filtered lists for filter modal
-  const getFilteredBrands = () => {
-    if (!filterSearchQuery.trim()) return availableBrands;
-    const search = filterSearchQuery.toLowerCase();
-    return availableBrands.filter(brand =>
-      brand.toLowerCase().includes(search)
+  const getFilteredOptions = (options, currentFilterQuery) => {
+    if (!currentFilterQuery.trim()) return options;
+    const search = currentFilterQuery.toLowerCase();
+    return options.filter(option =>
+      option.toLowerCase().includes(search)
     );
-  };
-
-  const getFilteredProductNames = () => {
-    if (!filterSearchQuery.trim()) return availableProducts;
-    const search = filterSearchQuery.toLowerCase();
-    return availableProducts.filter(product =>
-      product.toLowerCase().includes(search)
-    );
-  };
-
-  // Get count for each filter option
-  const getBrandCount = (brand) => {
-    return allProducts.filter(p => (p.brand || '').trim() === brand).length;
-  };
-
-  // Changed to get category count instead of product name count
-  const getProductCount = (category) => {
-    return allProducts.filter(p => (p.productCategory || '').trim() === category).length;
   };
 
   return (
@@ -822,6 +1080,12 @@ export default function OrderDetails() {
           <View style={styles.actionButtonsRow}>
             <TouchableOpacity
               style={styles.actionIconButton}
+              onPress={() => handleBackPress("/(tabs)/Home")}
+            >
+              <Ionicons name="home" size={20} color={Colors.primary.main} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionIconButton}
               onPress={() => {
                 console.log('[OrderDetails] Scanner button pressed');
                 router.push({
@@ -856,22 +1120,31 @@ export default function OrderDetails() {
               <Ionicons name="refresh" size={20} color={Colors.primary.main} />
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.actionIconButton}
+              style={[styles.actionIconButton, pendingOrderCount > 0 && styles.actionIconButtonActive]}
               onPress={() => {
                 console.log('[OrderDetails] View Orders button pressed');
                 router.push("/Order/PlaceOrder");
               }}
             >
-              <Ionicons name="receipt-outline" size={20} color={Colors.primary.main} />
+              <Ionicons name="receipt-outline" size={20} color={pendingOrderCount > 0 ? "#FFF" : Colors.primary.main} />
+              {pendingOrderCount > 0 && (
+                <View style={styles.cartBadge}>
+                  <Text style={styles.cartBadgeText}>{pendingOrderCount}</Text>
+                </View>
+              )}
             </TouchableOpacity>
             <TouchableOpacity
+              ref={cartButtonRef}
               style={[styles.actionIconButton, itemCount > 0 && styles.actionIconButtonActive]}
+              onLayout={measureCartPosition} // Capture layout on mount/change
               onPress={() => {
                 console.log('[OrderDetails] Cart button pressed');
                 toggleSheet(true);
               }}
             >
-              <Ionicons name="cart-outline" size={22} color={itemCount > 0 ? "#FFF" : Colors.primary.main} />
+              <Animated.View style={{ transform: [{ scale: cartScale }] }}>
+                <Ionicons name="cart-outline" size={22} color={itemCount > 0 ? "#FFF" : Colors.primary.main} />
+              </Animated.View>
               {itemCount > 0 && (
                 <View style={styles.cartBadge}>
                   <Text style={styles.cartBadgeText}>{itemCount}</Text>
@@ -896,14 +1169,8 @@ export default function OrderDetails() {
               {query.length > 0 && (
                 <TouchableOpacity onPress={() => {
                   setQuery("");
-                  let filtered = [...allProducts];
-                  if (selectedBrands.length > 0) {
-                    filtered = filtered.filter(p => selectedBrands.includes((p.brand || '').trim()));
-                  }
-                  if (selectedProducts.length > 0) {
-                    filtered = filtered.filter(p => selectedProducts.includes((p.name || '').trim()));
-                  }
-                  setFilteredProducts(filtered);
+                  // Trigger search with empty query
+                  setFilters(prev => ({ ...prev, search: '' }));
                 }}>
                   <Ionicons name="close-circle" size={18} color={Colors.text.tertiary} />
                 </TouchableOpacity>
@@ -939,13 +1206,24 @@ export default function OrderDetails() {
                   <View key={product} style={styles.activeFilterChip}>
                     <Text style={styles.activeFilterChipText} numberOfLines={1}>{product}</Text>
                     <TouchableOpacity onPress={() => {
-                      toggleProductSelection(product);
+                      toggleCategorySelection(product);
                       setTimeout(() => applyFilters(), 100);
                     }}>
                       <Ionicons name="close-circle" size={16} color={Colors.primary.main} />
                     </TouchableOpacity>
                   </View>
                 ))}
+                {filterInStock && (
+                  <View key="inStock" style={styles.activeFilterChip}>
+                    <Text style={styles.activeFilterChipText}>In Stock</Text>
+                    <TouchableOpacity onPress={() => {
+                      setFilterInStock(false);
+                      setTimeout(() => applyFilters(), 100);
+                    }}>
+                      <Ionicons name="close-circle" size={16} color={Colors.primary.main} />
+                    </TouchableOpacity>
+                  </View>
+                )}
               </ScrollView>
               <TouchableOpacity onPress={clearFilters} style={styles.clearFiltersBtn}>
                 <Text style={styles.clearFiltersBtnText}>Clear</Text>
@@ -968,6 +1246,7 @@ export default function OrderDetails() {
             <FlatList
               ref={flatListRef}
               data={filteredProducts}
+              extraData={{ cart, editingQty, highlightedProductId }}
               keyExtractor={(item) => item.id.toString()}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
@@ -1013,7 +1292,7 @@ export default function OrderDetails() {
                   return (
                     <View style={{ padding: 20, alignItems: 'center' }}>
                       <Text style={{ color: Colors.text.tertiary, fontSize: 12 }}>
-                        All products loaded ({loadedCount} items)
+                        All products loaded ({filteredProducts.length} items)
                       </Text>
                     </View>
                   );
@@ -1040,6 +1319,12 @@ export default function OrderDetails() {
                 const stockQty = item.stock || 0;
                 const isInCart = currentQty > 0;
                 const isHighlighted = highlightedProductId === item.id;
+
+                if (isInCart) {
+                  console.log(`[OrderDetails] Render Item ${item.id} IS IN CART.`);
+                } else if (cart.length > 0 && item.id.includes('_')) {
+                  console.log(`[OrderDetails] Render Item ${item.id} NOT in cart. Cart IDs:`, cart.map(c => c.product.id));
+                }
 
                 return (
                   <CodeItem
@@ -1082,7 +1367,7 @@ export default function OrderDetails() {
               {/* Filter Info */}
               <View style={styles.filterInfo}>
                 <Text style={styles.filterInfoText}>
-                  {availableBrands.length} Brands • {availableProducts.length} Products
+                  {filterOptions.brands.length} Brands • {filterOptions.products.length} Categories
                 </Text>
               </View>
 
@@ -1097,43 +1382,52 @@ export default function OrderDetails() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.filterTab, activeFilterTab === "product" && styles.filterTabActive]}
-                  onPress={() => setActiveFilterTab("product")}
+                  style={[styles.filterTab, activeFilterTab === "category" && styles.filterTabActive]}
+                  onPress={() => setActiveFilterTab("category")}
                 >
-                  <Text style={[styles.filterTabText, activeFilterTab === "product" && styles.filterTabTextActive]}>
-                    Product {selectedProducts.length > 0 && `(${selectedProducts.length})`}
+                  <Text style={[styles.filterTabText, activeFilterTab === "category" && styles.filterTabTextActive]}>
+                    Category {selectedProducts.length > 0 && `(${selectedProducts.length})`}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterTab, activeFilterTab === "options" && styles.filterTabActive]}
+                  onPress={() => setActiveFilterTab("options")}
+                >
+                  <Text style={[styles.filterTabText, activeFilterTab === "options" && styles.filterTabTextActive]}>
+                    Options
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Filter Search */}
-              <View style={styles.filterSearchBar}>
-                <Ionicons name="search" size={18} color={Colors.text.tertiary} />
-                <TextInput
-                  style={styles.filterSearchInput}
-                  placeholder={`Search ${activeFilterTab}s...`}
-                  placeholderTextColor={Colors.text.tertiary}
-                  value={filterSearchQuery}
-                  onChangeText={setFilterSearchQuery}
-                />
-                {filterSearchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setFilterSearchQuery("")}>
-                    <Ionicons name="close-circle" size={16} color={Colors.text.tertiary} />
-                  </TouchableOpacity>
-                )}
-              </View>
+              {/* Filter Search - Hide for Options tab */}
+              {activeFilterTab !== 'options' && (
+                <View style={styles.filterSearchBar}>
+                  <Ionicons name="search" size={18} color={Colors.text.tertiary} />
+                  <TextInput
+                    style={styles.filterSearchInput}
+                    placeholder={`Search ${activeFilterTab}s...`}
+                    placeholderTextColor={Colors.text.tertiary}
+                    value={filterQuery}
+                    onChangeText={setFilterQuery}
+                  />
+                  {filterQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => setFilterQuery("")}>
+                      <Ionicons name="close-circle" size={16} color={Colors.text.tertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
 
               {/* Filter List */}
               <ScrollView style={styles.filterList} showsVerticalScrollIndicator={false}>
                 {activeFilterTab === "brand" && (
                   <>
-                    {getFilteredBrands().length === 0 ? (
+                    {getFilteredOptions(filterOptions.brands, filterQuery).length === 0 ? (
                       <View style={styles.noResultsContainer}>
                         <Text style={styles.noResultsText}>No brands found</Text>
                       </View>
                     ) : (
-                      getFilteredBrands().map(brand => {
-                        const productCount = getBrandCount(brand);
+                      getFilteredOptions(filterOptions.brands, filterQuery).map(brand => {
                         const isSelected = selectedBrands.includes(brand);
                         return (
                           <TouchableOpacity
@@ -1153,7 +1447,6 @@ export default function OrderDetails() {
                               </View>
                               <Text style={styles.filterItemText}>{brand}</Text>
                             </View>
-                            <Text style={styles.filterItemCount}>{productCount}</Text>
                           </TouchableOpacity>
                         );
                       })
@@ -1161,40 +1454,47 @@ export default function OrderDetails() {
                   </>
                 )}
 
-                {activeFilterTab === "product" && (
+                {activeFilterTab === 'category' && (
                   <>
-                    {getFilteredProductNames().length === 0 ? (
+                    {getFilteredOptions(filterOptions.products, filterQuery).length === 0 ? (
                       <View style={styles.noResultsContainer}>
-                        <Text style={styles.noResultsText}>No products found</Text>
+                        <Text style={styles.noResultsText}>No categories found</Text>
                       </View>
                     ) : (
-                      getFilteredProductNames().map(product => {
-                        const productCount = getProductCount(product);
-                        const isSelected = selectedProducts.includes(product);
+                      getFilteredOptions(filterOptions.products, filterQuery).map((category, index) => {
+                        const isSelected = selectedProducts.includes(category);
                         return (
                           <TouchableOpacity
-                            key={product}
+                            key={index}
                             style={styles.filterItem}
-                            onPress={() => toggleProductSelection(product)}
+                            onPress={() => toggleCategorySelection(category)}
                             activeOpacity={0.7}
                           >
                             <View style={styles.filterItemLeft}>
-                              <View style={[
-                                styles.checkbox,
-                                isSelected && styles.checkboxChecked
-                              ]}>
-                                {isSelected && (
-                                  <Ionicons name="checkmark" size={16} color="#FFF" />
-                                )}
+                              <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
+                                {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
                               </View>
-                              <Text style={styles.filterItemText} numberOfLines={2}>{product}</Text>
+                              <Text style={styles.filterItemText}>{category}</Text>
                             </View>
-                            <Text style={styles.filterItemCount}>{productCount}</Text>
                           </TouchableOpacity>
                         );
                       })
                     )}
                   </>
+                )}
+
+                {activeFilterTab === 'options' && (
+                  <TouchableOpacity
+                    style={styles.filterItem}
+                    onPress={() => setFilterInStock(!filterInStock)}
+                  >
+                    <View style={styles.filterItemLeft}>
+                      <View style={[styles.checkbox, filterInStock && styles.checkboxChecked]}>
+                        {filterInStock && <Ionicons name="checkmark" size={16} color="#FFF" />}
+                      </View>
+                      <Text style={styles.filterItemText}>In Stock Only</Text>
+                    </View>
+                  </TouchableOpacity>
                 )}
               </ScrollView>
 
@@ -1252,10 +1552,10 @@ export default function OrderDetails() {
                     <View style={styles.cartItemInfo}>
                       <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
                       <Text style={styles.cartItemPrice}>
-                        {item.qty} x ₹{item.product.price.toFixed(2)}
+                        {item.qty} x {item.product.price.toFixed(2)}
                       </Text>
                     </View>
-                    <Text style={styles.cartItemTotal}>₹{(item.qty * item.product.price).toFixed(2)}</Text>
+                    <Text style={styles.cartItemTotal}>{(item.qty * item.product.price).toFixed(2)}</Text>
                     <TouchableOpacity
                       onPress={() => removeItem(item.product.id)}
                       style={styles.removeCartItem}
@@ -1271,7 +1571,7 @@ export default function OrderDetails() {
           <View style={styles.sheetFooter}>
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total Amount</Text>
-              <Text style={styles.totalValue}>₹ {total.toFixed(2)}</Text>
+              <Text style={styles.totalValue}> {total.toFixed(2)}</Text>
             </View>
             <TouchableOpacity
               style={[styles.checkoutButton, cart.length === 0 && styles.disabledButton]}
@@ -1290,6 +1590,21 @@ export default function OrderDetails() {
             </TouchableOpacity>
           </View>
         </Animated.View>
+
+        {/* Flying Items Animation Layer */}
+        {flyingItems.map(item => (
+          <FlyingItem
+            key={item.id}
+            startX={item.startX}
+            startY={item.startY}
+            endX={cartPosition.x}
+            endY={cartPosition.y}
+            onComplete={() => {
+              setFlyingItems(prev => prev.filter(i => i.id !== item.id));
+              triggerCartAnimation();
+            }}
+          />
+        ))}
 
         {/* Quantity Selection Modal */}
         <Modal
@@ -1314,7 +1629,7 @@ export default function OrderDetails() {
                       {selectedProduct.name}
                     </Text>
                     <Text style={styles.quantityProductPrice}>
-                      ₹ {selectedProduct.price.toFixed(2)} per unit
+                      {selectedProduct.price.toFixed(2)} per unit
                     </Text>
                   </View>
 
@@ -1354,7 +1669,7 @@ export default function OrderDetails() {
                   <View style={styles.quantityTotalContainer}>
                     <Text style={styles.quantityTotalLabel}>Total:</Text>
                     <Text style={styles.quantityTotalValue}>
-                      ₹ {((parseInt(tempQuantity, 10) || 0) * selectedProduct.price).toFixed(2)}
+                      {((parseInt(tempQuantity, 10) || 0) * selectedProduct.price).toFixed(2)}
                     </Text>
                   </View>
 
@@ -1405,14 +1720,18 @@ export default function OrderDetails() {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.detailsModalContent}>
+              <View style={styles.modalHandleContainer}>
+                <View style={styles.modalHandle} />
+              </View>
+
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Batch Details</Text>
-                <TouchableOpacity onPress={closeDetailsModal}>
-                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                <Text style={styles.modalTitle}>Product Details</Text>
+                <TouchableOpacity onPress={closeDetailsModal} style={styles.closeModalCircle}>
+                  <Ionicons name="close" size={20} color={Colors.text.primary} />
                 </TouchableOpacity>
               </View>
 
-              <ScrollView showsVerticalScrollIndicator={false}>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailsScrollContent}>
                 {selectedBatchDetails && (
                   <>
                     {/* Image Carousel */}
@@ -1453,74 +1772,109 @@ export default function OrderDetails() {
                     )}
 
                     {/* Product Info */}
-                    <View style={styles.detailsSection}>
+                    <View style={styles.detailsInfoCard}>
                       <Text style={styles.detailsProductName}>{selectedBatchDetails.name}</Text>
-                      <Text style={styles.detailsProductMeta}>
-                        Code: {selectedBatchDetails.code} • {selectedBatchDetails.brand}
-                      </Text>
+                      <View style={styles.detailsMetaRow}>
+                        <View style={styles.detailsMetaChip}>
+                          <Text style={styles.detailsMetaLabel}>Code:</Text>
+                          <Text style={styles.detailsMetaValue}>{selectedBatchDetails.code}</Text>
+                        </View>
+                        {selectedBatchDetails.brand && (
+                          <View style={styles.detailsMetaChip}>
+                            <Text style={styles.detailsMetaValue}>{selectedBatchDetails.brand}</Text>
+                          </View>
+                        )}
+                      </View>
                       {selectedBatchDetails.barcode && (
-                        <Text style={styles.detailsBarcode}>Barcode: {selectedBatchDetails.barcode}</Text>
+                        <View style={styles.barcodeContainer}>
+                          <Ionicons name="barcode-outline" size={16} color={Colors.text.secondary} />
+                          <Text style={styles.detailsBarcode}>{selectedBatchDetails.barcode}</Text>
+                        </View>
                       )}
                     </View>
 
                     {/* Price Information */}
                     <View style={styles.detailsSection}>
-                      <Text style={styles.detailsSectionTitle}>Price Information</Text>
+                      <Text style={styles.detailsSectionTitle}>Price Details</Text>
                       <View style={styles.priceGrid}>
                         <View style={styles.priceItem}>
                           <Text style={styles.priceLabel}>MRP</Text>
-                          <Text style={styles.priceValue}>₹ {selectedBatchDetails.mrp?.toFixed(2) || '0.00'}</Text>
+                          <Text style={styles.priceValue}>{selectedBatchDetails.mrp?.toFixed(2) || '0.00'}</Text>
+                        </View>
+                        <View style={[styles.priceItem, styles.priceItemHighlight]}>
+                          <Text style={[styles.priceLabel, { color: Colors.primary.main }]}>Rate</Text>
+                          <Text style={[styles.priceValue, { color: Colors.primary.main }]}>{selectedBatchDetails.price?.toFixed(2) || '0.00'}</Text>
                         </View>
                         <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>RETAIL</Text>
-                          <Text style={styles.priceValue}>₹ {selectedBatchDetails.retail?.toFixed(2) || '0.00'}</Text>
+                          <Text style={styles.priceLabel}>Retail</Text>
+                          <Text style={styles.priceValue}>{selectedBatchDetails.retail?.toFixed(2) || '0.00'}</Text>
                         </View>
                         <View style={styles.priceItem}>
                           <Text style={styles.priceLabel}>D.P</Text>
-                          <Text style={styles.priceValue}>₹ {selectedBatchDetails.dp?.toFixed(2) || '0.00'}</Text>
+                          <Text style={styles.priceValue}>{selectedBatchDetails.dp?.toFixed(2) || '0.00'}</Text>
                         </View>
                         <View style={styles.priceItem}>
                           <Text style={styles.priceLabel}>CB</Text>
-                          <Text style={styles.priceValue}>₹ {selectedBatchDetails.cb?.toFixed(2) || '0.00'}</Text>
+                          <Text style={styles.priceValue}>{selectedBatchDetails.cb?.toFixed(2) || '0.00'}</Text>
                         </View>
                         <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>NET RATE</Text>
-                          <Text style={styles.priceValue}>₹ {selectedBatchDetails.netRate?.toFixed(2) || '0.00'}</Text>
+                          <Text style={styles.priceLabel}>Net Rate</Text>
+                          <Text style={styles.priceValue}>{selectedBatchDetails.netRate?.toFixed(2) || '0.00'}</Text>
                         </View>
                         <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>PK SHOP</Text>
-                          <Text style={styles.priceValue}>₹ {selectedBatchDetails.pkShop?.toFixed(2) || '0.00'}</Text>
+                          <Text style={styles.priceLabel}>PK Shop</Text>
+                          <Text style={styles.priceValue}>{selectedBatchDetails.pkShop?.toFixed(2) || '0.00'}</Text>
                         </View>
                       </View>
                     </View>
 
                     {/* Stock Information */}
                     <View style={styles.detailsSection}>
-                      <Text style={styles.detailsSectionTitle}>Stock Information</Text>
-                      <View style={styles.stockInfo}>
-                        <Text style={styles.stockLabel}>Quantity:</Text>
-                        <Text style={styles.stockValue}>{selectedBatchDetails.stock || 0} {selectedBatchDetails.unit}</Text>
+                      <Text style={styles.detailsSectionTitle}>Stock Status</Text>
+                      <View style={styles.stockCard}>
+                        <View style={styles.stockRow}>
+                          <View style={styles.stockIconContainer}>
+                            <Ionicons name="cube" size={20} color={selectedBatchDetails.stock > 0 ? Colors.success.main : Colors.error.main} />
+                          </View>
+                          <View>
+                            <Text style={styles.stockLabel}>Total Stock</Text>
+                            <Text style={[styles.stockValue, { color: selectedBatchDetails.stock > 0 ? Colors.success.main : Colors.error.main }]}>
+                              {selectedBatchDetails.stock || 0} {selectedBatchDetails.unit}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {selectedBatchDetails.expiryDate && selectedBatchDetails.expiryDate !== '1900-01-01' && (
+                          <View style={[styles.stockRow, { borderTopWidth: 1, borderTopColor: Colors.neutral[100], paddingTop: 12, marginTop: 12 }]}>
+                            <View style={[styles.stockIconContainer, { backgroundColor: Colors.warning[50] }]}>
+                              <Ionicons name="calendar" size={20} color={Colors.warning.main} />
+                            </View>
+                            <View>
+                              <Text style={styles.stockLabel}>Expiry Date</Text>
+                              <Text style={styles.stockValueSimple}>{selectedBatchDetails.expiryDate}</Text>
+                            </View>
+                          </View>
+                        )}
                       </View>
-                      {selectedBatchDetails.expiryDate && selectedBatchDetails.expiryDate !== '1900-01-01' && (
-                        <View style={styles.stockInfo}>
-                          <Text style={styles.stockLabel}>Expiry:</Text>
-                          <Text style={styles.stockValue}>{selectedBatchDetails.expiryDate}</Text>
+
+                      {/* Godown Stock Display */}
+                      {selectedBatchDetails.goddowns && selectedBatchDetails.goddowns.length > 0 && (
+                        <View style={{ marginTop: 20 }}>
+                          <Text style={styles.subSectionTitle}>Godown Breakdown</Text>
+                          {selectedBatchDetails.goddowns.map((godown, index) => (
+                            <View key={index} style={styles.goddownItem}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <Ionicons name="business" size={16} color={Colors.text.tertiary} />
+                                <Text style={styles.goddownName}>{godown.name}</Text>
+                              </View>
+                              <View style={styles.godownBadge}>
+                                <Text style={styles.goddownQty}>{godown.quantity} {selectedBatchDetails.unit}</Text>
+                              </View>
+                            </View>
+                          ))}
                         </View>
                       )}
                     </View>
-
-                    {/* Godown Information */}
-                    {selectedBatchDetails.goddowns && selectedBatchDetails.goddowns.length > 0 && (
-                      <View style={styles.detailsSection}>
-                        <Text style={styles.detailsSectionTitle}>Godown Quantities</Text>
-                        {selectedBatchDetails.goddowns.map((godown, index) => (
-                          <View key={index} style={styles.goddownItem}>
-                            <Text style={styles.goddownName}>{godown.name}</Text>
-                            <Text style={styles.goddownQty}>{godown.quantity} {selectedBatchDetails.unit}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
                   </>
                 )}
               </ScrollView>
@@ -1529,7 +1883,7 @@ export default function OrderDetails() {
         </Modal>
 
       </SafeAreaView>
-    </LinearGradient>
+    </LinearGradient >
   );
 }
 
@@ -1554,11 +1908,6 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
       <View style={styles.productInfo}>
         <View style={styles.productHeader}>
           <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
-          <View style={[styles.stockBadge, stockQty === 0 && styles.outOfStockBadge]}>
-            <Text style={[styles.stockText, stockQty === 0 && styles.outOfStockText]}>
-              {stockQty}
-            </Text>
-          </View>
         </View>
 
         <Text style={styles.productMeta}>Code: {item.code} {item.unit ? `• ${item.unit}` : ''}</Text>
@@ -1568,71 +1917,107 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
         {item.brand && <Text style={styles.productBrand}>{item.brand}</Text>}
 
         <View style={styles.priceColumn}>
-          <Text style={styles.mrpLabel}>MRP: ₹ {item.mrp.toFixed(2)}</Text>
-          <Text style={styles.price}>Price: ₹ {item.price.toFixed(2)}</Text>
+          <Text style={styles.mrpLabel}>MRP: {item.mrp.toFixed(2)}</Text>
+          <Text style={styles.price}>Price: {item.price.toFixed(2)}</Text>
         </View>
-
-        <TouchableOpacity
-          style={styles.viewDetailsButton}
-          onPress={() => openDetailsModal(item)}
-        >
-          <Ionicons name="information-circle-outline" size={16} color={Colors.primary.main} />
-          <Text style={styles.viewDetailsText}>Details</Text>
-        </TouchableOpacity>
       </View>
     </View>
 
-    <View style={styles.productActions}>
-      {currentQty > 0 ? (
-        <View style={styles.qtyControl}>
-          <TouchableOpacity
-            style={styles.qtyBtn}
-            onPress={() => changeQty(item.id, currentQty - 1)}
-          >
-            <Ionicons name="remove" size={18} color={Colors.text.primary} />
-          </TouchableOpacity>
+    {/* New Bottom Section */}
+    <View style={styles.productBottomSection}>
+      {/* Details Link - Bottom Right */}
+      <View style={{ alignItems: 'flex-end', marginBottom: 8 }}>
+        <TouchableOpacity
+          onPress={() => openDetailsModal(item)}
+          style={styles.detailsLinkButton}
+        >
+          <Text style={styles.detailsLinkText}>View Details</Text>
+          <Ionicons name="chevron-forward" size={14} color={Colors.primary.main} />
+        </TouchableOpacity>
+      </View>
 
-          <TextInput
-            style={styles.qtyInput}
-            value={displayValue}
-            keyboardType="numeric"
-            selectTextOnFocus={true}
-            onFocus={() => {
-              // Initialize editing value with current quantity when user starts editing
-              setEditingQty(prev => ({ ...prev, [item.id]: String(currentQty) }));
-            }}
-            onChangeText={(text) => {
-              const cleaned = text.replace(/[^0-9]/g, '');
-              const num = parseInt(cleaned, 10);
-              setEditingQty(prev => ({ ...prev, [item.id]: cleaned }));
-              if (!isNaN(num)) changeQty(item.id, num);
-            }}
-            onBlur={() => {
-              setEditingQty(prev => {
-                const n = { ...prev };
-                delete n[item.id];
-                return n;
-              });
-            }}
-          />
+      <View style={styles.actionsContainer}>
+        {/* Stock Display - Top of Add Button */}
+        <View style={styles.stockDisplayContainer}>
+          <Text style={styles.stockLabel}>Stock:</Text>
+          <Text style={[styles.stockCount, stockQty === 0 && styles.outOfStockText]}>
+            {stockQty}
+          </Text>
+        </View>
 
+        {/* Action Buttons */}
+        {currentQty > 0 ? (
+          <View style={styles.qtyControlLarge}>
+            <TouchableOpacity
+              style={styles.qtyBtnLarge}
+              onPress={(e) => changeQty(item.id, currentQty - 1, e)}
+            >
+              <Ionicons name="remove" size={24} color={Colors.text.primary} />
+            </TouchableOpacity>
+
+            <TextInput
+              style={styles.qtyInputLarge}
+              value={displayValue}
+              keyboardType="numeric"
+              selectTextOnFocus={true}
+              onFocus={() => {
+                setEditingQty(prev => ({ ...prev, [item.id]: String(currentQty) }));
+              }}
+              onBlur={() => {
+                setEditingQty(prev => {
+                  const newState = { ...prev };
+                  delete newState[item.id];
+                  return newState;
+                });
+                if (currentQty === 0) changeQty(item.id, 1);
+              }}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9]/g, '');
+                setEditingQty(prev => ({ ...prev, [item.id]: cleaned }));
+                if (cleaned !== "") {
+                  const num = parseInt(cleaned, 10);
+                  if (!isNaN(num)) changeQty(item.id, num);
+                }
+              }}
+            />
+
+            <TouchableOpacity
+              style={styles.qtyBtnLarge}
+              onPress={(e) => changeQty(item.id, currentQty + 1, e)}
+            >
+              <Ionicons name="add" size={24} color={Colors.text.primary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => removeItem(item.id)}
+              style={styles.removeBtnLarge}
+            >
+              <Ionicons name="trash-outline" size={24} color={Colors.error.main} />
+            </TouchableOpacity>
+          </View>
+        ) : (
           <TouchableOpacity
-            style={[styles.qtyBtn, !inStock && { opacity: 0.5 }]}
-            onPress={() => changeQty(item.id, currentQty + 1)}
+            style={[styles.addButtonLarge, !inStock && styles.disabledAddButton]}
+            onPress={(e) => {
+              // We pass event if we want animation from here, but this opens modal
+              // Logic: if we want animation from center (modal), we don't strictly need coords here
+              // But passing them doesn't hurt.
+              addToCart(item);
+            }}
             disabled={!inStock}
           >
-            <Ionicons name="add" size={18} color={Colors.text.primary} />
+            <LinearGradient
+              colors={inStock ? Gradients.primary : [Colors.neutral[200], Colors.neutral[200]]}
+              style={styles.addButtonGradient}
+            >
+              <Ionicons name="cart-outline" size={20} color={inStock ? '#FFF' : Colors.text.tertiary} />
+              <Text style={[styles.addButtonTextLarge, !inStock && { color: Colors.text.tertiary }]}>
+                {inStock ? 'Add to Cart' : 'Out of Stock'}
+              </Text>
+            </LinearGradient>
           </TouchableOpacity>
-        </View>
-      ) : (
-        <TouchableOpacity
-          style={[styles.addButton, !inStock && styles.disabledAddButton]}
-          onPress={addToCart}
-          disabled={!inStock}
-        >
-          <Text style={styles.addButtonText}>{inStock ? 'Add' : 'Out of Stock'}</Text>
-        </TouchableOpacity>
-      )}
+        )}
+      </View>
     </View>
   </View>
 );
@@ -1811,8 +2196,8 @@ const styles = StyleSheet.create({
   productCard: {
     backgroundColor: '#FFF',
     borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
     borderWidth: 1,
     borderColor: Colors.border.light,
     ...Shadows.sm,
@@ -1832,59 +2217,137 @@ const styles = StyleSheet.create({
   productImage: { width: 60, height: 60, borderRadius: BorderRadius.md, backgroundColor: Colors.neutral[50] },
   placeholderImage: { width: 60, height: 60, borderRadius: BorderRadius.md, backgroundColor: Colors.neutral[100], justifyContent: 'center', alignItems: 'center' },
   productInfo: { flex: 1 },
-  productHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  productName: { fontSize: Typography.sizes.base, fontWeight: '600', color: Colors.text.primary, flex: 1, marginRight: 8 },
+  productHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 },
+  productName: { fontSize: Typography.sizes.sm, fontWeight: '600', color: Colors.text.primary, flex: 1, marginRight: 8 },
   stockBadge: {
     backgroundColor: Colors.success[50],
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
     borderRadius: 4,
   },
   outOfStockBadge: { backgroundColor: Colors.error[50] },
-  stockText: { fontSize: 10, fontWeight: '700', color: Colors.success.main },
+  stockText: { fontSize: 9, fontWeight: '700', color: Colors.success.main },
   outOfStockText: { color: Colors.error.main },
-  productMeta: { fontSize: 11, color: Colors.text.tertiary, marginTop: 2 },
-  productBrand: { fontSize: 11, color: Colors.text.secondary, fontStyle: 'italic', marginBottom: 4 },
-  productBarcode: { fontSize: Typography.sizes.sm, color: Colors.text.secondary, marginTop: 2 },
+  productMeta: { fontSize: 10, color: Colors.text.tertiary, marginTop: 1 },
+  productBrand: { fontSize: 10, color: Colors.text.secondary, fontStyle: 'italic', marginBottom: 2 },
+  productBarcode: { fontSize: 10, color: Colors.text.secondary, marginTop: 1 },
   priceColumn: {
-    marginTop: 4,
+    marginTop: 2,
   },
   mrpLabel: {
-    fontSize: Typography.sizes.sm,
+    fontSize: 10,
     color: Colors.text.secondary,
-    marginBottom: 2,
+    marginBottom: 0,
   },
   price: {
-    fontSize: Typography.sizes.base,
+    fontSize: Typography.sizes.sm,
     fontWeight: '700',
     color: Colors.primary.main,
   },
 
-  productActions: { marginTop: Spacing.sm, flexDirection: 'row', justifyContent: 'flex-end' },
+  productActions: { marginTop: 4, flexDirection: 'row', justifyContent: 'flex-end' },
   addButton: {
     backgroundColor: Colors.primary[50],
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
     borderRadius: BorderRadius.full,
   },
   disabledAddButton: { backgroundColor: Colors.neutral[100] },
-  addButtonText: { color: Colors.primary.main, fontWeight: '600', fontSize: Typography.sizes.sm },
+  addButtonText: { color: Colors.primary.main, fontWeight: '600', fontSize: 10 },
 
   qtyControl: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.neutral[50], borderRadius: BorderRadius.md },
-  qtyBtn: { width: 32, height: 32, justifyContent: 'center', alignItems: 'center' },
-  qtyInput: { width: 40, textAlign: 'center', fontSize: Typography.sizes.base, fontWeight: '600', color: Colors.text.primary },
+  qtyBtn: { width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
+  qtyInput: { width: 32, textAlign: 'center', fontSize: Typography.sizes.sm, fontWeight: '600', color: Colors.text.primary },
 
-  viewDetailsButton: {
+  productBottomSection: {
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: Colors.neutral[50],
+  },
+  detailsLinkButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: Spacing.xs,
-    paddingVertical: 4,
-    gap: 4,
+    gap: 2,
+    paddingVertical: 2,
   },
-  viewDetailsText: {
-    fontSize: Typography.sizes.sm,
+  detailsLinkText: {
+    fontSize: 10,
     color: Colors.primary.main,
     fontWeight: '600',
+  },
+  actionsContainer: {
+    gap: 4,
+  },
+  stockDisplayContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginBottom: 2,
+  },
+  stockLabel: {
+    fontSize: 10,
+    color: Colors.text.secondary,
+  },
+  stockCount: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+    color: Colors.success.main,
+  },
+  addButtonLarge: {
+    borderRadius: BorderRadius.md,
+    overflow: 'hidden',
+    ...Shadows.sm,
+  },
+  addButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+    gap: 6,
+  },
+  addButtonTextLarge: {
+    color: '#FFF',
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
+  },
+  qtyControlLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.neutral[50],
+    borderRadius: BorderRadius.md,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  qtyBtnLarge: {
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderRadius: BorderRadius.sm,
+    ...Shadows.sm,
+  },
+  qtyInputLarge: {
+    minWidth: 60,
+    textAlign: 'center',
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#000000',
+    height: 48,
+    textAlignVertical: 'center', // Android vertical centering
+    paddingVertical: 0, // Remove default padding
+    includeFontPadding: false,
+    paddingHorizontal: 4,
+  },
+  removeBtnLarge: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 4,
   },
 
   // Empty State
@@ -2233,63 +2696,96 @@ const styles = StyleSheet.create({
   fullImage: { width: width, height: height * 0.8 },
 
   // Details Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   detailsModalContent: {
-    backgroundColor: '#ffffff',
-    borderTopLeftRadius: BorderRadius['2xl'],
-    borderTopRightRadius: BorderRadius['2xl'],
-    height: '90%',
-    padding: Spacing.lg,
+    backgroundColor: '#F8F9FA',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '92%',
+    paddingBottom: Spacing.xl,
+    ...Shadows.xl,
+  },
+  modalHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  modalHandle: {
+    width: 48,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: Colors.neutral[300],
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
+    marginBottom: Spacing.md,
   },
   modalTitle: {
     fontSize: Typography.sizes.xl,
-    fontWeight: '700',
+    fontWeight: '800',
     color: Colors.text.primary,
+    letterSpacing: -0.5,
   },
+  closeModalCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.neutral[100],
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  detailsScrollContent: {
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: 40,
+  },
+
+
   detailsImageContainer: {
     width: '100%',
-    height: 200,
-    backgroundColor: Colors.neutral[50],
-    borderRadius: BorderRadius.lg,
+    height: 240,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     marginBottom: Spacing.lg,
     position: 'relative',
     overflow: 'hidden',
+    ...Shadows.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.neutral[100],
   },
   detailsImage: {
-    width: '100%',
-    height: '100%',
+    width: '90%',
+    height: '90%',
   },
   imageCountBadge: {
     position: 'absolute',
-    bottom: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 8,
+    bottom: 12,
+    right: 12,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   imageCountText: {
     color: '#FFF',
-    fontSize: Typography.sizes.xs,
-    fontWeight: '600',
+    fontSize: 10,
+    fontWeight: '700',
   },
   photoNavButton: {
     position: 'absolute',
     top: '50%',
     transform: [{ translateY: -20 }],
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(255,255,255,0.9)',
     width: 40,
     height: 40,
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
+    ...Shadows.sm,
   },
   photoNavLeft: {
     left: 10,
@@ -2297,90 +2793,173 @@ const styles = StyleSheet.create({
   photoNavRight: {
     right: 10,
   },
-  detailsSection: {
+
+  detailsInfoCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: Spacing.md,
     marginBottom: Spacing.lg,
+    ...Shadows.sm,
   },
   detailsProductName: {
-    fontSize: Typography.sizes.xl,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
     color: Colors.text.primary,
-    marginBottom: Spacing.xs,
+    marginBottom: 8,
+    lineHeight: 28,
   },
-  detailsProductMeta: {
-    fontSize: Typography.sizes.sm,
-    color: Colors.text.secondary,
-    marginBottom: Spacing.xs,
+  detailsMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
   },
-  detailsBarcode: {
-    fontSize: Typography.sizes.sm,
+  detailsMetaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.neutral[50],
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+  },
+  detailsMetaLabel: {
+    fontSize: 11,
     color: Colors.text.secondary,
+    marginRight: 4,
     fontWeight: '600',
   },
+  detailsMetaValue: {
+    fontSize: 11,
+    color: Colors.text.primary,
+    fontWeight: '700',
+  },
+  barcodeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  detailsBarcode: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+
+  detailsSection: {
+    marginBottom: Spacing.xl,
+  },
   detailsSectionTitle: {
-    fontSize: Typography.sizes.lg,
+    fontSize: 16,
     fontWeight: '700',
     color: Colors.text.primary,
     marginBottom: Spacing.md,
+    marginLeft: 4,
   },
   priceGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.sm,
+    gap: 10,
   },
   priceItem: {
-    width: '48%',
-    backgroundColor: Colors.neutral[50],
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.sm,
+    width: '31%', // 3 columns
+    backgroundColor: '#FFF',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 2,
+    borderWidth: 1,
+    borderColor: Colors.neutral[100],
+    ...Shadows.sm,
+  },
+  priceItemHighlight: {
+    backgroundColor: Colors.primary[50],
+    borderColor: Colors.primary[200],
   },
   priceLabel: {
-    fontSize: Typography.sizes.xs,
+    fontSize: 10,
     color: Colors.text.secondary,
     marginBottom: 4,
     textTransform: 'uppercase',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   priceValue: {
-    fontSize: Typography.sizes.lg,
-    fontWeight: '700',
-    color: Colors.primary.main,
+    fontSize: 15,
+    fontWeight: '800',
+    color: Colors.text.primary,
   },
-  stockInfo: {
+
+  stockCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 16,
+    ...Shadows.sm,
+  },
+  stockRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border.light,
+    gap: 16,
+  },
+  stockIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: Colors.success[50],
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   stockLabel: {
-    fontSize: Typography.sizes.base,
+    fontSize: 12,
     color: Colors.text.secondary,
     fontWeight: '600',
+    marginBottom: 2,
   },
   stockValue: {
-    fontSize: Typography.sizes.base,
+    fontSize: 18,
+    fontWeight: '800',
     color: Colors.text.primary,
+  },
+  stockValueSimple: {
+    fontSize: 16,
     fontWeight: '700',
+    color: Colors.text.primary,
+  },
+
+  subSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: Colors.text.tertiary,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   goddownItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    backgroundColor: Colors.neutral[50],
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.xs,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.neutral[100],
   },
   goddownName: {
-    fontSize: Typography.sizes.base,
+    fontSize: 13,
     color: Colors.text.primary,
     fontWeight: '600',
   },
+  godownBadge: {
+    backgroundColor: Colors.neutral[50],
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+  },
   goddownQty: {
-    fontSize: Typography.sizes.base,
+    fontSize: 13,
     color: Colors.primary.main,
     fontWeight: '700',
   },

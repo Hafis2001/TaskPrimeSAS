@@ -48,14 +48,6 @@ const Company = () => {
       onPress: () => router.push("/customers"),
       color: Colors.secondary.main,
       bg: Colors.secondary[50],
-    },
-    {
-      icon: "map",
-      title: "Area Assignment",
-      description: "Manage sales territories",
-      onPress: () => router.push("/area-assign"),
-      color: Colors.accent.main,
-      bg: Colors.accent[50],
     }
   ];
 

@@ -67,6 +67,14 @@ const Home = ({ navigation }) => {
       shadowColor: Colors.accent.main,
     },
     {
+      icon: 'cube-outline',
+      title: 'ORDER',
+      description: 'Place a new stock order',
+      onPress: () => router.push("/Order/Entry"),
+      gradient: Gradients.secondary,
+      shadowColor: Colors.secondary.main,
+    },
+    {
       icon: 'cart-outline',
       title: 'SALES',
       description: 'Create a new sales entry',
@@ -81,14 +89,6 @@ const Home = ({ navigation }) => {
       onPress: () => router.push("/Sales-Return"),
       gradient: Colors.primary[400] ? [Colors.primary[400], Colors.primary[600]] : Gradients.primary,
       shadowColor: Colors.primary.main,
-    },
-    {
-      icon: 'cube-outline',
-      title: 'ORDER',
-      description: 'Place a new stock order',
-      onPress: () => router.push("/Order/Entry"),
-      gradient: Gradients.secondary,
-      shadowColor: Colors.secondary.main,
     },
   ];
 

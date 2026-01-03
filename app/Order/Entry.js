@@ -174,10 +174,12 @@ export default function EntryScreen() {
   };
 
   const handleProceed = () => {
+    /* Area is now optional
     if (!selectedArea) {
       Alert.alert("Validation Error", "Please select an area");
       return;
     }
+    */
 
     if (!selectedCustomer) {
       Alert.alert("Validation Error", "Please select a customer");
@@ -236,7 +238,7 @@ export default function EntryScreen() {
           {/* Area Selection */}
           <View style={styles.formSection}>
             <Text style={styles.label}>
-              Filter by Area <Text style={styles.required}>*</Text>
+              Filter by Area
             </Text>
             <TouchableOpacity
               style={styles.inputBox}
@@ -330,6 +332,18 @@ export default function EntryScreen() {
               <Text style={styles.proceedText}>Proceed to Products</Text>
               <Ionicons name="arrow-forward" size={20} color="#FFF" />
             </LinearGradient>
+          </TouchableOpacity>
+
+          {/* View Orders Button */}
+          <TouchableOpacity
+            style={[styles.proceedButton, { marginTop: Spacing.md, backgroundColor: '#ffffff', borderWidth: 1, borderColor: Colors.primary.main }]}
+            onPress={() => router.push("/Order/PlaceOrder")}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.proceedGradient, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.proceedText, { color: Colors.primary.main }]}>View Placed Orders</Text>
+              <Ionicons name="list" size={20} color={Colors.primary.main} />
+            </View>
           </TouchableOpacity>
         </View>
 

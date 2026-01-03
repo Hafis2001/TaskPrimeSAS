@@ -258,7 +258,7 @@ export default function UploadScreen() {
             <Text style={styles.customerName} numberOfLines={1}>
               {item.customer_name}
             </Text>
-            <Text style={styles.amount}>₹{(+item.amount).toLocaleString()}</Text>
+            <Text style={styles.amount}>{(+item.amount).toLocaleString()}</Text>
 
             <View style={styles.detailsRow}>
               <View style={[styles.badge, { backgroundColor: Colors.neutral[100] }]}>

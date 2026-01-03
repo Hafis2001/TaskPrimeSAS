@@ -12,7 +12,7 @@
 // import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // export default function DebtorsScreen() {
-//   const [data, setData] = useState([]); 
+//   const [data, setData] = useState([]);
 //   const [filteredData, setFilteredData] = useState([]);
 //   const [loading, setLoading] = useState(true);
 //   const [searchQuery, setSearchQuery] = useState("");
@@ -135,7 +135,7 @@
 
 //                   {/* BALANCE Column */}
 //                   <Text style={[styles.balanceCell, { flex: 1 }]}>
-//                     ₹{item.balance.toFixed(2)}
+//                     {item.balance.toFixed(2)}
 //                   </Text>
 //                 </View>
 //               )}
