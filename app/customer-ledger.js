@@ -20,7 +20,7 @@ import {
 import Animated, { FadeInUp } from "react-native-reanimated";
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../constants/theme";
 
-const API_URL = "https://taskprime.app/api/get-ledger-details?account_code=";
+const API_URL = "https://tasksas.com/api/get-ledger-details?account_code=";
 
 export default function CustomerLedgerScreen() {
   const { code, name, current_balance } = useLocalSearchParams();

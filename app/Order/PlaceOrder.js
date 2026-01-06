@@ -22,6 +22,8 @@ import {
   View,
 } from 'react-native';
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
+import pdfService from "../../src/services/pdfService";
+import printerService from "../../src/services/printerService";
 
 if (Platform.OS === 'android') {
   if (UIManager.setLayoutAnimationEnabledExperimental) {
@@ -39,6 +41,14 @@ export default function PlaceOrder() {
   const [filterStatus, setFilterStatus] = useState('pending'); // all, uploaded, pending, failed
   const [uploadDetailsModal, setUploadDetailsModal] = useState(false);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
+
+  // Printer State
+  const [printerModalVisible, setPrinterModalVisible] = useState(false);
+  const [printers, setPrinters] = useState([]);
+  const [isScanningPrinters, setIsScanningPrinters] = useState(false);
+  const [connectionType, setConnectionType] = useState('ble'); // 'ble' | 'usb'
+  const [selectedOrderToPrint, setSelectedOrderToPrint] = useState(null);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     loadOrders();
@@ -552,7 +562,57 @@ export default function PlaceOrder() {
     );
   }
 
-  // Format date
+  // Printer Functions
+  const handlePrint = async (order) => {
+    try {
+      if (printerService.connected) {
+        Alert.alert("Printing", "Sending data to printer...");
+        await printerService.printOrder(order);
+      } else {
+        setSelectedOrderToPrint(order);
+        setPrinterModalVisible(true);
+        scanPrinters('ble'); // Default to BLE scan
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to initiate printing");
+    }
+  };
+
+  const scanPrinters = async (type = connectionType) => {
+    setIsScanningPrinters(true);
+    setPrinters([]);
+    setConnectionType(type);
+    try {
+      // printerService.getDeviceList() handles init and permissions safely now
+      const devices = await printerService.getDeviceList(type);
+      setPrinters(devices);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to scan for printers");
+    } finally {
+      setIsScanningPrinters(false);
+    }
+  };
+
+  const connectAndPrint = async (printer) => {
+    try {
+      const connected = await printerService.connect(printer);
+      if (connected) {
+        setPrinterModalVisible(false);
+        if (selectedOrderToPrint) {
+          setTimeout(async () => {
+            await printerService.printOrder(selectedOrderToPrint);
+            setSelectedOrderToPrint(null);
+          }, 500);
+        }
+      } else {
+        Alert.alert("Connection Failed", "Could not connect to selected printer");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Connection failed");
+    }
+  };
+
   function formatDate(timestamp) {
     const date = new Date(timestamp);
     return date.toLocaleString('en-US', {
@@ -784,7 +844,23 @@ export default function PlaceOrder() {
             })}
 
             {/* Action Buttons */}
-            <View style={styles.actionButtons}>
+            <View style={[styles.actionButtons, { justifyContent: 'space-between' }]}>
+              {!isUploaded && (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => deleteOrder(order.id)}
+                  disabled={isUploading}
+                >
+                  <LinearGradient
+                    colors={Gradients.danger}
+                    style={styles.actionButtonGradient}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Delete Order</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+
               {order.uploadStatus === 'uploaded' ? (
                 <View style={styles.uploadedBadge}>
                   <Ionicons name="cloud-done" size={18} color={Colors.success.main} />
@@ -857,23 +933,42 @@ export default function PlaceOrder() {
                   )}
                 </>
               )}
+            </View>
 
+            {/* Print & Share Button Row */}
+            <View style={{ marginTop: 8, flexDirection: 'row', gap: 10 }}>
               {!isUploaded && (
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => deleteOrder(order.id)}
-                  disabled={isUploading}
+                  onPress={() => handlePrint(order)}
                 >
                   <LinearGradient
-                    colors={Gradients.danger}
+                    colors={[Colors.primary.main, Colors.primary[700]]}
                     style={styles.actionButtonGradient}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Delete Order</Text>
+                    <Ionicons name="print" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Print Order</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={async () => {
+                  // Show a loading feedback if needed, basically just call the service
+                  await pdfService.shareOrderPDF(order);
+                }}
+              >
+                <LinearGradient
+                  colors={[Colors.secondary.main, Colors.secondary[700]]}
+                  style={styles.actionButtonGradient}
+                >
+                  <Ionicons name="share-social-outline" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>Share PDF</Text>
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
+
           </View>
         )}
       </View>
@@ -1083,6 +1178,94 @@ export default function PlaceOrder() {
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Printer Selection Modal */}
+        <Modal
+          visible={printerModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setPrinterModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Printer</Text>
+                <TouchableOpacity onPress={() => setPrinterModalVisible(false)}>
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ padding: 16, alignItems: 'center' }}>
+                {/* Connection Type Toggle */}
+                <View style={{ flexDirection: 'row', backgroundColor: Colors.neutral[200], borderRadius: 8, padding: 4, marginBottom: 16 }}>
+                  <TouchableOpacity
+                    onPress={() => scanPrinters('ble')}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 20,
+                      borderRadius: 6,
+                      backgroundColor: connectionType === 'ble' ? '#FFF' : 'transparent',
+                      shadowColor: connectionType === 'ble' ? '#000' : 'transparent',
+                      shadowOpacity: connectionType === 'ble' ? 0.1 : 0,
+                      shadowRadius: 2,
+                      elevation: connectionType === 'ble' ? 2 : 0,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '600', color: connectionType === 'ble' ? Colors.primary.main : Colors.text.secondary }}>Bluetooth</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => scanPrinters('usb')}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 20,
+                      borderRadius: 6,
+                      backgroundColor: connectionType === 'usb' ? '#FFF' : 'transparent',
+                      shadowColor: connectionType === 'usb' ? '#000' : 'transparent',
+                      shadowOpacity: connectionType === 'usb' ? 0.1 : 0,
+                      shadowRadius: 2,
+                      elevation: connectionType === 'usb' ? 2 : 0,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '600', color: connectionType === 'usb' ? Colors.primary.main : Colors.text.secondary }}>USB / Cable</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isScanningPrinters && <ActivityIndicator size="large" color={Colors.primary.main} />}
+                {!isScanningPrinters && (
+                  <TouchableOpacity style={{ marginTop: 10 }} onPress={() => scanPrinters(connectionType)}>
+                    <Text style={{ color: Colors.primary.main, fontWeight: '600' }}>Rescan</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <ScrollView style={styles.modalBody}>
+                {printers.map((printer, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={{
+                      padding: 16,
+                      borderBottomWidth: 1,
+                      borderBottomColor: Colors.border.light,
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                    onPress={() => connectAndPrint(printer)}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: '600' }}>{printer.device_name || printer.product_id || "Unknown Device"}</Text>
+                      <Text style={{ fontSize: 12, color: Colors.text.secondary }}>{printer.inner_mac_address || printer.vendor_id || "ID: " + index}</Text>
+                    </View>
+                    <Ionicons name={connectionType === 'ble' ? "bluetooth" : "usb"} size={20} color={Colors.primary.main} />
+                  </TouchableOpacity>
+                ))}
+                {printers.length === 0 && !isScanningPrinters && (
+                  <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.text.tertiary }}>No printers found</Text>
+                )}
+              </ScrollView>
             </View>
           </View>
         </Modal>

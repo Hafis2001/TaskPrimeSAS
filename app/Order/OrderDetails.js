@@ -92,6 +92,90 @@ const FlyingItem = ({ startX, startY, endX, endY, onComplete }) => {
   );
 };
 
+const CartItem = ({ item, changeQty, removeItem }) => {
+  const [localQty, setLocalQty] = useState(String(item.qty));
+
+  useEffect(() => {
+    setLocalQty(String(item.qty));
+  }, [item.qty]);
+
+  const handleTextChange = (text) => {
+    setLocalQty(text);
+    const val = parseInt(text, 10);
+    if (!isNaN(val) && val > 0) {
+      changeQty(item.product.id, val);
+    }
+  };
+
+  const handleBlur = () => {
+    if (!localQty || isNaN(parseInt(localQty, 10)) || parseInt(localQty, 10) <= 0) {
+      // Reset to valid quantity on blur if invalid
+      setLocalQty(String(item.qty));
+    }
+  };
+
+  return (
+    <View style={styles.cartItem}>
+      <View style={styles.cartItemInfo}>
+        <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
+        <View style={{ marginTop: 4 }}>
+          <Text style={styles.cartItemPrice}>
+            ₹{item.product.price.toFixed(2)}
+          </Text>
+          {item.product.mrp > item.product.price && (
+            <Text style={{
+              fontSize: 12,
+              color: Colors.text.tertiary,
+              marginTop: 2
+            }}>
+              MRP: ₹{item.product.mrp}
+            </Text>
+          )}
+        </View>
+      </View>
+
+      {/* Quantity Controls */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12 }}>
+        <TouchableOpacity onPress={() => changeQty(item.product.id, item.qty - 1)} style={{ padding: 4 }}>
+          <Ionicons name="remove-circle-outline" size={28} color={Colors.primary.main} />
+        </TouchableOpacity>
+
+        <TextInput
+          style={{
+            width: 50,
+            height: 36,
+            textAlign: 'center',
+            borderWidth: 1,
+            borderColor: Colors.border.light,
+            borderRadius: BorderRadius.sm,
+            marginHorizontal: 4,
+            fontSize: 14,
+            color: Colors.text.primary,
+            backgroundColor: '#FFF'
+          }}
+          keyboardType="number-pad"
+          selectTextOnFocus={true}
+          value={localQty}
+          onChangeText={handleTextChange}
+          onBlur={handleBlur}
+        />
+
+        <TouchableOpacity onPress={(e) => changeQty(item.product.id, item.qty + 1, e)} style={{ padding: 4 }}>
+          <Ionicons name="add-circle-outline" size={28} color={Colors.primary.main} />
+        </TouchableOpacity>
+      </View>
+
+      <Text style={[styles.cartItemTotal, { minWidth: 60, textAlign: 'right' }]}>
+        {(item.qty * item.product.price).toFixed(2)}
+      </Text>
+
+      <TouchableOpacity onPress={() => removeItem(item.product.id)} style={[styles.removeCartItem, { marginLeft: 8 }]}>
+        <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
+      </TouchableOpacity>
+    </View>
+  );
+};
+
 export default function OrderDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -1548,21 +1632,11 @@ export default function OrderDetails() {
                 keyExtractor={(item) => item.product.id.toString()}
                 style={styles.cartList}
                 renderItem={({ item }) => (
-                  <View style={styles.cartItem}>
-                    <View style={styles.cartItemInfo}>
-                      <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
-                      <Text style={styles.cartItemPrice}>
-                        {item.qty} x {item.product.price.toFixed(2)}
-                      </Text>
-                    </View>
-                    <Text style={styles.cartItemTotal}>{(item.qty * item.product.price).toFixed(2)}</Text>
-                    <TouchableOpacity
-                      onPress={() => removeItem(item.product.id)}
-                      style={styles.removeCartItem}
-                    >
-                      <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
-                    </TouchableOpacity>
-                  </View>
+                  <CartItem
+                    item={item}
+                    changeQty={changeQty}
+                    removeItem={removeItem}
+                  />
                 )}
               />
             )}
@@ -1925,8 +1999,17 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
 
     {/* New Bottom Section */}
     <View style={styles.productBottomSection}>
-      {/* Details Link - Bottom Right */}
-      <View style={{ alignItems: 'flex-end', marginBottom: 8 }}>
+      {/* Row for Stock and Details */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        {/* Stock Display */}
+        <View style={styles.stockDisplayContainer}>
+          <Text style={styles.stockLabel}>Stock:</Text>
+          <Text style={[styles.stockCount, stockQty === 0 && styles.outOfStockText]}>
+            {stockQty}
+          </Text>
+        </View>
+
+        {/* Details Link - Now inline with stock */}
         <TouchableOpacity
           onPress={() => openDetailsModal(item)}
           style={styles.detailsLinkButton}
@@ -1937,14 +2020,6 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
       </View>
 
       <View style={styles.actionsContainer}>
-        {/* Stock Display - Top of Add Button */}
-        <View style={styles.stockDisplayContainer}>
-          <Text style={styles.stockLabel}>Stock:</Text>
-          <Text style={[styles.stockCount, stockQty === 0 && styles.outOfStockText]}>
-            {stockQty}
-          </Text>
-        </View>
-
         {/* Action Buttons */}
         {currentQty > 0 ? (
           <View style={styles.qtyControlLarge}>
@@ -1999,9 +2074,6 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
           <TouchableOpacity
             style={[styles.addButtonLarge, !inStock && styles.disabledAddButton]}
             onPress={(e) => {
-              // We pass event if we want animation from here, but this opens modal
-              // Logic: if we want animation from center (modal), we don't strictly need coords here
-              // But passing them doesn't hurt.
               addToCart(item);
             }}
             disabled={!inStock}
@@ -2235,8 +2307,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   mrpLabel: {
-    fontSize: 10,
-    color: Colors.text.secondary,
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
+    color: Colors.primary.main,
     marginBottom: 0,
   },
   price: {

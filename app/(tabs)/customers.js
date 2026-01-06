@@ -1,5 +1,6 @@
 // app/(tabs)/customers.js
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from '@react-native-picker/picker';
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -24,6 +25,8 @@ export default function DebtorsScreen() {
   const [filtered, setFiltered] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [areas, setAreas] = useState([]);
+  const [selectedArea, setSelectedArea] = useState("All");
   const [totalStores, setTotalStores] = useState(0);
   const [totalBalance, setTotalBalance] = useState(0);
   const router = useRouter();
@@ -45,6 +48,8 @@ export default function DebtorsScreen() {
       setLoading(true);
       await dbService.init();
       const rows = await dbService.getCustomers();
+      const areaList = await dbService.getAreas();
+      setAreas(["All", ...areaList]);
 
       if (rows.length === 0) {
         setLoading(false);
@@ -61,7 +66,7 @@ export default function DebtorsScreen() {
 
       // Filter out customers with zero balance and sort alphabetically
       const filteredRows = rows
-        .filter((item) => (item.balance ?? 0) !== 0)
+        .filter((item) => Number(item.balance ?? 0) !== 0)
         .sort((a, b) => {
           const nameA = (a.name ?? "").toLowerCase();
           const nameB = (b.name ?? "").toLowerCase();
@@ -97,22 +102,27 @@ export default function DebtorsScreen() {
   );
 
   // search filter with alphabetical sorting
+  // search and area filter
   useEffect(() => {
     const q = searchQuery.toLowerCase();
     const f = data
-      .filter(
-        (i) =>
+      .filter((i) => {
+        const matchesSearch =
           (i.name ?? "").toLowerCase().includes(q) ||
           (i.place ?? "").toLowerCase().includes(q) ||
-          (i.phone ?? "").toLowerCase().includes(q)
-      )
+          (i.phone ?? "").toLowerCase().includes(q);
+
+        const matchesArea = selectedArea === "All" || (i.area ?? "") === selectedArea;
+
+        return matchesSearch && matchesArea;
+      })
       .sort((a, b) => {
         const nameA = (a.name ?? "").toLowerCase();
         const nameB = (b.name ?? "").toLowerCase();
         return nameA.localeCompare(nameB);
       });
     setFiltered(f);
-  }, [searchQuery, data]);
+  }, [searchQuery, selectedArea, data]);
 
   if (loading) {
     return (
@@ -231,6 +241,27 @@ export default function DebtorsScreen() {
           </LinearGradient>
         </Animated.View>
 
+        {/* Area Filter */}
+        <View style={styles.areaFilterContainer}>
+          <View style={styles.pickerWrapper}>
+            <Picker
+              selectedValue={selectedArea}
+              onValueChange={(itemValue) => setSelectedArea(itemValue)}
+              style={styles.picker}
+              dropdownIconColor={Colors.text.primary}
+            >
+              {areas.map((area, index) => (
+                <Picker.Item
+                  key={index}
+                  label={area}
+                  value={area}
+                  style={{ fontSize: 14, color: Colors.text.primary }}
+                />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
         {/* Search */}
         <Animated.View entering={FadeInUp.delay(120)} style={styles.searchContainer}>
           <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
@@ -340,7 +371,7 @@ const styles = StyleSheet.create({
   },
   searchContainer: {
     marginHorizontal: Spacing.lg,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
@@ -448,5 +479,21 @@ const styles = StyleSheet.create({
     color: Colors.text.tertiary,
     fontSize: Typography.sizes.base,
     textAlign: 'center',
+  },
+  areaFilterContainer: {
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  pickerWrapper: {
+    backgroundColor: '#ffffff',
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+    overflow: 'hidden', // iOS fix
+  },
+  picker: {
+    // height: 50, // Android sometimes needs explicit height, but usually auto works
+    color: Colors.text.primary,
   },
 });
