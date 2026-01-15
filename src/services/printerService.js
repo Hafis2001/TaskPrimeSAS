@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, PermissionsAndroid, Platform } from "react-native";
 import { BLEPrinter, USBPrinter } from "react-native-thermal-receipt-printer";
 
@@ -8,6 +9,105 @@ class PrinterService {
         this.connectionType = 'ble'; // 'ble' | 'usb'
         this.isBLEInitialized = false;
         this.isUSBInitialized = false;
+
+        // Printer Settings
+        this.printerWidthMM = 58; // Default 58mm
+        this.printerCharsPerLine = 32; // Default for 58mm
+
+        // Cache for company info
+        this.companyInfo = null;
+    }
+
+    // Load saved settings
+    async loadSettings() {
+        try {
+            const savedWidth = await AsyncStorage.getItem('printer_paper_width_mm');
+            if (savedWidth) {
+                this.setPaperWidth(parseInt(savedWidth, 10), false); // false = don't save again
+            } else {
+                this.setPaperWidth(58, false);
+            }
+        } catch (error) {
+            console.warn("[Printer] Failed to load settings:", error);
+        }
+    }
+
+    // Load or fetch company info
+    async loadCompanyInfo() {
+        try {
+            // 1. Try memory
+            if (this.companyInfo) return this.companyInfo;
+
+            // 2. Try Local Cache
+            const cached = await AsyncStorage.getItem('printer_company_info');
+            if (cached) {
+                this.companyInfo = JSON.parse(cached);
+                // Background update if online (optional, but good practice)
+                this.fetchCompanyInfoFromAPI();
+                return this.companyInfo;
+            }
+
+            // 3. Fetch from API
+            await this.fetchCompanyInfoFromAPI();
+            return this.companyInfo;
+
+        } catch (e) {
+            console.warn("[Printer] Failed to load company info", e);
+            return null;
+        }
+    }
+
+    async fetchCompanyInfoFromAPI() {
+        try {
+            const [token, clientId] = await Promise.all([
+                AsyncStorage.getItem('authToken'),
+                AsyncStorage.getItem('client_id')
+            ]);
+
+            if (!token || !clientId) return;
+
+            const API_URL = 'https://tasksas.com/api/get-misel-data/';
+            const res = await fetch(`${API_URL}?client_id=${clientId}`, {
+                headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+            });
+
+            if (res.ok) {
+                const json = await res.json();
+                let info = null;
+                if (Array.isArray(json.data) && json.data.length > 0) {
+                    info = json.data[0];
+                } else if (typeof json.data === 'object') {
+                    info = json.data;
+                }
+
+                if (info) {
+                    this.companyInfo = info;
+                    await AsyncStorage.setItem('printer_company_info', JSON.stringify(info));
+                }
+            }
+        } catch (e) {
+            console.warn("[Printer] Background fetch failed:", e);
+        }
+    }
+
+    // Set paper width (mm) and calculate chars per line
+    async setPaperWidth(mm, save = true) {
+        this.printerWidthMM = mm;
+
+        if (mm <= 0) mm = 58;
+
+        // Formula: Chars = (mm / 58) * 32
+        this.printerCharsPerLine = Math.floor((mm / 58) * 32);
+
+        console.log(`[Printer] Set width to ${mm}mm (${this.printerCharsPerLine} chars/line)`);
+
+        if (save) {
+            try {
+                await AsyncStorage.setItem('printer_paper_width_mm', String(mm));
+            } catch (e) {
+                console.error("[Printer] Failed to save setting", e);
+            }
+        }
     }
 
     async requestPermissions() {
@@ -48,12 +148,11 @@ class PrinterService {
 
     async init(type = 'ble') {
         try {
+            await this.loadSettings();
+            this.loadCompanyInfo(); // Fire and forget load/cache
+
             console.log(`[Printer] Starting initialization for ${type}...`);
-
-            // 1. Request permissions FIRST. 
             const hasPermissions = await this.requestPermissions();
-
-            // Even if permissions fail, we might try USB (which sometimes doesn't need runtime perms on old androids, but good to have)
 
             if (type === 'ble') {
                 if (this.isBLEInitialized) return;
@@ -63,7 +162,6 @@ class PrinterService {
                     return;
                 }
 
-                // Initialize BLE
                 try {
                     await new Promise(resolve => setTimeout(resolve, 500));
                     await BLEPrinter.init();
@@ -75,7 +173,6 @@ class PrinterService {
             } else if (type === 'usb') {
                 if (this.isUSBInitialized) return;
 
-                // Initialize USB
                 try {
                     await USBPrinter.init();
                     this.isUSBInitialized = true;
@@ -91,18 +188,13 @@ class PrinterService {
 
     async getDeviceList(type = 'ble') {
         try {
-            // Ensure initialized only for the specific type
             await this.init(type);
 
             this.connectionType = type;
             if (type === 'ble') {
                 const hasPerm = await this.requestPermissions();
-                if (!hasPerm) {
-                    console.log("[Printer] No permissions for BLE scan");
-                    return [];
-                }
+                if (!hasPerm) return [];
 
-                // Wrap in try-catch specifically for the native call
                 try {
                     const devices = await BLEPrinter.getDeviceList();
                     console.log("[Printer] BLE Devices found:", devices);
@@ -112,7 +204,6 @@ class PrinterService {
                     return [];
                 }
             } else {
-                // USB
                 try {
                     const devices = await USBPrinter.getDeviceList();
                     console.log("[Printer] USB Devices found:", devices);
@@ -153,7 +244,6 @@ class PrinterService {
     async printOrder(order) {
         try {
             if (!this.connected) {
-                // Try to reconnect if we have a current printer
                 if (this.currentPrinter) {
                     console.log("[Printer] Attempting to reconnect before printing...");
                     const reconnected = await this.connect(this.currentPrinter);
@@ -167,12 +257,19 @@ class PrinterService {
                 }
             }
 
+            // Ensure company info is loaded
+            await this.loadCompanyInfo();
+
             const PrinterInterface = this.connectionType === 'ble' ? BLEPrinter : USBPrinter;
 
-            const PRINTER_WIDTH = 32;
+            // Use dynamic width
+            const PRINTER_WIDTH = this.printerCharsPerLine || 32;
 
             const centerText = (text) => {
                 const safeText = String(text || "");
+                if (safeText.length > PRINTER_WIDTH) {
+                    return safeText.substring(0, PRINTER_WIDTH) + "\n";
+                }
                 const pad = Math.max(0, Math.floor((PRINTER_WIDTH - safeText.length) / 2));
                 return " ".repeat(pad) + safeText + "\n";
             };
@@ -181,20 +278,95 @@ class PrinterService {
 
             let receipt = "";
 
-            // Header
-            receipt += centerText("TaskSAS");
+            // --- HEADER ---
+            // Company Name (Bold)
+            const companyName = this.companyInfo?.firm_name || "TaskSAS";
+            // ESC/POS Bold On: \x1B\x45\x01, Bold Off: \x1B\x45\x00
+            receipt += "\x1B\x45\x01" + centerText(companyName) + "\x1B\x45\x00";
+
+            // Company Address (multiline if needed, for now just join basics)
+            if (this.companyInfo) {
+                const addressParts = [
+                    this.companyInfo.address,
+                    this.companyInfo.address1,
+                    this.companyInfo.address2,
+                    this.companyInfo.address3
+                ].filter(Boolean);
+
+                // Print address lines centered
+                addressParts.forEach(part => {
+                    receipt += centerText(part);
+                });
+
+                // Phone numbers
+                const phones = [
+                    this.companyInfo.phones,
+                    this.companyInfo.mobile
+                ].filter(Boolean).join(', ');
+                if (phones) {
+                    receipt += centerText(`Ph: ${phones}`);
+                }
+
+                // GST/TIN
+                if (this.companyInfo.tinno) {
+                    receipt += centerText(`GST/TIN: ${this.companyInfo.tinno}`);
+                }
+            }
+
             receipt += centerText("Order Receipt");
             receipt += line;
-            receipt += `Date: ${new Date(order.timestamp).toLocaleString()}\n`;
-            if (order.customer) receipt += `Customer: ${order.customer}\n`;
-            if (order.area) receipt += `Area: ${order.area}\n`;
+
+            // --- META ---
+            // Date format: DD/MM/YYYY HH:mm
+            const dateObj = new Date(order.timestamp);
+            const day = String(dateObj.getDate()).padStart(2, '0');
+            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const year = dateObj.getFullYear();
+            const hours = String(dateObj.getHours()).padStart(2, '0');
+            const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+            const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`;
+
+            receipt += `Date: ${formattedDate}\n`;
+
+            // Order ID (API ID or NA)
+            const orderId = order.formattedOrderId || (order.isApiOrder ? order.id : "NA");
+            receipt += `Order ID: ${orderId}\n`;
+
+            // --- BILL TO SECTION ---
+            if (order.customer) {
+                receipt += `\nBILL TO:\n`;
+                receipt += "\x1B\x45\x01" + `${order.customer}\n` + "\x1B\x45\x00"; // Bold customer name
+
+                // Customer address if available
+                if (order.customerAddress) {
+                    receipt += `${order.customerAddress}\n`;
+                }
+
+                // Place/Area
+                if (order.customerPlace || order.area) {
+                    const place = order.customerPlace || order.area;
+                    receipt += `${place}\n`;
+                }
+
+                // Customer phone  
+                if (order.customerPhone) {
+                    receipt += `Ph: ${order.customerPhone}\n`;
+                }
+            }
+
+
+            // --- ITEMS ---
+            const qtyLen = 3;
+            const priceLen = 9;
+            const itemLen = Math.max(5, PRINTER_WIDTH - qtyLen - priceLen - 2);
+
+            const headerItem = "Item".padEnd(itemLen, " ");
+            const headerQty = "Qty".padStart(qtyLen, " ");
+            const headerPrice = "Price".padStart(priceLen, " ");
+            receipt += `${headerItem} ${headerQty} ${headerPrice}\n`;
+
             receipt += line;
 
-            // Table Header
-            receipt += "Item                Qty     Price\n";
-            receipt += line;
-
-            // Items
             let totalAmount = 0;
             if (Array.isArray(order.items)) {
                 order.items.forEach(item => {
@@ -203,17 +375,17 @@ class PrinterService {
                     const itemTotal = price * qty;
                     totalAmount += itemTotal;
 
-                    const name = String(item.name || "Item").substring(0, 18).padEnd(20, " ");
-                    const qtyStr = String(qty).padStart(3, " ");
-                    const priceStr = itemTotal.toFixed(2).padStart(9, " ");
+                    const name = String(item.name || "Item").substring(0, itemLen).padEnd(itemLen, " ");
+                    const qtyStr = String(qty).padStart(qtyLen, " ");
+                    const priceStr = itemTotal.toFixed(2).padStart(priceLen, " ");
 
-                    receipt += `${name}${qtyStr}${priceStr}\n`;
+                    receipt += `${name} ${qtyStr} ${priceStr}\n`;
                 });
             }
 
             receipt += line;
 
-            // Total
+            // --- TOTAL ---
             const totalLabel = "TOTAL:";
             const totalVal = totalAmount.toFixed(2);
             const totalPad = PRINTER_WIDTH - totalLabel.length - totalVal.length;
@@ -221,6 +393,12 @@ class PrinterService {
 
             receipt += line;
             receipt += centerText("Thank You!");
+
+            // Status Code (S/F)
+            if (order.printStatus || order.description) {
+                const status = order.printStatus || order.description;
+                receipt += centerText(`Status: ${status}`);
+            }
             receipt += "\n\n\n";
 
             await PrinterInterface.printBill(receipt);
@@ -229,9 +407,190 @@ class PrinterService {
         } catch (err) {
             console.error("[Printer] Print failed:", err);
             Alert.alert("Print Error", "Failed to send data to printer. Please check connection.");
-            this.connected = false; // Mark as disconnected so user can try reconnecting
+            this.connected = false;
             return false;
         }
+    }
+
+    async printCollectionReceipt(collection) {
+        try {
+            if (!this.connected) {
+                if (this.currentPrinter) {
+                    console.log("[Printer] Attempting to reconnect before printing...");
+                    const reconnected = await this.connect(this.currentPrinter);
+                    if (!reconnected) {
+                        Alert.alert("Printer Disconnected", "Please reconnect to your printer.");
+                        return false;
+                    }
+                } else {
+                    Alert.alert("Printer not connected", "Please connect to a printer first.");
+                    return false;
+                }
+            }
+
+            // Ensure settings and company info are loaded
+            await this.loadSettings();
+            await this.loadCompanyInfo();
+
+            const PrinterInterface = this.connectionType === 'ble' ? BLEPrinter : USBPrinter;
+            const PRINTER_WIDTH = this.printerCharsPerLine || 32;
+
+            const centerText = (text) => {
+                const safeText = String(text || "");
+                if (safeText.length > PRINTER_WIDTH) {
+                    return safeText.substring(0, PRINTER_WIDTH) + "\n";
+                }
+                const pad = Math.max(0, Math.floor((PRINTER_WIDTH - safeText.length) / 2));
+                return " ".repeat(pad) + safeText + "\n";
+            };
+
+            const line = "-".repeat(PRINTER_WIDTH) + "\n";
+
+            let receipt = "";
+
+            // --- HEADER ---
+            const companyName = this.companyInfo?.firm_name || "Company Name";
+            receipt += "\x1B\x45\x01" + centerText(companyName) + "\x1B\x45\x00";
+
+            if (this.companyInfo) {
+                const addressParts = [
+                    this.companyInfo.address,
+                    this.companyInfo.address1,
+                    this.companyInfo.address2,
+                    this.companyInfo.address3
+                ].filter(Boolean);
+                addressParts.forEach(part => {
+                    receipt += centerText(part);
+                });
+
+                // Phone numbers
+                const phones = [
+                    this.companyInfo.phones,
+                    this.companyInfo.mobile
+                ].filter(Boolean).join(', ');
+                if (phones) {
+                    receipt += centerText(`Ph: ${phones}`);
+                }
+
+                // GST/TIN
+                if (this.companyInfo.tinno) {
+                    receipt += centerText(`GST/TIN: ${this.companyInfo.tinno}`);
+                }
+            }
+
+            receipt += "\n";
+            receipt += centerText("Receipt Voucher");
+            receipt += line;
+
+            // --- VOUCHER INFO ---
+            const dateObj = new Date(collection.date);
+            const formattedDate = `${String(dateObj.getDate()).padStart(2, '0')}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${dateObj.getFullYear()}`;
+
+            // Split into two lines for safety on 2 inch paper
+            const voucherNo = collection.code || collection.local_id || collection.id || "N/A";
+            receipt += `V No: ${voucherNo}\n`;
+            receipt += `Date: ${formattedDate}\n`;
+
+            receipt += line;
+
+            // --- TABLE HEADER ---
+            // Width: 32 chars
+            // "Sl  Particulars           Amount"
+            // 2   18                    12
+            receipt += `Sl  Particulars           Amount\n`;
+            receipt += line;
+
+            // --- TABLE ROW ---
+            const customerName = collection.customer_name || "Customer";
+            const amount = parseFloat(collection.amount || 0).toFixed(2);
+            const chequeRef = collection.cheque_number || collection.ref_no || "";
+            const paymentType = collection.payment_type || "CASH";
+            const refDetail = chequeRef ? `(${chequeRef})` : `(${paymentType})`;
+
+            // Line 1: Sl and Name
+            // "1   Customer Name..."
+            receipt += `1   ${customerName.substring(0, PRINTER_WIDTH - 6)}\n`;
+
+            // Line 2: Ref/Cheque and Amount
+            // "    (Ref...)           25000.00"
+            // Amount is right aligned to end of line
+            const indent = "    ";
+            const amountStr = amount.toString();
+            // Available space for ref detail is Width - Indent - Space - Amount
+            const availableRefWidth = PRINTER_WIDTH - indent.length - 1 - amountStr.length;
+            const refStr = refDetail.substring(0, availableRefWidth).padEnd(availableRefWidth, " ");
+
+            receipt += `${indent}${refStr} ${amountStr}\n`;
+
+            receipt += line;
+
+            // --- TOTAL ---
+            const totalLabel = "Total";
+            const totalPad = PRINTER_WIDTH - totalLabel.length - amount.length;
+            receipt += `${totalLabel}${" ".repeat(Math.max(1, totalPad))}${amount}\n`;
+            receipt += line;
+
+            // --- AMOUNT IN WORDS ---
+            const amountInWords = this.numberToWords(parseFloat(collection.amount));
+            receipt += `Amount in words: ${amountInWords}\n`;
+            receipt += "\n";
+
+            // --- NARRATION ---
+            receipt += `Narration\n`;
+            const narration = `${collection.remarks || ''}`;
+            if (narration) {
+                receipt += `${narration.substring(0, PRINTER_WIDTH)}\n`;
+            }
+            receipt += "\n";
+
+            // --- FOOTER ---
+            receipt += line;
+            // "Prepared by" (Left) and "For: Company" (Right)
+            // Split into two lines if needed, or condensed
+            const prepBy = "Prepared by.";
+            const forComp = `For: ${companyName.substring(0, 10)}`;
+
+            if (PRINTER_WIDTH >= 32) {
+                const footerSpace = PRINTER_WIDTH - prepBy.length - forComp.length;
+                receipt += `${prepBy}${" ".repeat(Math.max(1, footerSpace))}${forComp}\n`;
+            } else {
+                receipt += `${prepBy}\n`;
+                receipt += `${" ".repeat(PRINTER_WIDTH - forComp.length)}${forComp}\n`;
+            }
+
+            receipt += "\n\n\n";
+
+            await PrinterInterface.printBill(receipt);
+            return true;
+
+        } catch (err) {
+            console.error("[Printer] Print collection failed:", err);
+            Alert.alert("Print Error", "Failed to send data to printer. Please check connection.");
+            this.connected = false;
+            return false;
+        }
+    }
+
+    // Convert number to words
+    numberToWords(num) {
+        if (num === 0) return "ZERO RUPEES";
+
+        const units = ["", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE"];
+        const teens = ["TEN", "ELEVEN", "TWELVE", "THIRTEEN", "FOURTEEN", "FIFTEEN", "SIXTEEN", "SEVENTEEN", "EIGHTEEN", "NINETEEN"];
+        const tens = ["", "", "TWENTY", "THIRTY", "FORTY", "FIFTY", "SIXTY", "SEVENTY", "EIGHTY", "NINETY"];
+
+        const convert = (n) => {
+            if (n < 10) return units[n];
+            if (n < 20) return teens[n - 10];
+            if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? " " + units[n % 10] : "");
+            if (n < 1000) return units[Math.floor(n / 100)] + " HUNDRED" + (n % 100 ? " AND " + convert(n % 100) : "");
+            if (n < 100000) return convert(Math.floor(n / 1000)) + " THOUSAND" + (n % 1000 ? " " + convert(n % 1000) : "");
+            return convert(Math.floor(n / 100000)) + " LAKH" + (n % 100000 ? " " + convert(n % 100000) : "");
+        };
+
+        const intPart = Math.floor(num);
+        const words = convert(intPart) + " RUPEES";
+        return words.trim();
     }
 }
 

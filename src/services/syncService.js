@@ -94,7 +94,8 @@ class SyncService {
             customers: false,
             products: false,
             batches: false,
-            areas: false
+            areas: false,
+            settings: false
         };
 
         try {
@@ -113,7 +114,8 @@ class SyncService {
 
             const parallelDownloads = await Promise.allSettled([
                 this.downloadCustomers(),
-                this.downloadAreas()
+                this.downloadAreas(),
+                this.downloadSettings()
             ]);
 
             // Process results
@@ -131,6 +133,12 @@ class SyncService {
             } else {
                 console.error('Area download failed:', parallelDownloads[1].reason);
                 this.updateProgress('areas', 'Areas failed', 25, false);
+            }
+
+            if (parallelDownloads[2].status === 'fulfilled') {
+                stages.settings = true;
+                // Settings are silent, no progress update needed explicitly or maybe small one?
+                console.log('Settings downloaded');
             }
 
             // Stage 2: Download products WITH batches/photos/goddowns (SINGLE CALL WITH RETRY)
@@ -183,12 +191,12 @@ class SyncService {
 
             console.log(`[Sync] Fetching products with batches from: ${primaryEndpoint}`);
 
-            // Create AbortController with longer timeout for large data (2 minutes)
+            // Create AbortController with longer timeout for large data (5 minutes)
             const controller = new AbortController();
             const timeoutId = setTimeout(() => {
                 controller.abort();
-                console.error('[Sync] Product download timed out after 2 minutes');
-            }, 120000);
+                console.error('[Sync] Product download timed out after 5 minutes');
+            }, 300000);
 
             let response;
             try {
@@ -232,7 +240,7 @@ class SyncService {
                 return { products: 0, batches: 0, photos: 0, goddowns: 0 };
             }
 
-            console.log(`[Sync] Found ${products.length} products`);
+            console.log(`[Sync] Processing ${products.length} products with batches...`);
 
             // Normalize and validate products
             const normalizedProducts = products
@@ -247,6 +255,7 @@ class SyncService {
                     brand: p.brand || p.BRAND || '', // Brand field
                     category: p.product || p.category || p.PRODUCT || '', // Category from 'product' field
                     taxcode: p.taxcode || p.TAXCODE || '',
+                    text6: p.text6 || p.TEXT6 || '', // HSN Code
                     description: p.description || '',
                 }))
                 .filter(p => p.code && p.name); // Only valid products
@@ -261,11 +270,9 @@ class SyncService {
             if (normalizedProducts.length > 0) {
                 // Save products first
                 await dbService.saveProducts(normalizedProducts);
-                console.log(`[Sync] ✅ Saved ${normalizedProducts.length} products`);
 
                 // Now extract and save batches, photos, goddowns from the SAME response
                 // OPTIMIZED: Collect ALL data first, then bulk insert
-                console.log(`[Sync] Collecting batches, photos, and goddowns for bulk insert...`);
 
                 const allBatches = [];
                 const allPhotos = [];
@@ -307,8 +314,6 @@ class SyncService {
                 }
 
                 // Bulk insert all collected data
-                console.log(`[Sync] Bulk inserting ${totalBatches} batches, ${totalPhotos} photos, ${totalGoddowns} goddowns...`);
-
                 if (allBatches.length > 0) {
                     await dbService.saveBatchesBulk(allBatches);
                 }
@@ -318,8 +323,6 @@ class SyncService {
                 if (allGoddowns.length > 0) {
                     await dbService.saveGoddownsBulk(allGoddowns);
                 }
-
-                console.log(`[Sync] ✅ Saved ${totalBatches} batches, ${totalPhotos} photos, ${totalGoddowns} goddowns`);
             }
 
             return {
@@ -337,14 +340,21 @@ class SyncService {
     async downloadCustomers() {
         try {
             const token = await this.getAuthToken();
+
+            // Create timeout controller for customers (2 minutes)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000);
+
             const response = await fetch(`${API_BASE_URL}/debtors/get-debtors/`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
-                signal: this.abortController?.signal
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 throw new Error(`Failed to fetch customers: ${response.status}`);
@@ -365,7 +375,6 @@ class SyncService {
             // Save to database
             await dbService.saveCustomers(customers);
 
-            console.log(`[Sync] ✅ Downloaded ${customers.length} customers`);
             return customers.length;
         } catch (error) {
             console.error('[Sync] Error downloading customers:', error);
@@ -395,14 +404,21 @@ class SyncService {
     async downloadAreas() {
         try {
             const token = await this.getAuthToken();
+
+            // Create timeout controller for areas (1 minute - smaller dataset)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 60000);
+
             const response = await fetch(`${API_BASE_URL}/area/list/`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
-                signal: this.abortController?.signal
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 console.warn(`[Sync] Area API returned ${response.status}`);
@@ -424,11 +440,44 @@ class SyncService {
 
             await dbService.saveAreas(validAreas);
 
-            console.log(`[Sync] ✅ Downloaded ${validAreas.length} areas`);
             return validAreas.length;
         } catch (error) {
             console.error('[Sync] Error downloading areas:', error);
             throw error;
+        }
+    }
+
+    async downloadSettings() {
+        try {
+            const token = await this.getAuthToken();
+            // 10s timeout for settings
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+            const response = await fetch(`${API_BASE_URL}/settings/options/`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                console.warn(`[Sync] Settings API returned ${response.status}`);
+                return false;
+            }
+
+            const data = await response.json();
+            // Store entire JSON object
+            await AsyncStorage.setItem('app_settings', JSON.stringify(data));
+            console.log('[Sync] Settings downloaded and saved');
+            return true;
+        } catch (error) {
+            console.error('[Sync] Error downloading settings:', error);
+            return false;
         }
     }
 

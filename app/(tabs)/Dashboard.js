@@ -7,13 +7,13 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  RefreshControl,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-  ScrollView,
-  RefreshControl
+  View
 } from "react-native";
 import { BorderRadius, Colors, Gradients, Spacing, Typography } from "../../constants/theme";
 
@@ -25,7 +25,7 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  
+
   // License validity states
   const [expiryDate, setExpiryDate] = useState("");
   const [remainingDays, setRemainingDays] = useState(null);
@@ -59,8 +59,8 @@ export default function DashboardScreen() {
 
   const fetchLicenseInfo = async () => {
     try {
-      const LICENSE_INFO_API = "https://activate.imcbs.com/mobileapp/api/project/sastest/";
-      
+      const LICENSE_INFO_API = "https://activate.imcbs.com/mobileapp/api/project/tasksas/";
+
       const response = await fetch(LICENSE_INFO_API, {
         method: "GET",
         headers: {
@@ -73,7 +73,7 @@ export default function DashboardScreen() {
       if (response.ok && data.success && data.customers && data.customers.length > 0) {
         // Find the customer with matching license key
         const customer = data.customers.find(c => c.license_key === licenseKey);
-        
+
         if (customer && customer.license_validity) {
           const validity = customer.license_validity;
           setExpiryDate(validity.expiry_date || "");
@@ -126,7 +126,7 @@ export default function DashboardScreen() {
     setLoading(true);
 
     try {
-      const LOGOUT_API = "https://activate.imcbs.com/mobileapp/api/project/sastest/logout/";
+      const LOGOUT_API = "https://activate.imcbs.com/mobileapp/api/project/tasksas/logout/";
 
       console.log("Removing license...");
       console.log("License Key:", licenseKey);
@@ -199,7 +199,7 @@ export default function DashboardScreen() {
   return (
     <LinearGradient colors={Gradients.darkBackground} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ScrollView 
+        <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
@@ -225,10 +225,10 @@ export default function DashboardScreen() {
             {expiryDate && (
               <View style={[styles.validityCard, isExpired && styles.expiredCard]}>
                 <View style={styles.validityHeader}>
-                  <Ionicons 
-                    name={isExpired ? "alert-circle" : "time-outline"} 
-                    size={24} 
-                    color={isExpired ? Colors.error[400] : Colors.primary[400]} 
+                  <Ionicons
+                    name={isExpired ? "alert-circle" : "time-outline"}
+                    size={24}
+                    color={isExpired ? Colors.error[400] : Colors.primary[400]}
                   />
                   <Text style={styles.validityTitle}>License Validity</Text>
                 </View>

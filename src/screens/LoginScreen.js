@@ -72,7 +72,7 @@ export default function LoginScreen() {
         return { ok: false, reason: "missing_client" };
       }
 
-      const url = "https://activate.imcbs.com/mobileapp/api/project/sastest/";
+      const url = "https://activate.imcbs.com/mobileapp/api/project/tasksas/";
       const fetchUrl = `${url}?t=${Date.now()}`;
 
       let res;
@@ -165,6 +165,8 @@ export default function LoginScreen() {
       return;
     }
 
+    const validClientId = licenseResult.customer.client_id;
+
     try {
       const loginResp = await fetch("https://tasksas.com/api/login/", {
         method: "POST",
@@ -175,7 +177,7 @@ export default function LoginScreen() {
         body: JSON.stringify({
           username: username.trim(),
           password,
-          client_id: clientId.trim(),
+          client_id: validClientId,
         }),
       });
 
@@ -209,6 +211,82 @@ export default function LoginScreen() {
       router.replace("/(tabs)/Home");
     } catch (err) {
       Alert.alert("Network Error", "Unable to reach login server.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveLicense = async () => {
+    Alert.alert(
+      "Remove License",
+      "Are you sure you want to remove the license? You will need to activate again.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: removeLicense,
+        },
+      ]
+    );
+  };
+
+  const removeLicense = async () => {
+    setLoading(true);
+    try {
+      // Get license info
+      let licenseKey = "";
+      let deviceId = "";
+
+      try {
+        const licenseInfoStr = await AsyncStorage.getItem("licenseInfo");
+        if (licenseInfoStr) {
+          const info = JSON.parse(licenseInfoStr);
+          licenseKey = info.license_key;
+        }
+        // Fallback to direct storage
+        if (!licenseKey) licenseKey = await AsyncStorage.getItem("licenseKey");
+
+        deviceId = await AsyncStorage.getItem("deviceId");
+      } catch (e) { console.log(e); }
+
+      if (!licenseKey || !deviceId) {
+        Alert.alert("Error", "License information not found.");
+        setLoading(false);
+        return;
+      }
+
+      const LOGOUT_API = "https://activate.imcbs.com/mobileapp/api/project/tasksas/logout/";
+
+      const response = await fetch(LOGOUT_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ license_key: licenseKey, device_id: deviceId }),
+      });
+
+      const responseText = await response.text();
+      let data;
+      try { data = JSON.parse(responseText); } catch (e) { }
+
+      if (response.ok && data?.success) {
+        // Clear all data
+        const keys = await AsyncStorage.getAllKeys();
+        await AsyncStorage.multiRemove(keys);
+
+        Alert.alert(
+          "Success",
+          "License removed.",
+          [{ text: "OK", onPress: () => router.replace("/") }]
+        );
+      } else {
+        Alert.alert("Error", data?.message || "Failed to remove license.");
+      }
+
+    } catch (error) {
+      Alert.alert("Error", "Network error.");
     } finally {
       setLoading(false);
     }
@@ -300,6 +378,10 @@ export default function LoginScreen() {
           <TouchableOpacity style={styles.forgotButton}>
             <Text style={styles.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity style={styles.removeLicenseButton} onPress={handleRemoveLicense}>
+            <Text style={styles.removeLicenseText}>Remove License (Temporary)</Text>
+          </TouchableOpacity>
         </Animated.View>
 
         <Text style={styles.footerText}>Version 1.0.0 • TaskPrime SAS</Text>
@@ -369,6 +451,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   buttonText: { color: "#fff", fontSize: Typography.sizes.lg, fontWeight: "700" },
+
+  buttonText: { color: "#fff", fontSize: Typography.sizes.lg, fontWeight: "700" },
+
+  removeLicenseButton: { marginTop: Spacing.md, padding: Spacing.sm },
+  removeLicenseText: { color: Colors.error.main, fontSize: Typography.sizes.xs, fontWeight: "600" },
 
   forgotButton: { marginTop: Spacing.lg, padding: Spacing.sm },
   forgotText: { color: Colors.primary.main, fontSize: Typography.sizes.sm, fontWeight: "600" },

@@ -1,6 +1,5 @@
 module.exports = {
   expo: {
-    owner: "demoadila",
     name: "TaskSAS",
     slug: "TaskSAS1",
     version: "1.0.0",
@@ -63,7 +62,7 @@ module.exports = {
     extra: {
       router: {},
       eas: {
-        projectId: "aca0c95c-06e4-4cef-b0bb-6a40dd9cf18b"
+        projectId: "c5368bc1-f81f-4c4a-b8e3-2fe907a8ff40"
       }
     },
     experiments: {

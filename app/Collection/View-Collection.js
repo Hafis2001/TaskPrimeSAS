@@ -1,5 +1,6 @@
 // app/Collection/View-Collection.js
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -20,7 +21,10 @@ import {
 } from "react-native";
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
-import dbService from "../../src/services/database";
+import pdfService from "../../src/services/pdfService";
+import printerService from "../../src/services/printerService";
+
+const API_COLLECTION_LIST = "https://tasksas.com/api/collection/list/";
 
 export default function ViewCollectionScreen() {
   const router = useRouter();
@@ -32,9 +36,17 @@ export default function ViewCollectionScreen() {
   const [isOnline, setIsOnline] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [filterPaymentType, setFilterPaymentType] = useState("all");
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+
+  // Printer State
+  const [printerModalVisible, setPrinterModalVisible] = useState(false);
+  const [printers, setPrinters] = useState([]);
+  const [isScanningPrinters, setIsScanningPrinters] = useState(false);
+  const [connectionType, setConnectionType] = useState('ble'); // 'ble' | 'usb'
+  const [selectedCollectionToPrint, setSelectedCollectionToPrint] = useState(null);
 
   const [stats, setStats] = useState({
     total: 0,
@@ -53,19 +65,14 @@ export default function ViewCollectionScreen() {
       setIsOnline(state.isConnected);
     });
 
-    const interval = setInterval(() => {
-      loadCollections();
-    }, 30000);
-
     return () => {
       unsubscribe();
-      clearInterval(interval);
     };
   }, []);
 
   useEffect(() => {
     applyFilters();
-  }, [collections, searchQuery, filterStatus]);
+  }, [collections, searchQuery, filterStatus, filterPaymentType]);
 
   const checkNetworkStatus = async () => {
     const state = await NetInfo.fetch();
@@ -76,16 +83,57 @@ export default function ViewCollectionScreen() {
     try {
       if (loading) setLoading(true);
 
-      await dbService.init();
-      const allCollections = await dbService.getOfflineCollections();
-      const sortedCollections = allCollections.sort((a, b) => {
-        return new Date(b.created_at || b.date) - new Date(a.created_at || a.date);
+      const token = await AsyncStorage.getItem("authToken");
+
+      if (!token || !isOnline) {
+        // Fallback or empty if offline/no token, but user requested API direct
+        if (!isOnline) {
+          Alert.alert("Offline", "You are offline. Cannot fetch collections from server.");
+          setLoading(false);
+          return;
+        }
+      }
+
+      console.log("[View-Collection] Fetching from API...");
+      const response = await fetch(API_COLLECTION_LIST, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
       });
 
-      setCollections(sortedCollections);
-      calculateStats(sortedCollections);
+      const json = await response.json();
+
+      if (json.success && Array.isArray(json.data)) {
+        const mapped = json.data.map(item => ({
+          id: item.id,
+          code: item.code, // IMPORTANT: Voucher Code
+          customer_name: item.name,
+          customer_code: item.code,
+          customer_place: item.place,
+          customer_phone: item.phone,
+          amount: item.amount,
+          payment_type: item.type,
+          cheque_number: item.cheque_no,
+          ref_no: item.ref_no,
+          remarks: item.remark, // Note: Upload.js maps to 'remark', API sends 'remark'
+          synced: 1, // API data is always synced
+          date: item.created_date ? `${item.created_date}T${item.created_time || '00:00:00'}` : new Date().toISOString()
+        }));
+
+        const sortedCollections = mapped.sort((a, b) => {
+          return new Date(b.date) - new Date(a.date);
+        });
+
+        setCollections(sortedCollections);
+        calculateStats(sortedCollections);
+      } else {
+        console.log("API response not success or no data", json);
+      }
     } catch (error) {
       console.error("[View-Collection] Error loading collections:", error);
+      Alert.alert("Error", "Failed to load collections from server.");
     } finally {
       setLoading(false);
     }
@@ -98,12 +146,13 @@ export default function ViewCollectionScreen() {
   }, []);
 
   const calculateStats = (data) => {
-    const syncedItems = data.filter(item => item.synced === 1);
-    const pendingItems = data.filter(item => item.synced === 0);
+    // API data implies everything is synced
+    const syncedItems = data;
+    const pendingItems = [];
 
-    const totalAmount = data.reduce((sum, item) => sum + parseFloat(item.amount), 0);
-    const syncedAmount = syncedItems.reduce((sum, item) => sum + parseFloat(item.amount), 0);
-    const pendingAmount = pendingItems.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+    const totalAmount = data.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+    const syncedAmount = totalAmount;
+    const pendingAmount = 0;
 
     setStats({
       total: data.length,
@@ -118,18 +167,32 @@ export default function ViewCollectionScreen() {
   const applyFilters = () => {
     let filtered = [...collections];
 
+    // Filter by sync status (everything is synced from API)
     if (filterStatus === "synced") {
-      filtered = filtered.filter(item => item.synced === 1);
+      // No-op
     } else if (filterStatus === "pending") {
-      filtered = filtered.filter(item => item.synced === 0);
+      filtered = []; // No pending items in API view
     }
 
+    // Filter by payment type
+    if (filterPaymentType === "cash") {
+      filtered = filtered.filter(item => item.payment_type && item.payment_type.toLowerCase() === "cash");
+    } else if (filterPaymentType === "check") {
+      filtered = filtered.filter(item => {
+        const type = item.payment_type ? item.payment_type.toLowerCase() : '';
+        return type === "check" || type === "cheque";
+      });
+    }
+
+    // Filter by search query
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(item =>
-        item.customer_name.toLowerCase().includes(query) ||
-        item.customer_code.toLowerCase().includes(query) ||
-        (item.remarks && item.remarks.toLowerCase().includes(query))
+        (item.customer_name && item.customer_name.toLowerCase().includes(query)) ||
+        (item.customer_code && item.customer_code.toLowerCase().includes(query)) ||
+        (item.cheque_number && item.cheque_number.toLowerCase().includes(query)) ||
+        (item.remarks && item.remarks.toLowerCase().includes(query)) ||
+        (item.code && item.code.toLowerCase().includes(query))
       );
     }
 
@@ -137,32 +200,12 @@ export default function ViewCollectionScreen() {
   };
 
   const handleDelete = (collection) => {
-    Alert.alert(
-      "Delete Collection",
-      `Delete collection for ${collection.customer_name}?${collection.synced === 1 ? '\n\nNote: This is already synced to server.' : ''}`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteCollection(collection.id);
-          }
-        }
-      ]
-    );
-  };
-
-  const deleteCollection = async (collectionId) => {
-    try {
-      await dbService.init();
-      await dbService.deleteCollection(collectionId);
-      await loadCollections();
-      Alert.alert("Success", "Collection deleted successfully.");
-    } catch (error) {
-      console.error("Delete error:", error);
-      Alert.alert("Error", "Failed to delete collection.");
-    }
+    // API Deletion? User didn't specify. Assuming existing delete logic (local DB) 
+    // BUT we are viewing API data. 
+    // Safe to disable delete or implement API delete if needed. 
+    // The user didn't ask for API delete, but the button is there.
+    // I will comment out the delete action or show alert that it's server data.
+    Alert.alert("Info", "Deletion from server is not enabled in this view.");
   };
 
   const handleViewDetails = (collection) => {
@@ -170,8 +213,72 @@ export default function ViewCollectionScreen() {
     setShowDetailModal(true);
   };
 
+  // --- Printer & PDF Logic ---
+
+  const handlePrint = async (collection) => {
+    try {
+      if (printerService.connected) {
+        Alert.alert("Printing", "Sending data to printer...");
+        await printerService.printCollectionReceipt(collection);
+      } else {
+        setSelectedCollectionToPrint(collection);
+        setPrinterModalVisible(true);
+        scanPrinters('ble');
+      }
+    } catch (error) {
+      console.error("Print initiation error:", error);
+      Alert.alert("Error", "Failed to initiate printing");
+    }
+  };
+
+  const scanPrinters = async (type = connectionType) => {
+    setIsScanningPrinters(true);
+    setPrinters([]);
+    setConnectionType(type);
+    try {
+      const devices = await printerService.getDeviceList(type);
+      setPrinters(devices);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to scan for printers");
+    } finally {
+      setIsScanningPrinters(false);
+    }
+  };
+
+  const connectAndPrintCollection = async (printer) => {
+    try {
+      const connected = await printerService.connect(printer);
+      if (connected) {
+        setPrinterModalVisible(false);
+        if (selectedCollectionToPrint) {
+          setTimeout(async () => {
+            await printerService.printCollectionReceipt(selectedCollectionToPrint);
+            setSelectedCollectionToPrint(null);
+          }, 500);
+        }
+      } else {
+        Alert.alert("Connection Failed", "Could not connect to selected printer");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Connection failed");
+    }
+  };
+
+  const handleSharePDF = async (collection) => {
+    try {
+      await pdfService.shareCollectionPDF(collection);
+    } catch (error) {
+      Alert.alert("Error", "Failed to share PDF");
+    }
+  };
+
+  // ---------------------------
+
   const formatDate = (dateString) => {
+    if (!dateString) return "";
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return dateString;
     return date.toLocaleDateString('en-IN', {
       day: '2-digit',
       month: 'short',
@@ -180,7 +287,7 @@ export default function ViewCollectionScreen() {
   };
 
   const formatCurrency = (amount) => {
-    return `${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    return `${parseFloat(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   };
 
   const renderStatCard = (title, value, subtitle, colorStart, colorEnd, icon) => (
@@ -245,9 +352,15 @@ export default function ViewCollectionScreen() {
 
         <View style={styles.cardRight}>
           <Text style={styles.amount}>{formatCurrency(item.amount)}</Text>
-          <TouchableOpacity onPress={() => handleDelete(item)} style={styles.deleteAction}>
-            <Ionicons name="trash-outline" size={18} color={Colors.error.main} />
-          </TouchableOpacity>
+
+          <View style={styles.actionRow}>
+            <TouchableOpacity onPress={() => handlePrint(item)} style={styles.iconAction}>
+              <Ionicons name="print-outline" size={20} color={Colors.primary.main} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => handleSharePDF(item)} style={styles.iconAction}>
+              <Ionicons name="share-outline" size={20} color={Colors.secondary.main} />
+            </TouchableOpacity>
+          </View>
         </View>
       </TouchableOpacity>
     </Animated.View>
@@ -271,7 +384,7 @@ export default function ViewCollectionScreen() {
           <Text style={styles.headerTitle}>View Collections</Text>
           <TouchableOpacity onPress={() => setShowFilterModal(true)} style={styles.filterButton}>
             <Ionicons name="filter" size={22} color={Colors.primary.main} />
-            {filterStatus !== "all" && <View style={styles.filterDot} />}
+            {(filterStatus !== "all" || filterPaymentType !== "all") && <View style={styles.filterDot} />}
           </TouchableOpacity>
         </View>
 
@@ -279,7 +392,7 @@ export default function ViewCollectionScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsScroll}>
             {renderStatCard("Total", stats.total, formatCurrency(stats.totalAmount), Colors.primary.main, Colors.primary[600], "layers")}
             {renderStatCard("Synced", stats.synced, formatCurrency(stats.syncedAmount), Colors.success.main, Colors.success[600], "cloud-done")}
-            {renderStatCard("Pending", stats.pending, formatCurrency(stats.pendingAmount), Colors.warning.main, Colors.warning[600], "cloud-upload")}
+            {/* stats.pending will be 0 */}
           </ScrollView>
         </View>
 
@@ -310,9 +423,6 @@ export default function ViewCollectionScreen() {
             <View style={styles.emptyContainer}>
               <Ionicons name="file-tray-outline" size={64} color={Colors.primary[200]} />
               <Text style={styles.emptyTitle}>No Collections Found</Text>
-              <TouchableOpacity style={styles.addButton} onPress={() => router.push("/Collection/AddCollection")}>
-                <Text style={styles.addButtonText}>Add New Collection</Text>
-              </TouchableOpacity>
             </View>
           }
         />
@@ -333,14 +443,24 @@ export default function ViewCollectionScreen() {
                 {filterStatus === "all" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("synced"); setShowFilterModal(false); }}>
-                <Text style={[styles.filterOptionText, filterStatus === "synced" && styles.activeFilterText]}>Synced Only</Text>
-                {filterStatus === "synced" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
+              {/* Removed Pending option since API only has synced */}
+
+              <View style={styles.filterDivider} />
+              <Text style={styles.filterSectionTitle}>Payment Type</Text>
+
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterPaymentType("all"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterPaymentType === "all" && styles.activeFilterText]}>All Types</Text>
+                {filterPaymentType === "all" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("pending"); setShowFilterModal(false); }}>
-                <Text style={[styles.filterOptionText, filterStatus === "pending" && styles.activeFilterText]}>Pending Only</Text>
-                {filterStatus === "pending" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterPaymentType("cash"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterPaymentType === "cash" && styles.activeFilterText]}>Cash Only</Text>
+                {filterPaymentType === "cash" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterPaymentType("check"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterPaymentType === "check" && styles.activeFilterText]}>Check Only</Text>
+                {filterPaymentType === "check" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
             </View>
           </View>
@@ -359,6 +479,25 @@ export default function ViewCollectionScreen() {
 
               {selectedCollection && (
                 <ScrollView contentContainerStyle={styles.detailContent}>
+                  {/* Added Print/PDF in Detail Modal as well just in case */}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20 }}>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.primary[50], padding: 10, borderRadius: 8 }}
+                      onPress={() => handlePrint(selectedCollection)}
+                    >
+                      <Ionicons name="print-outline" size={20} color={Colors.primary.main} style={{ marginRight: 8 }} />
+                      <Text style={{ color: Colors.primary.main, fontWeight: '600' }}>Print</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.secondary[50], padding: 10, borderRadius: 8 }}
+                      onPress={() => handleSharePDF(selectedCollection)}
+                    >
+                      <Ionicons name="share-outline" size={20} color={Colors.secondary.main} style={{ marginRight: 8 }} />
+                      <Text style={{ color: Colors.secondary.main, fontWeight: '600' }}>Share PDF</Text>
+                    </TouchableOpacity>
+                  </View>
+
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Client</Text>
                     <Text style={styles.detailValue}>{selectedCollection.customer_name}</Text>
@@ -389,11 +528,18 @@ export default function ViewCollectionScreen() {
                     <Text style={styles.detailLabel}>Payment Type</Text>
                     <Text style={styles.detailValue}>{selectedCollection.payment_type}</Text>
                   </View>
+                  {selectedCollection.payment_type && selectedCollection.payment_type.toLowerCase() === 'check' && selectedCollection.cheque_number && (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Cheque Number</Text>
+                      <Text style={styles.detailValue}>{selectedCollection.cheque_number}</Text>
+                    </View>
+                  )}
+
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Status</Text>
-                    <View style={[styles.badge, { backgroundColor: selectedCollection.synced === 1 ? Colors.success[50] : Colors.warning[50] }]}>
-                      <Text style={[styles.badgeText, { color: selectedCollection.synced === 1 ? Colors.success.main : Colors.warning.main }]}>
-                        {selectedCollection.synced === 1 ? "SYNCED TO SERVER" : "PENDING UPLOAD"}
+                    <View style={[styles.badge, { backgroundColor: Colors.success[50] }]}>
+                      <Text style={[styles.badgeText, { color: Colors.success.main }]}>
+                        SYNCED TO SERVER
                       </Text>
                     </View>
                   </View>
@@ -410,6 +556,92 @@ export default function ViewCollectionScreen() {
                   )}
                 </ScrollView>
               )}
+            </View>
+          </View>
+        </Modal>
+
+        {/* Printer Selection Modal */}
+        <Modal
+          visible={printerModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setPrinterModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            {/* Reusing detailModal style for consistency as it's bottom sheet like in upload */}
+            <View style={styles.detailModal}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Printer</Text>
+                <TouchableOpacity onPress={() => setPrinterModalVisible(false)}>
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ padding: 16, alignItems: 'center' }}>
+                <View style={{ flexDirection: 'row', backgroundColor: Colors.neutral[200], borderRadius: 8, padding: 4, marginBottom: 16 }}>
+                  <TouchableOpacity
+                    onPress={() => scanPrinters('ble')}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 20,
+                      borderRadius: 6,
+                      backgroundColor: connectionType === 'ble' ? '#FFF' : 'transparent',
+                      shadowColor: connectionType === 'ble' ? '#000' : 'transparent',
+                      shadowOpacity: connectionType === 'ble' ? 0.1 : 0,
+                      elevation: connectionType === 'ble' ? 2 : 0,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '600', color: connectionType === 'ble' ? Colors.primary.main : Colors.text.secondary }}>Bluetooth</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => scanPrinters('usb')}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 20,
+                      borderRadius: 6,
+                      backgroundColor: connectionType === 'usb' ? '#FFF' : 'transparent',
+                      shadowColor: connectionType === 'usb' ? '#000' : 'transparent',
+                      shadowOpacity: connectionType === 'usb' ? 0.1 : 0,
+                      elevation: connectionType === 'usb' ? 2 : 0,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '600', color: connectionType === 'usb' ? Colors.primary.main : Colors.text.secondary }}>USB / Cable</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isScanningPrinters && <ActivityIndicator size="large" color={Colors.primary.main} />}
+                {!isScanningPrinters && (
+                  <TouchableOpacity style={{ marginTop: 10 }} onPress={() => scanPrinters(connectionType)}>
+                    <Text style={{ color: Colors.primary.main, fontWeight: '600' }}>Rescan</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <ScrollView style={{ maxHeight: 300 }}>
+                {printers.map((printer, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={{
+                      padding: 16,
+                      borderBottomWidth: 1,
+                      borderBottomColor: Colors.border.light,
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                    onPress={() => connectAndPrintCollection(printer)}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: '600' }}>{printer.device_name || printer.product_id || "Unknown Device"}</Text>
+                      <Text style={{ fontSize: 12, color: Colors.text.secondary }}>{printer.inner_mac_address || printer.vendor_id || "ID: " + index}</Text>
+                    </View>
+                    <Ionicons name={connectionType === 'ble' ? "bluetooth" : "usb"} size={20} color={Colors.primary.main} />
+                  </TouchableOpacity>
+                ))}
+                {printers.length === 0 && !isScanningPrinters && (
+                  <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.text.tertiary }}>No printers found</Text>
+                )}
+              </ScrollView>
             </View>
           </View>
         </Modal>
@@ -538,6 +770,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.text.primary,
     marginBottom: 4,
+    marginRight: 4,
   },
   metaRow: {
     flexDirection: 'row',
@@ -560,14 +793,25 @@ const styles = StyleSheet.create({
   cardRight: {
     alignItems: 'flex-end',
     justifyContent: 'space-between',
+    minWidth: 80,
   },
   amount: {
     fontSize: Typography.sizes.lg,
     fontWeight: '700',
     color: Colors.text.primary,
+    marginBottom: 8,
   },
-  deleteAction: {
-    padding: 4,
+  // New styles for action buttons
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  iconAction: {
+    padding: 6,
+    backgroundColor: Colors.neutral[50],
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -605,7 +849,7 @@ const styles = StyleSheet.create({
   detailModal: {
     backgroundColor: '#FFFFFF',
     borderRadius: BorderRadius.xl,
-    maxHeight: '80%',
+    maxHeight: '90%',
     padding: Spacing.lg,
   },
   modalHeader: {
@@ -652,5 +896,17 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.base,
     color: Colors.text.primary,
     fontWeight: '500',
+  },
+  filterDivider: {
+    height: 1,
+    backgroundColor: Colors.border.light,
+    marginVertical: Spacing.md,
+  },
+  filterSectionTitle: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: '700',
+    color: Colors.text.secondary,
+    textTransform: 'uppercase',
+    marginBottom: Spacing.sm,
   },
 });

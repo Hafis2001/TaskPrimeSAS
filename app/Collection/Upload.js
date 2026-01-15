@@ -9,16 +9,19 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   RefreshControl,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import Animated, { FadeInUp } from "react-native-reanimated";
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
+import pdfService from "../../src/services/pdfService";
+import printerService from "../../src/services/printerService";
 
 const API_UPLOAD_COLLECTION = "https://tasksas.com/api/collection/create/";
 
@@ -33,7 +36,16 @@ export default function UploadScreen() {
   const [isOnline, setIsOnline] = useState(true);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
 
+  // Printer State
+  const [printerModalVisible, setPrinterModalVisible] = useState(false);
+  const [printers, setPrinters] = useState([]);
+  const [isScanningPrinters, setIsScanningPrinters] = useState(false);
+  const [connectionType, setConnectionType] = useState('ble'); // 'ble' | 'usb'
+
+  const [selectedCollectionToPrint, setSelectedCollectionToPrint] = useState(null);
+
   useEffect(() => {
+    console.log("[Upload] Component Mounted");
     checkNetworkStatus();
     loadPendingCollections();
 
@@ -233,12 +245,70 @@ export default function UploadScreen() {
     }
   };
 
+  const handlePrint = async (collection) => {
+    try {
+      if (printerService.connected) {
+        Alert.alert("Printing", "Sending data to printer...");
+        await printerService.printCollectionReceipt(collection);
+      } else {
+        setSelectedCollectionToPrint(collection);
+        setPrinterModalVisible(true);
+        scanPrinters('ble'); // Default to BLE scan
+      }
+    } catch (error) {
+      console.error("Print initiation error:", error);
+      Alert.alert("Error", "Failed to initiate printing");
+    }
+  };
+
+  const scanPrinters = async (type = connectionType) => {
+    setIsScanningPrinters(true);
+    setPrinters([]);
+    setConnectionType(type);
+    try {
+      // printerService.getDeviceList() handles init and permissions safely now
+      const devices = await printerService.getDeviceList(type);
+      setPrinters(devices);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to scan for printers");
+    } finally {
+      setIsScanningPrinters(false);
+    }
+  };
+
+  const connectAndPrintCollection = async (printer) => {
+    try {
+      const connected = await printerService.connect(printer);
+      if (connected) {
+        setPrinterModalVisible(false);
+        if (selectedCollectionToPrint) {
+          setTimeout(async () => {
+            await printerService.printCollectionReceipt(selectedCollectionToPrint);
+            setSelectedCollectionToPrint(null);
+          }, 500);
+        }
+      } else {
+        Alert.alert("Connection Failed", "Could not connect to selected printer");
+      }
+    } catch (e) {
+      Alert.alert("Error", "Connection failed");
+    }
+  };
+
+  const handleSharePDF = async (collection) => {
+    try {
+      await pdfService.shareCollectionPDF(collection);
+    } catch (error) {
+      Alert.alert("Error", "Failed to share PDF");
+    }
+  };
+
   const renderCollectionItem = ({ item, index }) => {
     const isSelected = selectedCollections.includes(item.id);
 
     return (
-      <Animated.View
-        entering={FadeInUp.delay(index * 50)}
+      <View
         style={[styles.collectionCard, isSelected && styles.selectedCard]}
       >
         <TouchableOpacity
@@ -267,8 +337,26 @@ export default function UploadScreen() {
               <Text style={styles.dateText}>{new Date(item.date).toLocaleDateString()}</Text>
             </View>
           </View>
+
+          {/* Action Buttons */}
+          <View style={styles.actionButtons}>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => handlePrint(item)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="print-outline" size={20} color={Colors.primary.main} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => handleSharePDF(item)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="share-outline" size={20} color={Colors.secondary.main} />
+            </TouchableOpacity>
+          </View>
         </TouchableOpacity>
-      </Animated.View>
+      </View>
     );
   };
 
@@ -346,7 +434,7 @@ export default function UploadScreen() {
               }
             />
 
-            <Animated.View entering={FadeInUp} style={styles.footer}>
+            <View style={styles.footer}>
               <TouchableOpacity
                 style={[
                   styles.uploadButton,
@@ -371,11 +459,99 @@ export default function UploadScreen() {
                   )}
                 </View>
               </TouchableOpacity>
-            </Animated.View>
+            </View>
           </>
         )}
+
+        {/* Printer Selection Modal */}
+        <Modal
+          visible={printerModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setPrinterModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Printer</Text>
+                <TouchableOpacity onPress={() => setPrinterModalVisible(false)}>
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ padding: 16, alignItems: 'center' }}>
+                {/* Connection Type Toggle */}
+                <View style={{ flexDirection: 'row', backgroundColor: Colors.neutral[200], borderRadius: 8, padding: 4, marginBottom: 16 }}>
+                  <TouchableOpacity
+                    onPress={() => scanPrinters('ble')}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 20,
+                      borderRadius: 6,
+                      backgroundColor: connectionType === 'ble' ? '#FFF' : 'transparent',
+                      shadowColor: connectionType === 'ble' ? '#000' : 'transparent',
+                      shadowOpacity: connectionType === 'ble' ? 0.1 : 0,
+                      shadowRadius: 2,
+                      elevation: connectionType === 'ble' ? 2 : 0,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '600', color: connectionType === 'ble' ? Colors.primary.main : Colors.text.secondary }}>Bluetooth</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => scanPrinters('usb')}
+                    style={{
+                      paddingVertical: 6,
+                      paddingHorizontal: 20,
+                      borderRadius: 6,
+                      backgroundColor: connectionType === 'usb' ? '#FFF' : 'transparent',
+                      shadowColor: connectionType === 'usb' ? '#000' : 'transparent',
+                      shadowOpacity: connectionType === 'usb' ? 0.1 : 0,
+                      shadowRadius: 2,
+                      elevation: connectionType === 'usb' ? 2 : 0,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '600', color: connectionType === 'usb' ? Colors.primary.main : Colors.text.secondary }}>USB / Cable</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {isScanningPrinters && <ActivityIndicator size="large" color={Colors.primary.main} />}
+                {!isScanningPrinters && (
+                  <TouchableOpacity style={{ marginTop: 10 }} onPress={() => scanPrinters(connectionType)}>
+                    <Text style={{ color: Colors.primary.main, fontWeight: '600' }}>Rescan</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <ScrollView style={styles.modalBody}>
+                {printers.map((printer, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    style={{
+                      padding: 16,
+                      borderBottomWidth: 1,
+                      borderBottomColor: Colors.border.light,
+                      flexDirection: 'row',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                    onPress={() => connectAndPrintCollection(printer)}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: '600' }}>{printer.device_name || printer.product_id || "Unknown Device"}</Text>
+                      <Text style={{ fontSize: 12, color: Colors.text.secondary }}>{printer.inner_mac_address || printer.vendor_id || "ID: " + index}</Text>
+                    </View>
+                    <Ionicons name={connectionType === 'ble' ? "bluetooth" : "usb"} size={20} color={Colors.primary.main} />
+                  </TouchableOpacity>
+                ))}
+                {printers.length === 0 && !isScanningPrinters && (
+                  <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.text.tertiary }}>No printers found</Text>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
-    </LinearGradient>
+    </LinearGradient >
   );
 }
 
@@ -525,12 +701,28 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.xs,
     color: Colors.text.tertiary,
   },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    marginLeft: Spacing.sm,
+  },
+  actionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.neutral[50],
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
   footer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     padding: Spacing.lg,
+    paddingBottom: 50,
     backgroundColor: 'rgba(255,255,255,0.9)',
     borderTopWidth: 1,
     borderTopColor: Colors.border.light,
@@ -558,5 +750,99 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  // Printer Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20, // Hardcoded for safety
+    borderTopRightRadius: 20, // Hardcoded for safety
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  modalTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  modalBody: {
+    paddingBottom: Spacing.lg,
+  },
+  closeButton: {
+    padding: 4,
+  },
+  printerOptions: {
+    padding: Spacing.lg,
+    alignItems: 'center',
+  },
+  connectionTypeToggle: {
+    flexDirection: 'row',
+    backgroundColor: Colors.neutral[200],
+    borderRadius: 8,
+    padding: 4,
+    marginBottom: Spacing.md,
+  },
+  connectionTypeBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 20,
+    borderRadius: 6,
+  },
+  connectionTypeBtnActive: {
+    backgroundColor: '#FFF',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  connectionTypeText: {
+    fontWeight: '600',
+    color: Colors.text.secondary,
+  },
+  connectionTypeTextActive: {
+    color: Colors.primary.main,
+  },
+  rescanButton: {
+    marginTop: 10,
+  },
+  rescanText: {
+    color: Colors.primary.main,
+    fontWeight: '600',
+  },
+  printerList: {
+    maxHeight: 400,
+  },
+  printerItem: {
+    padding: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  printerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  printerAddress: {
+    fontSize: 12,
+    color: Colors.text.secondary,
+    marginTop: 2,
+  },
+  noPrintersText: {
+    textAlign: 'center',
+    marginTop: 20,
+    color: Colors.text.tertiary,
   },
 });

@@ -1,20 +1,20 @@
 // src/screens/LicenseActivationScreen.js
-import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-  Platform,
-  PermissionsAndroid,
-} from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Application from "expo-application";
 import * as Device from "expo-device";
+import { LinearGradient } from "expo-linear-gradient";
+import { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  PermissionsAndroid,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 export default function LicenseActivationScreen({ onActivationSuccess }) {
   const [licenseKey, setLicenseKey] = useState("");
@@ -60,21 +60,21 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
   const getDeviceId = async () => {
     try {
       let id = null;
-      
+
       if (Platform.OS === "android") {
         // Request permission first
         const hasPermission = await requestAndroidPermissions();
-        
+
         if (!hasPermission) {
           throw new Error("Permission denied. Please grant phone state permission to use this app.");
         }
 
         // Try multiple methods to get Android ID
-        
+
         // Method 1: Application.androidId
         id = Application.androidId;
         console.log("Method 1 - Application.androidId:", id);
-        
+
         if (id && id !== "null" && id !== "" && id !== "unknown") {
           console.log("✅ Using Application.androidId:", id);
           return id;
@@ -85,7 +85,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
           try {
             id = await Application.getAndroidId();
             console.log("Method 2 - Application.getAndroidId():", id);
-            
+
             if (id && id !== "null" && id !== "" && id !== "unknown") {
               console.log("✅ Using Application.getAndroidId():", id);
               return id;
@@ -104,22 +104,22 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
 
         // If all methods fail, generate a UUID-based persistent ID
         console.log("⚠️ Android ID not available, generating persistent UUID");
-        const uuid = 'xxxxxxxxxxxxxxxx'.replace(/[x]/g, function(c) {
+        const uuid = 'xxxxxxxxxxxxxxxx'.replace(/[x]/g, function (c) {
           const r = Math.random() * 16 | 0;
           return r.toString(16);
         });
-        
+
         // Store it permanently
         await AsyncStorage.setItem("device_hardware_id", uuid);
         console.log("✅ Generated and stored UUID:", uuid);
         return uuid;
-        
+
       } else if (Platform.OS === "ios") {
         // Get iOS IDFV
         id = await Application.getIosIdForVendorAsync();
-        
+
         console.log("iOS IDFV from Application:", id);
-        
+
         if (id && id !== "null" && id !== "") {
           console.log("✅ Using iOS IDFV:", id);
           return id;
@@ -133,23 +133,23 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         }
 
         // Generate UUID for iOS fallback
-        const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
           const r = Math.random() * 16 | 0;
           const v = c === 'x' ? r : (r & 0x3 | 0x8);
           return v.toString(16);
         });
-        
+
         await AsyncStorage.setItem("device_hardware_id", uuid);
         console.log("✅ Generated and stored iOS UUID:", uuid);
         return uuid;
-        
+
       } else {
         throw new Error("Unsupported platform: " + Platform.OS);
       }
-      
+
     } catch (error) {
       console.error("❌ CRITICAL ERROR getting device ID:", error);
-      
+
       // Last resort - try to get stored ID
       try {
         const storedId = await AsyncStorage.getItem("device_hardware_id");
@@ -160,7 +160,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       } catch (e) {
         console.error("Storage error:", e);
       }
-      
+
       Alert.alert(
         "Device ID Error",
         error.message || "Unable to get device identifier",
@@ -177,7 +177,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
           }
         ]
       );
-      
+
       throw error;
     }
   };
@@ -185,7 +185,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
   const getDeviceName = async () => {
     try {
       let name = "";
-      
+
       if (Platform.OS === "android") {
         const brand = Device.brand || "";
         const modelName = Device.modelName || "";
@@ -196,7 +196,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       } else {
         name = "Unknown Device";
       }
-      
+
       return name;
     } catch (error) {
       console.error("Error getting device name:", error);
@@ -207,25 +207,25 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
   const initializeApp = async () => {
     try {
       setChecking(true);
-      
+
       // Get device ID
       const id = await getDeviceId();
       setDeviceId(id);
-      
+
       // Get device name
       const name = await getDeviceName();
       setDeviceName(name);
-      
+
       console.log("=== DEVICE INFO ===");
       console.log("Platform:", Platform.OS);
       console.log("Device ID:", id);
       console.log("Device Name:", name);
       console.log("Is Physical Device:", Device.isDevice);
       console.log("===================");
-      
+
       // Check if device is already registered in the API
       const isRegistered = await checkDeviceRegistration(id);
-      
+
       if (isRegistered) {
         console.log("✅ Device already registered, skipping license screen");
         onActivationSuccess();
@@ -241,7 +241,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
 
   const checkDeviceRegistration = async (deviceIdToCheck) => {
     try {
-      const CHECK_LICENSE_API = `https://activate.imcbs.com/mobileapp/api/project/sastest/`;
+      const CHECK_LICENSE_API = `https://activate.imcbs.com/mobileapp/api/project/tasksas/`;
 
       console.log("Checking device registration for:", deviceIdToCheck);
 
@@ -271,10 +271,10 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
           const deviceFound = customer.registered_devices.some(
             device => device.device_id === deviceIdToCheck
           );
-          
+
           if (deviceFound) {
             console.log("✅ Device found in customer:", customer.customer_name);
-            
+
             // Store customer info for later use
             await AsyncStorage.setItem("licenseActivated", "true");
             await AsyncStorage.setItem("licenseKey", customer.license_key);
@@ -282,9 +282,9 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
             await AsyncStorage.setItem("customerName", customer.customer_name);
             await AsyncStorage.setItem("projectName", data.project_name);
             await AsyncStorage.setItem("clientId", customer.client_id);
-            
+
             console.log("✅ Stored client_id:", customer.client_id);
-            
+
             return true;
           }
         }
@@ -316,7 +316,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       // ============================================
       // STEP 1: Check if license key is valid (GET API)
       // ============================================
-      const CHECK_LICENSE_API = `https://activate.imcbs.com/mobileapp/api/project/sastest/`;
+      const CHECK_LICENSE_API = `https://activate.imcbs.com/mobileapp/api/project/tasksas/`;
 
       console.log("Validating license key:", licenseKey.trim());
       const checkResponse = await fetch(CHECK_LICENSE_API, {
@@ -362,12 +362,12 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         setLoading(false);
         return;
       }
-      
+
       // Check if this device is already registered for this license
       const isAlreadyRegistered = customer.registered_devices?.some(
         device => device.device_id === deviceId
       );
-      
+
       if (isAlreadyRegistered) {
         // Device already registered, just save and continue
         await AsyncStorage.setItem("licenseActivated", "true");
@@ -376,10 +376,10 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         await AsyncStorage.setItem("customerName", customer.customer_name);
         await AsyncStorage.setItem("projectName", checkData.project_name);
         await AsyncStorage.setItem("clientId", customer.client_id);
-        
+
         console.log("✅ Device already registered");
         console.log("✅ Stored client_id:", customer.client_id);
-        
+
         Alert.alert(
           "Already Registered",
           `Welcome back ${customer.customer_name}!\nThis device is already registered.`,
@@ -393,7 +393,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         setLoading(false);
         return;
       }
-      
+
       // Check if device limit reached
       if (customer.license_summary.registered_devices >= customer.license_summary.max_devices) {
         Alert.alert(
@@ -407,7 +407,7 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       // ============================================
       // STEP 2: Register device (POST API)
       // ============================================
-      const POST_DEVICE_API = `https://activate.imcbs.com/mobileapp/api/project/sastest/license/register/`;
+      const POST_DEVICE_API = `https://activate.imcbs.com/mobileapp/api/project/tasksas/license/register/`;
 
       console.log("📤 Registering new device...");
       console.log("Platform:", Platform.OS);
@@ -454,11 +454,11 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         await AsyncStorage.setItem("customerName", customer.customer_name);
         await AsyncStorage.setItem("projectName", checkData.project_name);
         await AsyncStorage.setItem("clientId", customer.client_id);
-        
+
         console.log("✅ Device registered successfully!");
         console.log("✅ Stored client_id:", customer.client_id);
         console.log("✅ Registered Device ID:", deviceId);
-        
+
         Alert.alert(
           "Success",
           `Welcome ${customer.customer_name}!\nDevice registered successfully.`,
@@ -471,13 +471,13 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         );
       } else {
         // Handle error from device registration API
-        const errorMessage = deviceData.message 
-          || deviceData.error 
+        const errorMessage = deviceData.message
+          || deviceData.error
           || deviceData.detail
           || "Failed to register device. Please try again.";
-        
+
         console.error("❌ Registration failed:", errorMessage);
-        
+
         Alert.alert(
           "Registration Failed",
           errorMessage
@@ -485,17 +485,17 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       }
     } catch (error) {
       console.error("Activation error:", error);
-      
+
       let errorMessage = "Network error. Please check your connection and try again.";
-      
+
       if (error.message) {
         errorMessage = `Error: ${error.message}`;
       }
-      
+
       if (error.name === "TypeError" && error.message.includes("Network request failed")) {
         errorMessage = "Cannot connect to server. Please check your internet connection.";
       }
-      
+
       Alert.alert("Error", errorMessage);
     } finally {
       setLoading(false);

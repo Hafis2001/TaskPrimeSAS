@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
+  Modal,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -16,8 +17,8 @@ import {
   View
 } from 'react-native';
 import { BorderRadius, Colors, Gradients, Spacing, Typography } from '../../constants/theme';
-import DownloadButton from '../../src/components/DownloadButton';
 import OfflineIndicator from '../../src/components/OfflineIndicator';
+import printerService from '../../src/services/printerService';
 
 const { width } = Dimensions.get('window');
 
@@ -26,6 +27,11 @@ const Home = ({ navigation }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const [username, setUsername] = useState('User');
+
+  // Settings Modal State
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const [isPrinterSettingsOpen, setIsPrinterSettingsOpen] = useState(false); // New nested state
+  const [paperSize, setPaperSize] = useState(58); // Default 58mm
 
   useEffect(() => {
     // Load username from storage
@@ -41,6 +47,7 @@ const Home = ({ navigation }) => {
     };
 
     loadUsername();
+    loadPrinterSettings();
 
     // Animations
     Animated.parallel([
@@ -90,7 +97,38 @@ const Home = ({ navigation }) => {
       gradient: Colors.primary[400] ? [Colors.primary[400], Colors.primary[600]] : Gradients.primary,
       shadowColor: Colors.primary.main,
     },
+    {
+      icon: 'cloud-download-outline',
+      title: 'SYNC DATA',
+      description: 'Download & Refresh',
+      onPress: () => router.push("/SyncData"),
+      gradient: Gradients.info || [Colors.primary[400], Colors.primary[600]],
+      shadowColor: Colors.primary.main,
+    },
+    {
+      icon: 'settings-outline',
+      title: 'SETTINGS',
+      description: 'Printer configuration',
+      onPress: () => {
+        loadPrinterSettings();
+        setIsPrinterSettingsOpen(false);
+        setSettingsModalVisible(true);
+      },
+      gradient: [Colors.text.secondary, Colors.text.primary],
+      shadowColor: '#000',
+    },
   ];
+
+  const loadPrinterSettings = async () => {
+    // We can rely on printerService to load its own settings, but we need to know the current value for UI
+    await printerService.loadSettings();
+    setPaperSize(printerService.printerWidthMM);
+  };
+
+  const handlePaperSizeSelection = async (size) => {
+    setPaperSize(size);
+    await printerService.setPaperWidth(size);
+  };
 
   const getCurrentDate = () => {
     const options = { weekday: 'long', month: 'long', day: 'numeric' };
@@ -128,14 +166,7 @@ const Home = ({ navigation }) => {
           </Animated.View>
 
           {/* Download/Sync Button */}
-          <Animated.View
-            style={{
-              opacity: fadeAnim,
-              transform: [{ translateY: slideAnim }]
-            }}
-          >
-            <DownloadButton />
-          </Animated.View>
+
 
           {/* Quick Actions Grid */}
           <Animated.View
@@ -196,8 +227,121 @@ const Home = ({ navigation }) => {
             </View>
           </Animated.View>
         </ScrollView>
+
+        {/* Settings Modal */}
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={settingsModalVisible}
+          onRequestClose={() => setSettingsModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+
+              {/* Header */}
+              <View style={styles.modalHeader}>
+                {isPrinterSettingsOpen ? (
+                  <TouchableOpacity onPress={() => setIsPrinterSettingsOpen(false)} style={styles.backButton}>
+                    <Ionicons name="arrow-back" size={24} color={Colors.text.primary} />
+                  </TouchableOpacity>
+                ) : null}
+
+                <Text style={styles.modalTitle}>
+                  {isPrinterSettingsOpen ? "Printer Settings" : "Settings"}
+                </Text>
+
+                <TouchableOpacity onPress={() => setSettingsModalVisible(false)}>
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Content Logic */}
+              {!isPrinterSettingsOpen ? (
+                /* Main Settings Menu */
+                <View>
+                  <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => setIsPrinterSettingsOpen(true)}
+                  >
+                    <View style={styles.menuItemLeft}>
+                      <View style={[styles.menuIconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.1)' }]}>
+                        <Ionicons name="print-outline" size={24} color={Colors.primary.main} />
+                      </View>
+                      <View>
+                        <Text style={styles.menuItemTitle}>Printer Settings</Text>
+                        <Text style={styles.menuItemSubtitle}>Configure paper size & width</Text>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={24} color={Colors.text.tertiary} />
+                  </TouchableOpacity>
+
+                  {/* Placeholder for other settings */}
+                  <TouchableOpacity style={styles.menuItem} activeOpacity={0.7}>
+                    <View style={styles.menuItemLeft}>
+                      <View style={[styles.menuIconContainer, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                        <Ionicons name="cloud-done-outline" size={24} color={Colors.success.main} />
+                      </View>
+                      <View>
+                        <Text style={styles.menuItemTitle}>Sync</Text>
+                        <Text style={styles.menuItemSubtitle}>Manage data synchronization</Text>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={24} color={Colors.text.tertiary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                /* Inner Printer Settings View */
+                <View style={styles.settingItem}>
+
+                  <View style={styles.settingLabelContainer}>
+                    <Text style={styles.settingLabel}>Paper Size</Text>
+                  </View>
+
+                  <View style={styles.sizeSelectionContainer}>
+                    <TouchableOpacity
+                      style={[styles.sizeOption, paperSize === 58 && styles.sizeOptionSelected]}
+                      onPress={() => handlePaperSizeSelection(58)}
+                    >
+                      <Ionicons name={paperSize === 58 ? "radio-button-on" : "radio-button-off"} size={24} color={paperSize === 58 ? Colors.primary.main : Colors.text.tertiary} />
+                      <View>
+                        <Text style={[styles.sizeOptionTitle, paperSize === 58 && styles.sizeOptionTitleSelected]}>2 Inch</Text>
+                        <Text style={styles.sizeOptionSubtitle}>Standard Receipt</Text>
+                      </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.sizeOption, paperSize === 80 && styles.sizeOptionSelected]}
+                      onPress={() => handlePaperSizeSelection(80)}
+                    >
+                      <Ionicons name={paperSize === 80 ? "radio-button-on" : "radio-button-off"} size={24} color={paperSize === 80 ? Colors.primary.main : Colors.text.tertiary} />
+                      <View>
+                        <Text style={[styles.sizeOptionTitle, paperSize === 80 && styles.sizeOptionTitleSelected]}>3 Inch</Text>
+                        <Text style={styles.sizeOptionSubtitle}>Wide Receipt</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.helperText}>
+                    Select 2 Inch for portable printers, 3 Inch for desktop printers.
+                  </Text>
+
+                  <View style={styles.visualizerContainer}>
+                    <Text style={[styles.visualizerText, { width: '100%', textAlign: 'center' }]}>
+                      Preview Line Width:
+                    </Text>
+                    <Text style={[styles.visualizerLine, { fontSize: 10 }]}>
+                      {'-'.repeat(Math.floor((paperSize / 58) * 32))}
+                    </Text>
+                  </View>
+                </View>
+              )}
+
+            </View>
+          </View>
+        </Modal>
+
       </SafeAreaView>
-    </LinearGradient>
+    </LinearGradient >
   );
 };
 
@@ -305,6 +449,184 @@ const styles = StyleSheet.create({
     top: Spacing.lg,
     right: Spacing.lg,
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end', // sheet style or center? center might be better for small settings
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.xl
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    width: '100%',
+    maxWidth: 400,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: Spacing.md
+  },
+  modalTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  settingItem: {
+    marginBottom: Spacing.xl,
+  },
+  settingLabelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    gap: 10
+  },
+  settingLabel: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.lg,
+    backgroundColor: Colors.background,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+  },
+  stepButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.primary.main,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 3
+  },
+  valueContainer: {
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  valueText: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: Colors.text.primary,
+  },
+  unitText: {
+    fontSize: 14,
+    color: Colors.text.secondary,
+    fontWeight: '500'
+  },
+  helperText: {
+    textAlign: 'center',
+    marginTop: 8,
+    color: Colors.text.tertiary,
+    fontSize: 12
+  },
+  closeButton: {
+    backgroundColor: Colors.secondary.main,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center',
+    marginTop: Spacing.sm
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
+    marginBottom: Spacing.xs
+  },
+  menuItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md
+  },
+  menuIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuItemTitle: {
+    fontSize: Typography.sizes.md,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  menuItemSubtitle: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
+    marginTop: 2
+  },
+  backButton: {
+    marginRight: Spacing.sm
+  },
+  visualizerContainer: {
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    backgroundColor: '#f8f9fa',
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center'
+  },
+  visualizerText: {
+    fontSize: 10,
+    color: Colors.text.tertiary,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 1
+  },
+  visualizerLine: {
+    fontFamily: 'monospace',
+    color: Colors.text.secondary
+  },
+  sizeSelectionContainer: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginBottom: Spacing.md
+  },
+  sizeOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+    gap: Spacing.sm,
+    backgroundColor: '#fff'
+  },
+  sizeOptionSelected: {
+    borderColor: Colors.primary.main,
+    backgroundColor: Colors.primary[50]
+  },
+  sizeOptionTitle: {
+    fontWeight: '600',
+    fontSize: 14,
+    color: Colors.text.secondary
+  },
+  sizeOptionTitleSelected: {
+    color: Colors.primary.main
+  },
+  sizeOptionSubtitle: {
+    fontSize: 10,
+    color: Colors.text.tertiary
+  }
 });
 
 export default Home;

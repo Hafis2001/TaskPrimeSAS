@@ -580,6 +580,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: Spacing.lg,
     gap: 8,
+   
   },
   proceedText: {
     fontSize: Typography.sizes.base,

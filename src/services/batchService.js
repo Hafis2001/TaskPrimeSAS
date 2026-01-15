@@ -301,7 +301,9 @@ class BatchService {
 
                         batchCards.push({
                             // Unique ID for the card
-                            id: `${product.code}_${batch.barcode || batch.id}`,
+                            // Use batch.id (unique) + product code to guarantee uniqueness
+                            // Fallback to barcode if id missing, but add index-like suffix if needed (though batch.id should exist)
+                            id: `${product.code}_${batch.id || batch.batch_id || batch.barcode}_${Math.random().toString(36).substr(2, 5)}`,
 
                             // Product info
                             code: product.code,
@@ -309,6 +311,7 @@ class BatchService {
                             brand: product.brand || '', // Brand for filtering
                             unit: product.unit || '',
                             taxcode: product.taxcode || '',
+                            text6: product.text6 || '', // HSN Code
                             productCategory: product.category || '', // Category for filtering (from 'product' field in API),
 
                             // Batch-specific info
@@ -327,6 +330,10 @@ class BatchService {
                             thirdPrice: this.parsePrice(batch.third_price),
                             netRate: netRate,
                             pkShop: pkShop,
+                            sales: this.parsePrice(batch.sales || batch.Sales),
+                            fourthPrice: this.parsePrice(batch.fourth_price || batch.fourthprice || batch.fourthPrice),
+                            nlc1: this.parsePrice(batch.nlc1),
+                            bmrp: this.parsePrice(batch.bmrp || batch.BMRP),
                             expiryDate: batch.expirydate || batch.expiry_date || null,
 
                             // Photos (shared across all batches of same product)
@@ -334,6 +341,9 @@ class BatchService {
 
                             // Goddowns (apply product godowns to all batches since they lack barcode)
                             goddowns: product.goddowns || [],
+
+                            // Prices array for dynamic display
+                            prices: batch.prices || [],
 
                             // Full batch object for reference
                             batch: batch
@@ -362,6 +372,7 @@ class BatchService {
                         brand: product.brand || '',
                         unit: product.unit || '',
                         taxcode: product.taxcode || '',
+                        text6: product.text6 || '', // HSN Code
                         productCategory: product.category || '',
                         batchId: null,
                         barcode: product.barcode || product.code,
@@ -374,6 +385,10 @@ class BatchService {
                         cost: 0,
                         secondPrice: 0,
                         thirdPrice: 0,
+                        fourthPrice: 0,
+                        sales: 0,
+                        nlc1: 0,
+                        bmrp: 0,
                         netRate: productPrice,
                         pkShop: 0,
                         expiryDate: null,

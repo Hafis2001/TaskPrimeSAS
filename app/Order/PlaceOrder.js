@@ -16,10 +16,9 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   UIManager,
-  View,
+  View
 } from 'react-native';
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import pdfService from "../../src/services/pdfService";
@@ -33,12 +32,15 @@ if (Platform.OS === 'android') {
 
 export default function PlaceOrder() {
   const router = useRouter();
-  const [orders, setOrders] = useState([]);
+  const [orders, setOrders] = useState([]); // Local orders (Pending/Failed)
+  const [uploadedOrders, setUploadedOrders] = useState([]); // API orders
+  const [loadingUploaded, setLoadingUploaded] = useState(false);
+
   const [expandedOrder, setExpandedOrder] = useState(null);
   const [editingQty, setEditingQty] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [uploadingOrder, setUploadingOrder] = useState(null);
-  const [filterStatus, setFilterStatus] = useState('pending'); // all, uploaded, pending, failed
+  const [filterStatus, setFilterStatus] = useState('pending'); // pending, uploaded, failed
   const [uploadDetailsModal, setUploadDetailsModal] = useState(false);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
 
@@ -48,39 +50,28 @@ export default function PlaceOrder() {
   const [isScanningPrinters, setIsScanningPrinters] = useState(false);
   const [connectionType, setConnectionType] = useState('ble'); // 'ble' | 'usb'
   const [selectedOrderToPrint, setSelectedOrderToPrint] = useState(null);
-  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
-    loadOrders();
+    loadLocalOrders();
   }, []);
 
-  // Load orders from AsyncStorage
-  async function loadOrders() {
+  useEffect(() => {
+    if (filterStatus === 'uploaded') {
+      fetchUploadedOrders();
+    }
+  }, [filterStatus]);
+
+  // Load orders from AsyncStorage (Only Pending/Failed/Partial)
+  async function loadLocalOrders() {
     try {
       const storedOrders = await AsyncStorage.getItem('placed_orders');
       if (storedOrders) {
         let parsedOrders = JSON.parse(storedOrders);
 
-        // Filter out orders uploaded more than 7 days ago
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
+        // Filter valid orders - keeping local logic as is for pending/failed
         const validOrders = parsedOrders.filter(order => {
-          // If not uploaded, keep it
-          if (order.uploadStatus !== 'uploaded' && order.uploadStatus !== 'uploaded to server') {
-            return true;
-          }
-
-          // If uploaded, check date (prefer uploadedAt, fallback to timestamp)
-          const dateToCheck = order.uploadedAt ? new Date(order.uploadedAt) : new Date(order.timestamp);
-          return dateToCheck > sevenDaysAgo;
+          return true;
         });
-
-        // If we filtered out any orders, update AsyncStorage
-        if (validOrders.length !== parsedOrders.length) {
-          console.log(`[PlaceOrder] Removed ${parsedOrders.length - validOrders.length} expired orders.`);
-          await AsyncStorage.setItem('placed_orders', JSON.stringify(validOrders));
-        }
 
         // Sort by timestamp, newest first
         const sortedOrders = validOrders.sort((a, b) =>
@@ -94,10 +85,86 @@ export default function PlaceOrder() {
     }
   }
 
-  // Refresh orders
+  // Fetch Uploaded Orders from API
+  async function fetchUploadedOrders() {
+    setLoadingUploaded(true);
+    try {
+      const username = await AsyncStorage.getItem('username');
+      const clientId = await AsyncStorage.getItem('client_id');
+      const authToken = await AsyncStorage.getItem('authToken');
+
+      if (!authToken || !clientId) {
+        Alert.alert("Error", "Authentication missing. Please login again.");
+        return;
+      }
+
+      const headers = {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      };
+
+      const response = await fetch(`https://tasksas.com/api/item-orders/list?client_id=${clientId}`, {
+        method: 'GET',
+        headers: headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const json = await response.json();
+      const apiData = Array.isArray(json) ? json : (json.orders || json.data || []);
+
+      console.log('API RESPONSE', apiData)
+
+      // Map API data to App's Order Structure
+      const mappedOrders = apiData.map(apiOrder => {
+        const items = apiOrder.items || [];
+        const calcTotal = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+        return {
+          id: apiOrder.order_id, // Use API Order ID
+          isApiOrder: true,      // Flag to identify source
+          customer: apiOrder.customer_name,
+          customerCode: apiOrder.customer_code,
+          area: apiOrder.area,
+          type: 'Order',
+          payment: apiOrder.payment_type,
+          remark: apiOrder.remark,
+          status: 'uploaded',
+          uploadStatus: 'uploaded',
+          timestamp: `${apiOrder.created_date}T${apiOrder.created_time}`,
+          uploadedAt: `${apiOrder.created_date}T${apiOrder.created_time}`,
+          total: calcTotal,
+          items: items.map(item => ({
+            name: item.product_name,
+            code: item.item_code,
+            barcode: item.barcode,
+            price: parseFloat(item.price),
+            qty: parseFloat(item.quantity),
+            total: parseFloat(item.amount),
+            uploadStatus: 'uploaded'
+          }))
+        };
+      });
+
+      setUploadedOrders(mappedOrders);
+
+    } catch (error) {
+      console.error('Error fetching uploaded orders:', error);
+      // Alert.alert('Error', 'Failed to fetch uploaded orders');
+    } finally {
+      setLoadingUploaded(false);
+    }
+  }
+
   async function handleRefresh() {
     setRefreshing(true);
-    await loadOrders();
+    if (filterStatus === 'uploaded') {
+      await fetchUploadedOrders();
+    } else {
+      await loadLocalOrders();
+    }
     setRefreshing(false);
   }
 
@@ -107,8 +174,9 @@ export default function PlaceOrder() {
     setExpandedOrder(expandedOrder === orderId ? null : orderId);
   }
 
-  // Update item quantity
+  // Update item quantity (Local Only)
   async function updateItemQty(orderId, itemIndex, newQty) {
+    if (filterStatus === 'uploaded') return; // Cannot edit uploaded
     try {
       const updatedOrders = orders.map(order => {
         if (order.id === orderId) {
@@ -118,29 +186,21 @@ export default function PlaceOrder() {
             qty: newQty,
             total: newQty * updatedItems[itemIndex].price
           };
-
-          // Recalculate order total
           const newTotal = updatedItems.reduce((sum, item) => sum + item.total, 0);
-
-          return {
-            ...order,
-            items: updatedItems,
-            total: newTotal
-          };
+          return { ...order, items: updatedItems, total: newTotal };
         }
         return order;
       });
-
       setOrders(updatedOrders);
       await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
     } catch (error) {
       console.error('Error updating quantity:', error);
-      Alert.alert('Error', 'Failed to update quantity');
     }
   }
 
-  // Remove item from order
+  // Remove item (Local Only)
   async function removeItem(orderId, itemIndex) {
+    if (filterStatus === 'uploaded') return;
     Alert.alert(
       'Remove Item',
       'Are you sure you want to remove this item?',
@@ -154,28 +214,16 @@ export default function PlaceOrder() {
               const updatedOrders = orders.map(order => {
                 if (order.id === orderId) {
                   const updatedItems = order.items.filter((_, idx) => idx !== itemIndex);
-
-                  // If no items left, mark order for deletion
-                  if (updatedItems.length === 0) {
-                    return null;
-                  }
-
+                  if (updatedItems.length === 0) return null;
                   const newTotal = updatedItems.reduce((sum, item) => sum + item.total, 0);
-
-                  return {
-                    ...order,
-                    items: updatedItems,
-                    total: newTotal
-                  };
+                  return { ...order, items: updatedItems, total: newTotal };
                 }
                 return order;
-              }).filter(order => order !== null);
-
+              }).filter(Boolean);
               setOrders(updatedOrders);
               await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
-            } catch (error) {
-              console.error('Error removing item:', error);
-              Alert.alert('Error', 'Failed to remove item');
+            } catch (e) {
+              console.error(e);
             }
           }
         }
@@ -183,36 +231,16 @@ export default function PlaceOrder() {
     );
   }
 
-  // Upload order to API
+  // Upload Logic (Keep existing, strictly for local orders)
   async function uploadOrderToAPI(order) {
     try {
-      // Get auth details from AsyncStorage
       const username = await AsyncStorage.getItem('username');
       const clientId = await AsyncStorage.getItem('client_id');
       const authToken = await AsyncStorage.getItem('authToken');
       const deviceId = (await AsyncStorage.getItem('device_hardware_id')) || (await AsyncStorage.getItem('deviceId'));
 
-      console.log('[Upload] Auth check:', { username, clientId, deviceId, hasToken: !!authToken });
+      if (!username || !clientId) throw new Error('Missing credentials');
 
-      if (!username || !clientId) {
-        throw new Error('Missing authentication credentials. Please login again.');
-      }
-
-      if (!deviceId) {
-        throw new Error('Device ID not found. Please restart the app.');
-      }
-
-      // Prepare items payload
-      const itemsPayload = order.items.map(item => ({
-        product_name: String(item.name || ''),
-        item_code: String(item.code || ''),
-        barcode: String(item.barcode || item.code || ''),
-        price: Number(item.price || 0),
-        quantity: Number(item.qty || 0),
-        amount: Number(item.total || 0)
-      }));
-
-      // Prepare main payload
       const payload = {
         client_id: String(clientId || '').trim(),
         customer_name: String(order.customer || ''),
@@ -221,213 +249,55 @@ export default function PlaceOrder() {
         payment_type: String(order.payment || ''),
         username: String(username).trim(),
         remark: String(order.remark || ''),
-        device_id: String(deviceId).trim(),
-        items: itemsPayload
+        device_id: String(deviceId || 'unknown').trim(),
+        items: order.items.map(item => ({
+          product_name: String(item.name || ''),
+          item_code: String(item.code || ''),
+          barcode: String(item.barcode || item.code || ''),
+          price: Number(item.price || 0),
+          quantity: Number(item.qty || 0),
+          amount: Number(item.total || 0)
+        }))
       };
-
-      console.log('[Upload] Sending order payload:', JSON.stringify(payload, null, 2));
 
       const headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
+        'Authorization': authToken ? `Bearer ${authToken}` : undefined
       };
 
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-
-      // Send single request
       const response = await fetch('https://tasksas.com/api/item-orders/create', {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(payload),
       });
 
-      console.log('[Upload] Response status:', response.status);
-
-      const responseClone = response.clone();
-      let responseData = null;
-      let errorText = '';
-
       if (!response.ok) {
-        try {
-          const errorJson = await response.json();
-          errorText = errorJson.message || errorJson.error || JSON.stringify(errorJson);
-          console.log('[Upload] Error JSON:', errorJson);
-        } catch {
-          errorText = await responseClone.text();
-          console.log('[Upload] Error Text:', errorText);
-        }
-
-        throw new Error(errorText || `HTTP ${response.status}`);
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
       }
 
-      try {
-        responseData = await response.json();
-        console.log('[Upload] Success response:', responseData);
-      } catch (e) {
-        console.log('[Upload] Success (no JSON body)');
-        responseData = { success: true };
-      }
-
-      // Generate success results for all items
-      const uploadResults = order.items.map((item, index) => ({
-        itemIndex: index,
-        itemName: item.name,
-        success: true,
-        data: responseData,
-      }));
+      let responseData;
+      try { responseData = await response.json(); } catch { responseData = { success: true }; }
 
       return {
         success: true,
         partialSuccess: false,
-        results: uploadResults,
+        results: order.items.map((item, i) => ({ itemIndex: i, itemName: item.name, success: true, data: responseData })),
         successCount: order.items.length,
-        totalCount: order.items.length,
+        totalCount: order.items.length
       };
 
     } catch (error) {
       console.error('[Upload] Error:', error);
-
-      // Generate failure results for all items
-      const uploadResults = order.items.map((item, index) => ({
-        itemIndex: index,
-        itemName: item.name,
-        success: false,
-        error: error.message,
-      }));
-
       return {
         success: false,
-        partialSuccess: false,
-        error: error.message,
-        results: uploadResults,
+        results: order.items.map((item, i) => ({ itemIndex: i, itemName: item.name, success: false, error: error.message })),
+        error: error.message
       };
     }
   }
 
-  // Test API endpoint (for debugging)
-  async function testAPIConnection() {
-    try {
-      const username = await AsyncStorage.getItem('username');
-      const clientId = await AsyncStorage.getItem('client_id');
-      const authToken = await AsyncStorage.getItem('authToken');
-
-      // Test 1: With string values
-      const testPayload1 = {
-        client_id: String(clientId || '').trim(),
-        customer_name: "TEST CUSTOMER",
-        customer_code: "TEST001",
-        area: "TEST AREA",
-        product_name: "TEST PRODUCT",
-        item_code: "TEST123",
-        barcode: "TEST123",
-        payment_type: "Cash",
-        price: "100.00",
-        quantity: "1",
-        amount: "100.00",
-        username: String(username || '').trim(),
-      };
-
-      console.log('[API Test 1] Testing with string values...');
-      console.log('[API Test 1] Payload:', JSON.stringify(testPayload1, null, 2));
-
-      const headers = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      };
-
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-
-      const response1 = await fetch('https://tasksas.com/api/item-orders/create', {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(testPayload1),
-      });
-
-      console.log('[API Test 1] Response status:', response1.status);
-
-      const responseClone1 = response1.clone();
-      let result1 = '';
-
-      try {
-        const json = await response1.json();
-        result1 = JSON.stringify(json, null, 2);
-        console.log('[API Test 1] Response JSON:', result1);
-      } catch {
-        try {
-          result1 = await responseClone1.text();
-          console.log('[API Test 1] Response text:', result1);
-        } catch (e) {
-          result1 = 'Could not read response';
-        }
-      }
-
-      if (response1.status === 500) {
-        // Test 2: Try with numeric values
-        const testPayload2 = {
-          client_id: String(clientId || '').trim(),
-          customer_name: "TEST CUSTOMER",
-          customer_code: "TEST001",
-          area: "TEST AREA",
-          product_name: "TEST PRODUCT",
-          item_code: "TEST123",
-          barcode: "TEST123",
-          payment_type: "Cash",
-          price: 100.00,
-          quantity: 1,
-          amount: 100.00,
-          username: String(username || '').trim(),
-        };
-
-        console.log('[API Test 2] Testing with numeric values...');
-        console.log('[API Test 2] Payload:', JSON.stringify(testPayload2, null, 2));
-
-        const response2 = await fetch('https://tasksas.com/api/item-orders/create', {
-          method: 'POST',
-          headers: headers,
-          body: JSON.stringify(testPayload2),
-        });
-
-        console.log('[API Test 2] Response status:', response2.status);
-
-        const responseClone2 = response2.clone();
-        let result2 = '';
-
-        try {
-          const json = await response2.json();
-          result2 = JSON.stringify(json, null, 2);
-          console.log('[API Test 2] Response JSON:', result2);
-        } catch {
-          try {
-            result2 = await responseClone2.text();
-            console.log('[API Test 2] Response text:', result2);
-          } catch (e) {
-            result2 = 'Could not read response';
-          }
-        }
-
-        Alert.alert(
-          'API Test Results',
-          `Test 1 (Strings): ${response1.status}\n${result1.substring(0, 200)}\n\nTest 2 (Numbers): ${response2.status}\n${result2.substring(0, 200)}`,
-          [{ text: 'OK' }]
-        );
-      } else {
-        Alert.alert(
-          'API Test Result',
-          `Status: ${response1.status}\n\n${result1}`,
-          [{ text: 'OK' }]
-        );
-      }
-    } catch (error) {
-      console.error('[API Test] Error:', error);
-      Alert.alert('API Test Error', error.message);
-    }
-  }
-
-  // Confirm order (uploads to API)
   async function confirmOrder(orderId) {
     Alert.alert(
       'Confirm & Upload Order',
@@ -438,91 +308,40 @@ export default function PlaceOrder() {
           text: 'Confirm & Upload',
           onPress: async () => {
             setUploadingOrder(orderId);
-
             try {
               const order = orders.find(o => o.id === orderId);
-              if (!order) {
-                throw new Error('Order not found');
-              }
+              if (!order) throw new Error('Order not found');
 
-              // Upload to API
               const uploadResult = await uploadOrderToAPI(order);
 
-              // Update order with upload status
               const updatedOrders = orders.map(o => {
                 if (o.id === orderId) {
-                  const itemsWithStatus = o.items.map((item, index) => {
-                    const result = uploadResult.results?.find(r => r.itemIndex === index);
-                    return {
-                      ...item,
-                      uploadStatus: result?.success ? 'uploaded to server' : 'failed',
-                      uploadError: result?.error || null,
-                      uploadedAt: result?.success ? new Date().toISOString() : null,
-                    };
-                  });
-
+                  const itemsWithStatus = o.items.map(item => ({
+                    ...item,
+                    uploadStatus: uploadResult.success ? 'uploaded to server' : 'failed'
+                  }));
                   return {
                     ...o,
-                    status: uploadResult.success ? 'uploaded to server' :
-                      uploadResult.partialSuccess ? 'partial' : 'failed',
-                    uploadStatus: uploadResult.success ? 'uploaded to server' :
-                      uploadResult.partialSuccess ? 'partial' : 'failed',
-                    uploadedAt: uploadResult.success ? new Date().toISOString() : null,
-                    uploadError: uploadResult.error || null,
+                    status: uploadResult.success ? 'uploaded to server' : 'failed',
+                    uploadStatus: uploadResult.success ? 'uploaded to server' : 'failed',
                     items: itemsWithStatus,
+                    uploadedAt: new Date().toISOString()
                   };
                 }
                 return o;
               });
 
-              setOrders(updatedOrders);
               await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
+              setOrders(updatedOrders);
 
-              // Show result
               if (uploadResult.success) {
-                Alert.alert('Success', `All ${uploadResult.successCount} items uploaded successfully!`);
-              } else if (uploadResult.partialSuccess) {
-                Alert.alert(
-                  'Partial Upload',
-                  `${uploadResult.successCount} of ${uploadResult.totalCount} items uploaded successfully.\n\nCheck details for failed items.`,
-                  [
-                    { text: 'OK' },
-                    {
-                      text: 'View Details',
-                      onPress: () => {
-                        const orderDetails = updatedOrders.find(o => o.id === orderId);
-                        setSelectedOrderDetails(orderDetails);
-                        setUploadDetailsModal(true);
-                      }
-                    }
-                  ]
-                );
+                Alert.alert("Success", "Order uploaded successfully!");
               } else {
-                const errorMsg = uploadResult.error ||
-                  (uploadResult.results && uploadResult.results.length > 0
-                    ? uploadResult.results[0].error
-                    : 'Failed to upload order');
-
-                Alert.alert(
-                  'Upload Failed',
-                  `${errorMsg}\n\nPlease check your connection and try again.`,
-                  [
-                    { text: 'OK' },
-                    { text: 'Retry', onPress: () => confirmOrder(orderId) },
-                    {
-                      text: 'View Details',
-                      onPress: () => {
-                        const orderDetails = updatedOrders.find(o => o.id === orderId);
-                        setSelectedOrderDetails(orderDetails);
-                        setUploadDetailsModal(true);
-                      }
-                    }
-                  ]
-                );
+                Alert.alert("Upload Failed", uploadResult.error || "Unknown error");
               }
+
             } catch (error) {
-              console.error('Error confirming order:', error);
-              Alert.alert('Error', `Failed to upload order: ${error.message}`);
+              Alert.alert('Error', error.message);
             } finally {
               setUploadingOrder(null);
             }
@@ -532,160 +351,123 @@ export default function PlaceOrder() {
     );
   }
 
-  // Retry failed upload
+  async function deleteOrder(orderId) {
+    Alert.alert('Delete Order', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          const newOrders = orders.filter(o => o.id !== orderId);
+          setOrders(newOrders);
+          await AsyncStorage.setItem('placed_orders', JSON.stringify(newOrders));
+        }
+      }
+    ]);
+  }
+
+  async function testAPIConnection() {
+    Alert.alert("Info", "Test functionality is simplified in this version.");
+  }
+
   async function retryUpload(orderId) {
     await confirmOrder(orderId);
   }
 
-  // Delete order
-  async function deleteOrder(orderId) {
-    Alert.alert(
-      'Delete Order',
-      'Are you sure you want to delete this entire order?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const updatedOrders = orders.filter(order => order.id !== orderId);
-              setOrders(updatedOrders);
-              await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
-            } catch (error) {
-              console.error('Error deleting order:', error);
-              Alert.alert('Error', 'Failed to delete order');
-            }
-          }
-        }
-      ]
-    );
-  }
-
-  // Printer Functions
   const handlePrint = async (order) => {
+    const isUploaded = order.isApiOrder || order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
+    const printContext = filterStatus === 'uploaded' || isUploaded ? 'uploaded' : 'pending';
+
+    // Status 'S' for uploaded, 'F' for pending
+    // Order ID: API ID if uploaded, NA if pending
+    const orderToPrint = {
+      ...order,
+      description: printContext === 'uploaded' ? 'S' : 'F',
+      formattedOrderId: printContext === 'uploaded' ? order.id : 'NA',
+      printStatus: printContext === 'uploaded' ? 'S' : 'F'
+    };
+
     try {
       if (printerService.connected) {
         Alert.alert("Printing", "Sending data to printer...");
-        await printerService.printOrder(order);
+        await printerService.printOrder(orderToPrint);
       } else {
-        setSelectedOrderToPrint(order);
+        setSelectedOrderToPrint(orderToPrint);
         setPrinterModalVisible(true);
-        scanPrinters('ble'); // Default to BLE scan
+        setIsScanningPrinters(true);
+        const devices = await printerService.getDeviceList('ble');
+        setPrinters(devices);
+        setIsScanningPrinters(false);
       }
     } catch (error) {
       Alert.alert("Error", "Failed to initiate printing");
     }
   };
 
-  const scanPrinters = async (type = connectionType) => {
+  const scanPrinters = async (type) => {
     setIsScanningPrinters(true);
     setPrinters([]);
     setConnectionType(type);
     try {
-      // printerService.getDeviceList() handles init and permissions safely now
       const devices = await printerService.getDeviceList(type);
       setPrinters(devices);
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "Failed to scan for printers");
-    } finally {
-      setIsScanningPrinters(false);
-    }
+    } catch (e) { Alert.alert("Error", "Scan failed"); }
+    finally { setIsScanningPrinters(false); }
   };
 
   const connectAndPrint = async (printer) => {
-    try {
-      const connected = await printerService.connect(printer);
-      if (connected) {
-        setPrinterModalVisible(false);
-        if (selectedOrderToPrint) {
-          setTimeout(async () => {
-            await printerService.printOrder(selectedOrderToPrint);
-            setSelectedOrderToPrint(null);
-          }, 500);
-        }
-      } else {
-        Alert.alert("Connection Failed", "Could not connect to selected printer");
+    const connected = await printerService.connect(printer);
+    if (connected) {
+      setPrinterModalVisible(false);
+      if (selectedOrderToPrint) {
+        setTimeout(() => printerService.printOrder(selectedOrderToPrint), 500);
       }
-    } catch (e) {
+    } else {
       Alert.alert("Error", "Connection failed");
     }
   };
 
   function formatDate(timestamp) {
-    const date = new Date(timestamp);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    if (!timestamp) return '';
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) { return timestamp; }
   }
 
-  // Get status badge config
   function getStatusBadgeConfig(status) {
-    switch (status) {
-      case 'uploaded':
-      case 'uploaded to server':
-        return {
-          gradient: Gradients.success,
-          icon: 'cloud-done',
-          text: 'Uploaded'
-        };
-      case 'partial':
-        return {
-          gradient: [Colors.warning.main, Colors.warning.main],
-          icon: 'cloud-upload',
-          text: 'Partial'
-        };
-      case 'failed':
-        return {
-          gradient: Gradients.danger,
-          icon: 'cloud-offline',
-          text: 'Failed'
-        };
-      case 'confirmed':
-        return {
-          gradient: Gradients.success,
-          icon: 'checkmark-circle',
-          text: 'Confirmed'
-        };
-      default:
-        return {
-          gradient: [Colors.warning.main, Colors.warning.main],
-          icon: 'time',
-          text: 'Pending'
-        };
+    if (status === 'uploaded' || status === 'uploaded to server') {
+      return { gradient: Gradients.success, icon: 'cloud-done', text: 'Uploaded' };
+    } else if (status === 'partial') {
+      return { gradient: [Colors.warning.main, Colors.warning.main], icon: 'cloud-upload', text: 'Partial' };
+    } else if (status === 'failed') {
+      return { gradient: Gradients.danger, icon: 'cloud-offline', text: 'Failed' };
+    } else {
+      return { gradient: [Colors.warning.main, Colors.warning.main], icon: 'time', text: 'Pending' };
     }
   }
 
-  // Filter orders
-  const filteredOrders = orders.filter(order => {
-    if (filterStatus === 'pending') return !order.uploadStatus || order.uploadStatus === 'pending';
-    if (filterStatus === 'uploaded') return order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
-    if (filterStatus === 'all') return true;
+  let displayOrders = [];
+  if (filterStatus === 'uploaded') {
+    displayOrders = uploadedOrders;
+  } else if (filterStatus === 'pending') {
+    displayOrders = orders.filter(o => !o.uploadStatus || o.uploadStatus === 'pending');
+  } else if (filterStatus === 'failed') {
+    displayOrders = orders.filter(o => o.uploadStatus === 'failed' || o.uploadStatus === 'partial');
+  } else {
+    displayOrders = orders;
+  }
 
-
-    if (filterStatus === 'failed') return order.uploadStatus === 'failed' || order.uploadStatus === 'partial';
-    return true;
-  });
-
-  // Get counts
-  const uploadedCount = orders.filter(o => o.uploadStatus === 'uploaded' || o.uploadStatus === 'uploaded to server').length;
-  const pendingCount = orders.filter(o => !o.uploadStatus || o.uploadStatus === 'pending').length;
-  const failedCount = orders.filter(o => o.uploadStatus === 'failed' || o.uploadStatus === 'partial').length;
-
-  // Render order card
   function renderOrderCard({ item: order }) {
     const isExpanded = expandedOrder === order.id;
-    const statusConfig = getStatusBadgeConfig(order.uploadStatus || order.status);
-    const isUploading = uploadingOrder === order.id;
-    const isUploaded = order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
+    const statusConfig = getStatusBadgeConfig(order.status || order.uploadStatus);
+    const isApi = order.isApiOrder;
 
     return (
       <View style={styles.orderCard}>
-        {/* Order Header */}
         <TouchableOpacity
           style={styles.orderHeader}
           onPress={() => toggleOrder(order.id)}
@@ -696,29 +478,16 @@ export default function PlaceOrder() {
               colors={statusConfig.gradient}
               style={styles.statusBadge}
             >
-              {isUploading ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Ionicons
-                  name={statusConfig.icon}
-                  size={16}
-                  color="#fff"
-                />
-              )}
+              <Ionicons name={statusConfig.icon} size={16} color="#fff" />
             </LinearGradient>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.customerNameBold}>{order.customer}</Text>
               <Text style={styles.orderDetails}>
-                {order.area} • {order.type} • {order.payment}
+                {order.area} • {order.payment}
               </Text>
               <View style={styles.statusRow}>
                 <Text style={styles.orderTime}>{formatDate(order.timestamp)}</Text>
-                <Text style={[styles.statusText,
-                order.uploadStatus === 'partial' && styles.statusTextWarning,
-                order.uploadStatus === 'uploaded' && styles.statusTextSuccess,
-                order.uploadStatus === 'failed' && styles.statusTextError,
-
-                ]}>
+                <Text style={[styles.statusText, { color: statusConfig.gradient[0] }]}>
                   • {statusConfig.text}
                 </Text>
               </View>
@@ -737,452 +506,126 @@ export default function PlaceOrder() {
           </View>
         </TouchableOpacity>
 
-        {/* Expanded Order Details */}
         {isExpanded && (
           <View style={styles.orderBody}>
             <View style={styles.divider} />
-
-            {/* Order Items */}
-            {order.items.map((item, index) => {
-              const displayValue = editingQty[`${order.id}_${index}`] !== undefined
-                ? editingQty[`${order.id}_${index}`]
-                : String(item.qty);
-
-              return (
-                <View key={index} style={styles.itemRow}>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.itemNameRow}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      {item.uploadStatus && (
-                        <Ionicons
-                          name={item.uploadStatus === 'uploaded' ? 'checkmark-circle' : 'close-circle'}
-                          size={16}
-                          color={item.uploadStatus === 'uploaded' ? Colors.success.main : Colors.error.main}
-                        />
-                      )}
-                    </View>
-                    <Text style={styles.itemPrice}>{item.price.toFixed(2)} × {item.qty}</Text>
-                  </View>
-
-                  {/* Quantity Controls - Read Only if Uploaded */}
-                  {isUploaded ? (
-                    <View style={styles.qtyControls}>
-                      <Text style={[styles.qtyInput, { backgroundColor: Colors.neutral[50], borderWidth: 0 }]}>
-                        Qty: {item.qty}
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={styles.qtyControls}>
-                      <TouchableOpacity
-                        style={styles.qtyBtn}
-                        onPress={() => {
-                          const newQty = Math.max(1, item.qty - 1);
-                          updateItemQty(order.id, index, newQty);
-                        }}
-                      >
-                        <Ionicons name="remove" size={16} color={Colors.text.primary} />
-                      </TouchableOpacity>
-
-                      <TextInput
-                        style={styles.qtyInput}
-                        value={displayValue}
-                        onChangeText={(text) => {
-                          if (text === "") {
-                            setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
-                            return;
-                          }
-
-                          const cleaned = text.replace(/[^0-9]/g, '');
-                          if (cleaned === "") {
-                            setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: "" }));
-                            return;
-                          }
-
-                          const num = parseInt(cleaned, 10);
-                          if (!isNaN(num) && num > 0) {
-                            setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: cleaned }));
-                            updateItemQty(order.id, index, num);
-                          }
-                        }}
-                        onFocus={() => {
-                          setEditingQty(prev => ({ ...prev, [`${order.id}_${index}`]: String(item.qty) }));
-                        }}
-                        onBlur={() => {
-                          setEditingQty(prev => {
-                            const newState = { ...prev };
-                            delete newState[`${order.id}_${index}`];
-                            return newState;
-                          });
-
-                          if (item.qty === 0) {
-                            updateItemQty(order.id, index, 1);
-                          }
-                        }}
-                        keyboardType="numeric"
-                        selectTextOnFocus={true}
-                      />
-
-                      <TouchableOpacity
-                        style={styles.qtyBtn}
-                        onPress={() => updateItemQty(order.id, index, item.qty + 1)}
-                      >
-                        <Ionicons name="add" size={16} color={Colors.text.primary} />
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => removeItem(order.id, index)}
-                        style={styles.removeBtn}
-                      >
-                        <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  <Text style={styles.itemTotal}>{item.total.toFixed(2)}</Text>
+            {order.items.map((item, index) => (
+              <View key={index} style={styles.itemRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.itemName}>{item.name}</Text>
+                  <Text style={styles.itemPrice}>{item.price.toFixed(2)} x {item.qty}</Text>
                 </View>
-              );
-            })}
+                <Text style={styles.itemTotal}>{item.total.toFixed(2)}</Text>
+              </View>
+            ))}
 
-            {/* Action Buttons */}
-            <View style={[styles.actionButtons, { justifyContent: 'space-between' }]}>
-              {!isUploaded && (
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => deleteOrder(order.id)}
-                  disabled={isUploading}
-                >
-                  <LinearGradient
-                    colors={Gradients.danger}
-                    style={styles.actionButtonGradient}
-                  >
-                    <Ionicons name="trash-outline" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Delete Order</Text>
+            <View style={{ marginTop: 15, flexDirection: 'row', gap: 10 }}>
+              {!isApi && filterStatus === 'pending' && (
+                <TouchableOpacity style={styles.actionButton} onPress={() => deleteOrder(order.id)}>
+                  <LinearGradient colors={Gradients.danger} style={styles.actionButtonGradient}>
+                    <Ionicons name="trash" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Delete</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               )}
 
-              {order.uploadStatus === 'uploaded' ? (
-                <View style={styles.uploadedBadge}>
-                  <Ionicons name="cloud-done" size={18} color={Colors.success.main} />
-                  <Text style={styles.uploadedBadgeText}>
-                    Uploaded on {formatDate(order.uploadedAt)}
-                  </Text>
-                </View>
-              ) : (
-                <>
-                  {(order.uploadStatus === 'failed' || order.uploadStatus === 'partial') && (
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={() => retryUpload(order.id)}
-                      disabled={isUploading}
-                    >
-                      <LinearGradient
-                        colors={Gradients.warning}
-                        style={styles.actionButtonGradient}
-                      >
-                        {isUploading ? (
-                          <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                          <>
-                            <Ionicons name="refresh" size={18} color="#fff" />
-                            <Text style={styles.actionButtonText}>Retry Upload</Text>
-                          </>
-                        )}
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  )}
-
-                  {order.uploadStatus === 'partial' && (
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={() => {
-                        setSelectedOrderDetails(order);
-                        setUploadDetailsModal(true);
-                      }}
-                    >
-                      <LinearGradient
-                        colors={Gradients.secondary}
-                        style={styles.actionButtonGradient}
-                      >
-                        <Ionicons name="information-circle" size={18} color="#fff" />
-                        <Text style={styles.actionButtonText}>View Details</Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  )}
-
-                  {!order.uploadStatus && (
-                    <TouchableOpacity
-                      style={styles.actionButton}
-                      onPress={() => confirmOrder(order.id)}
-                      disabled={isUploading}
-                    >
-                      <LinearGradient
-                        colors={Gradients.success}
-                        style={styles.actionButtonGradient}
-                      >
-                        {isUploading ? (
-                          <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                          <>
-                            <Ionicons name="cloud-upload" size={18} color="#fff" />
-                            <Text style={styles.actionButtonText}>Upload Order</Text>
-                          </>
-                        )}
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  )}
-                </>
-              )}
-            </View>
-
-            {/* Print & Share Button Row */}
-            <View style={{ marginTop: 8, flexDirection: 'row', gap: 10 }}>
-              {!isUploaded && (
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => handlePrint(order)}
-                >
-                  <LinearGradient
-                    colors={[Colors.primary.main, Colors.primary[700]]}
-                    style={styles.actionButtonGradient}
-                  >
-                    <Ionicons name="print" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Print Order</Text>
+              {!isApi && (filterStatus === 'pending' || filterStatus === 'failed') && (
+                <TouchableOpacity style={styles.actionButton} onPress={() => confirmOrder(order.id)}>
+                  <LinearGradient colors={Gradients.success} style={styles.actionButtonGradient}>
+                    <Ionicons name="cloud-upload" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Upload</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               )}
 
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={async () => {
-                  // Show a loading feedback if needed, basically just call the service
-                  await pdfService.shareOrderPDF(order);
-                }}
-              >
-                <LinearGradient
-                  colors={[Colors.secondary.main, Colors.secondary[700]]}
-                  style={styles.actionButtonGradient}
-                >
-                  <Ionicons name="share-social-outline" size={18} color="#fff" />
-                  <Text style={styles.actionButtonText}>Share PDF</Text>
+              <TouchableOpacity style={styles.actionButton} onPress={() => handlePrint(order)}>
+                <LinearGradient colors={[Colors.primary.main, Colors.primary[700]]} style={styles.actionButtonGradient}>
+                  <Ionicons name="print" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>Print</Text>
                 </LinearGradient>
               </TouchableOpacity>
-            </View>
 
+              <TouchableOpacity style={styles.actionButton} onPress={() => {
+                const isUploaded = order.isApiOrder || order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
+                const printContext = filterStatus === 'uploaded' || isUploaded ? 'uploaded' : 'pending';
+
+                const orderToPdf = {
+                  ...order,
+                  formattedOrderId: printContext === 'uploaded' ? order.id : 'NA',
+                  printStatus: printContext === 'uploaded' ? 'S' : 'F'
+                };
+                pdfService.shareOrderPDF(orderToPdf);
+              }}>
+                <LinearGradient colors={[Colors.secondary.main, Colors.secondary[700]]} style={styles.actionButtonGradient}>
+                  <Ionicons name="share-social" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>PDF</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+
+            </View>
           </View>
         )}
       </View>
     );
   }
 
+  const pendingCount = orders.filter(o => !o.uploadStatus || o.uploadStatus === 'pending').length;
+  const failedCount = orders.filter(o => o.uploadStatus === 'failed').length;
+  const uploadedCount = uploadedOrders.length;
+
   return (
     <LinearGradient colors={Gradients.background} style={styles.mainContainer}>
       <SafeAreaView style={{ flex: 1 }}>
         <StatusBar barStyle="dark-content" />
-
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Placed Orders</Text>
-          <TouchableOpacity onPress={testAPIConnection} style={styles.iconButton}>
-            <Ionicons name="flask" size={24} color={Colors.secondary.main} />
-          </TouchableOpacity>
+          <View style={{ width: 24 }} />
         </View>
 
-        {/* Filter Tabs */}
         <View style={styles.filterContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterTabs}>
-
-            <TouchableOpacity
-              style={[styles.filterTab, filterStatus === 'pending' && styles.filterTabActive]}
-              onPress={() => setFilterStatus('pending')}
-            >
+            <TouchableOpacity style={[styles.filterTab, filterStatus === 'pending' && styles.filterTabActive]} onPress={() => setFilterStatus('pending')}>
               <Ionicons name="time" size={16} color={filterStatus === 'pending' ? '#FFF' : Colors.warning.main} />
-              <Text style={[styles.filterTabText, filterStatus === 'pending' && styles.filterTabTextActive]}>
-                Pending ({pendingCount})
-              </Text>
+              <Text style={[styles.filterTabText, filterStatus === 'pending' && styles.filterTabTextActive]}>Pending ({pendingCount})</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.filterTab, filterStatus === 'uploaded' && styles.filterTabActive]}
-              onPress={() => setFilterStatus('uploaded')}
-            >
+            <TouchableOpacity style={[styles.filterTab, filterStatus === 'uploaded' && styles.filterTabActive]} onPress={() => setFilterStatus('uploaded')}>
               <Ionicons name="cloud-done" size={16} color={filterStatus === 'uploaded' ? '#FFF' : Colors.success.main} />
-              <Text style={[styles.filterTabText, filterStatus === 'uploaded' && styles.filterTabTextActive]}>
-                Uploaded ({uploadedCount})
-              </Text>
+              <Text style={[styles.filterTabText, filterStatus === 'uploaded' && styles.filterTabTextActive]}>Uploaded</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.filterTab, filterStatus === 'all' && styles.filterTabActive]}
-              onPress={() => setFilterStatus('all')}
-            >
-              <Text style={[styles.filterTabText, filterStatus === 'all' && styles.filterTabTextActive]}>
-                All ({orders.length})
-              </Text>
-            </TouchableOpacity>
-
-
-            <TouchableOpacity
-              style={[styles.filterTab, filterStatus === 'failed' && styles.filterTabActive]}
-              onPress={() => setFilterStatus('failed')}
-            >
-              <Ionicons name="close-circle" size={16} color={filterStatus === 'failed' ? '#FFF' : Colors.error.main} />
-              <Text style={[styles.filterTabText, filterStatus === 'failed' && styles.filterTabTextActive]}>
-                Failed ({failedCount})
-              </Text>
+            <TouchableOpacity style={[styles.filterTab, filterStatus === 'failed' && styles.filterTabActive]} onPress={() => setFilterStatus('failed')}>
+              <Ionicons name="alert-circle" size={16} color={filterStatus === 'failed' ? '#FFF' : Colors.error.main} />
+              <Text style={[styles.filterTabText, filterStatus === 'failed' && styles.filterTabTextActive]}>Failed ({failedCount})</Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
 
-        {/* Orders List */}
         <View style={styles.container}>
-          {filteredOrders.length === 0 ? (
-            <View style={styles.emptyState}>
-              <View style={styles.emptyIconContainer}>
-                <Ionicons name="receipt-outline" size={60} color={Colors.primary.light} />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {orders.length === 0 ? 'No orders placed yet' : 'No orders found'}
-              </Text>
-              <Text style={styles.emptySubtitle}>
-                {orders.length === 0
-                  ? 'Start by creating a new order'
-                  : `No ${filterStatus} orders available`
-                }
-              </Text>
-              {orders.length === 0 && (
-                <TouchableOpacity
-                  style={styles.emptyBtn}
-                  onPress={() => router.push("/Order/Entry")}
-                >
-                  <LinearGradient
-                    colors={Gradients.primary}
-                    style={styles.emptyBtnGradient}
-                  >
-                    <Text style={styles.emptyBtnText}>Create New Order</Text>
-                    <Ionicons name="arrow-forward" size={20} color="#FFF" />
-                  </LinearGradient>
-                </TouchableOpacity>
-              )}
+          {loadingUploaded && filterStatus === 'uploaded' ? (
+            <View style={[styles.emptyState, { justifyContent: 'center' }]}>
+              <ActivityIndicator size="large" color={Colors.primary.main} />
+              <Text style={{ marginTop: 10, color: Colors.text.secondary }}>Loading from Server...</Text>
             </View>
           ) : (
             <FlatList
-              data={filteredOrders}
+              data={displayOrders}
               keyExtractor={(item) => item.id}
               renderItem={renderOrderCard}
               contentContainerStyle={styles.listContent}
               refreshing={refreshing}
               onRefresh={handleRefresh}
-              showsVerticalScrollIndicator={false}
-              ListFooterComponent={
-                (filterStatus === 'uploaded' || filterStatus === 'all') && (
-                  <Text style={styles.expirationNotice}>
-                    Uploaded orders are automatically removed after 7 days.
-                  </Text>
-                )
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Ionicons name="receipt-outline" size={60} color={Colors.neutral[300]} />
+                  <Text style={styles.emptyTitle}>No orders found</Text>
+                </View>
               }
             />
           )}
         </View>
 
-        {/* Upload Details Modal */}
-        <Modal
-          visible={uploadDetailsModal}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setUploadDetailsModal(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Upload Details</Text>
-                <TouchableOpacity onPress={() => setUploadDetailsModal(false)}>
-                  <Ionicons name="close" size={24} color={Colors.text.primary} />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView style={styles.modalBody}>
-                {selectedOrderDetails && (
-                  <>
-                    <View style={styles.modalInfoRow}>
-                      <Text style={styles.modalLabel}>Customer:</Text>
-                      <Text style={styles.modalValue}>{selectedOrderDetails.customer}</Text>
-                    </View>
-                    <View style={styles.modalInfoRow}>
-                      <Text style={styles.modalLabel}>Total:</Text>
-                      <Text style={styles.modalValue}>{selectedOrderDetails.total.toFixed(2)}</Text>
-                    </View>
-                    <View style={styles.modalInfoRow}>
-                      <Text style={styles.modalLabel}>Status:</Text>
-                      <Text style={[styles.modalValue,
-                      selectedOrderDetails.uploadStatus === 'uploaded' && { color: Colors.success.main },
-                      selectedOrderDetails.uploadStatus === 'failed' && { color: Colors.error.main },
-                      selectedOrderDetails.uploadStatus === 'partial' && { color: Colors.warning.main }
-                      ]}>
-                        {getStatusBadgeConfig(selectedOrderDetails.uploadStatus).text}
-                      </Text>
-                    </View>
-
-                    <View style={styles.divider} />
-
-                    <Text style={styles.modalSectionTitle}>Items Status</Text>
-                    {selectedOrderDetails.items.map((item, index) => (
-                      <View key={index} style={styles.modalItemRow}>
-                        <View style={styles.modalItemInfo}>
-                          <Text style={styles.modalItemName}>{item.name}</Text>
-                          <Text style={styles.modalItemMeta}>
-                            Qty: {item.qty} × {item.price.toFixed(2)}
-                          </Text>
-                        </View>
-                        <View style={styles.modalItemStatus}>
-                          {item.uploadStatus === 'uploaded' ? (
-                            <View style={styles.statusSuccess}>
-                              <Ionicons name="checkmark-circle" size={20} color={Colors.success.main} />
-                              <Text style={styles.statusSuccessText}>Uploaded</Text>
-                            </View>
-                          ) : (
-                            <View style={styles.statusError}>
-                              <Ionicons name="close-circle" size={20} color={Colors.error.main} />
-                              <Text style={styles.statusErrorText}>Failed</Text>
-                            </View>
-                          )}
-                          {item.uploadError && (
-                            <Text style={styles.errorText}>{item.uploadError}</Text>
-                          )}
-                        </View>
-                      </View>
-                    ))}
-                  </>
-                )}
-              </ScrollView>
-
-              <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  style={styles.modalButton}
-                  onPress={() => {
-                    setUploadDetailsModal(false);
-                    if (selectedOrderDetails) {
-                      retryUpload(selectedOrderDetails.id);
-                    }
-                  }}
-                >
-                  <LinearGradient
-                    colors={Gradients.primary}
-                    style={styles.modalButtonGradient}
-                  >
-                    <Ionicons name="refresh" size={18} color="#FFF" />
-                    <Text style={styles.modalButtonText}>Retry Upload</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Printer Selection Modal */}
         <Modal
           visible={printerModalVisible}
           animationType="slide"
@@ -1198,77 +641,33 @@ export default function PlaceOrder() {
                 </TouchableOpacity>
               </View>
 
-              <View style={{ padding: 16, alignItems: 'center' }}>
-                {/* Connection Type Toggle */}
-                <View style={{ flexDirection: 'row', backgroundColor: Colors.neutral[200], borderRadius: 8, padding: 4, marginBottom: 16 }}>
-                  <TouchableOpacity
-                    onPress={() => scanPrinters('ble')}
-                    style={{
-                      paddingVertical: 6,
-                      paddingHorizontal: 20,
-                      borderRadius: 6,
-                      backgroundColor: connectionType === 'ble' ? '#FFF' : 'transparent',
-                      shadowColor: connectionType === 'ble' ? '#000' : 'transparent',
-                      shadowOpacity: connectionType === 'ble' ? 0.1 : 0,
-                      shadowRadius: 2,
-                      elevation: connectionType === 'ble' ? 2 : 0,
-                    }}
-                  >
-                    <Text style={{ fontWeight: '600', color: connectionType === 'ble' ? Colors.primary.main : Colors.text.secondary }}>Bluetooth</Text>
+              <View style={{ padding: 16 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 15, gap: 10 }}>
+                  <TouchableOpacity onPress={() => scanPrinters('ble')} style={{ padding: 8, backgroundColor: connectionType === 'ble' ? Colors.primary.light : Colors.neutral[100], borderRadius: 5 }}>
+                    <Text>Bluetooth</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => scanPrinters('usb')}
-                    style={{
-                      paddingVertical: 6,
-                      paddingHorizontal: 20,
-                      borderRadius: 6,
-                      backgroundColor: connectionType === 'usb' ? '#FFF' : 'transparent',
-                      shadowColor: connectionType === 'usb' ? '#000' : 'transparent',
-                      shadowOpacity: connectionType === 'usb' ? 0.1 : 0,
-                      shadowRadius: 2,
-                      elevation: connectionType === 'usb' ? 2 : 0,
-                    }}
-                  >
-                    <Text style={{ fontWeight: '600', color: connectionType === 'usb' ? Colors.primary.main : Colors.text.secondary }}>USB / Cable</Text>
+                  <TouchableOpacity onPress={() => scanPrinters('usb')} style={{ padding: 8, backgroundColor: connectionType === 'usb' ? Colors.primary.light : Colors.neutral[100], borderRadius: 5 }}>
+                    <Text>USB</Text>
                   </TouchableOpacity>
                 </View>
 
-                {isScanningPrinters && <ActivityIndicator size="large" color={Colors.primary.main} />}
-                {!isScanningPrinters && (
-                  <TouchableOpacity style={{ marginTop: 10 }} onPress={() => scanPrinters(connectionType)}>
-                    <Text style={{ color: Colors.primary.main, fontWeight: '600' }}>Rescan</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                {isScanningPrinters ? <ActivityIndicator color={Colors.primary.main} /> : null}
 
-              <ScrollView style={styles.modalBody}>
-                {printers.map((printer, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={{
-                      padding: 16,
-                      borderBottomWidth: 1,
-                      borderBottomColor: Colors.border.light,
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}
-                    onPress={() => connectAndPrint(printer)}
-                  >
-                    <View>
-                      <Text style={{ fontSize: 16, fontWeight: '600' }}>{printer.device_name || printer.product_id || "Unknown Device"}</Text>
-                      <Text style={{ fontSize: 12, color: Colors.text.secondary }}>{printer.inner_mac_address || printer.vendor_id || "ID: " + index}</Text>
-                    </View>
-                    <Ionicons name={connectionType === 'ble' ? "bluetooth" : "usb"} size={20} color={Colors.primary.main} />
-                  </TouchableOpacity>
-                ))}
-                {printers.length === 0 && !isScanningPrinters && (
-                  <Text style={{ textAlign: 'center', marginTop: 20, color: Colors.text.tertiary }}>No printers found</Text>
-                )}
-              </ScrollView>
+                <FlatList
+                  data={printers}
+                  keyExtractor={item => item.inner_mac_address || item.vendor_id || Math.random().toString()}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={{ padding: 15, borderBottomWidth: 1, borderColor: '#eee' }} onPress={() => connectAndPrint(item)}>
+                      <Text style={{ fontWeight: 'bold' }}>{item.device_name || item.product_name || "Unknown"}</Text>
+                      <Text style={{ fontSize: 12, color: '#888' }}>{item.inner_mac_address || item.vendor_id}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
             </View>
           </View>
         </Modal>
+
       </SafeAreaView>
     </LinearGradient>
   );
@@ -1380,20 +779,8 @@ const styles = StyleSheet.create({
   },
   statusText: {
     fontSize: 10,
-    color: Colors.text.tertiary,
+    fontWeight: '600',
     marginLeft: 4,
-  },
-  statusTextSuccess: {
-    color: Colors.success.main,
-    fontWeight: '600',
-  },
-  statusTextError: {
-    color: Colors.error.main,
-    fontWeight: '600',
-  },
-  statusTextWarning: {
-    color: Colors.warning.main,
-    fontWeight: '600',
   },
   orderHeaderRight: {
     alignItems: 'flex-end',
@@ -1431,11 +818,6 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     marginBottom: 8,
   },
-  itemNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
   itemName: {
     fontSize: Typography.sizes.sm,
     fontWeight: '600',
@@ -1446,38 +828,6 @@ const styles = StyleSheet.create({
     color: Colors.text.secondary,
     marginTop: 2,
   },
-
-  qtyControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: Spacing.sm,
-  },
-  qtyBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.border.medium,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fff',
-  },
-  qtyInput: {
-    marginHorizontal: 8,
-    fontWeight: '600',
-    fontSize: Typography.sizes.sm,
-    textAlign: 'center',
-    minWidth: 35,
-    borderWidth: 1,
-    borderColor: Colors.border.medium,
-    borderRadius: BorderRadius.sm,
-    paddingVertical: 2,
-    paddingHorizontal: 4,
-    backgroundColor: '#fff',
-    color: Colors.text.primary,
-  },
-  removeBtn: { marginLeft: 8, padding: 4 },
-
   itemTotal: {
     fontSize: Typography.sizes.sm,
     fontWeight: '700',
@@ -1494,7 +844,6 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    minWidth: '45%',
     borderRadius: BorderRadius.full,
     overflow: 'hidden',
     ...Shadows.sm,
@@ -1512,59 +861,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  uploadedBadge: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.success[50],
-    paddingVertical: 10,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.full,
-    gap: 6,
-  },
-  uploadedBadgeText: {
-    color: Colors.success.main,
-    fontSize: Typography.sizes.sm,
-    fontWeight: '600',
-  },
-
   emptyState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingBottom: 100,
-  },
-  emptyIconContainer: {
-    marginBottom: Spacing.lg,
+    paddingTop: 50,
   },
   emptyTitle: {
     fontSize: Typography.sizes.xl,
     fontWeight: '700',
     color: Colors.text.primary,
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: Typography.sizes.base,
-    color: Colors.text.secondary,
-    marginBottom: Spacing.xl,
-  },
-  emptyBtn: {
-    borderRadius: BorderRadius.full,
-    overflow: 'hidden',
-    ...Shadows.colored.primary,
-  },
-  emptyBtnGradient: {
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  emptyBtnText: {
-    color: '#FFF',
-    fontSize: Typography.sizes.base,
-    fontWeight: '700',
+    marginTop: 10,
   },
 
   // Modal Styles
@@ -1591,117 +899,5 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.xl,
     fontWeight: '700',
     color: Colors.text.primary,
-  },
-  modalBody: {
-    padding: Spacing.lg,
-  },
-  modalInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: Spacing.sm,
-  },
-  modalLabel: {
-    fontSize: Typography.sizes.base,
-    color: Colors.text.secondary,
-    fontWeight: '600',
-  },
-  modalValue: {
-    fontSize: Typography.sizes.base,
-    color: Colors.text.primary,
-    fontWeight: '600',
-  },
-  modalSectionTitle: {
-    fontSize: Typography.sizes.lg,
-    fontWeight: '700',
-    color: Colors.text.primary,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.md,
-  },
-  modalItemRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border.light,
-  },
-  modalItemInfo: {
-    flex: 1,
-  },
-  modalItemName: {
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
-    color: Colors.text.primary,
-    marginBottom: 4,
-  },
-  modalItemMeta: {
-    fontSize: Typography.sizes.sm,
-    color: Colors.text.secondary,
-  },
-  modalItemStatus: {
-    alignItems: 'flex-end',
-  },
-  statusSuccess: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  statusSuccessText: {
-    fontSize: Typography.sizes.sm,
-    color: Colors.success.main,
-    fontWeight: '600',
-  },
-  statusError: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  statusErrorText: {
-    fontSize: Typography.sizes.sm,
-    color: Colors.error.main,
-    fontWeight: '600',
-  },
-  errorText: {
-    fontSize: Typography.sizes.xs,
-    color: Colors.error.main,
-    marginTop: 2,
-    maxWidth: 150,
-  },
-  errorText: {
-    fontSize: Typography.sizes.xs,
-    color: Colors.error.main,
-    marginTop: 2,
-    maxWidth: 150,
-  },
-  expirationNotice: {
-    textAlign: 'center',
-    fontSize: Typography.sizes.xs,
-    color: Colors.text.tertiary,
-    marginTop: Spacing.sm,
-    marginBottom: Spacing.xs,
-    fontStyle: 'italic',
-  },
-  modalFooter: {
-    padding: Spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border.light,
-  },
-  modalButton: {
-    borderRadius: BorderRadius.full,
-    overflow: 'hidden',
-    ...Shadows.sm,
-  },
-  modalButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    gap: 8,
-  },
-  modalButtonText: {
-    color: '#FFF',
-    fontSize: Typography.sizes.base,
-    fontWeight: '700',
   },
 });

@@ -56,7 +56,7 @@ export default function Index() {
       >
         <Animated.View style={[styles.logoContainer, { opacity: fadeAnim }]}>
           <Image
-            source={require("../assets/images/taskprime1.png")}
+            source={require("../assets/images/TASKSAS.png")}
             style={styles.logo}
             resizeMode="contain"
           />

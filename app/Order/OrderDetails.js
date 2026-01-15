@@ -92,7 +92,35 @@ const FlyingItem = ({ startX, startY, endX, endY, onComplete }) => {
   );
 };
 
-const CartItem = ({ item, changeQty, removeItem }) => {
+// Handle Cart Item Price Change
+const handleCartItemPriceChange = (productId, newPrice) => {
+  const price = parseFloat(newPrice);
+  if (isNaN(price)) return;
+
+  const updatedCart = cart.map(item => {
+    if (item.product.id === productId) {
+      return {
+        ...item,
+        product: { ...item.product, price: price }
+      };
+    }
+    return item;
+  });
+  setCart(updatedCart);
+  cartRef.current = updatedCart;
+};
+
+const renderCartItem = ({ item }) => (
+  <CartItem
+    item={{
+      ...item,
+      onPriceChange: handleCartItemPriceChange
+    }}
+    changeQty={changeQty}
+    removeItem={removeItem}
+  />
+);
+const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) => {
   const [localQty, setLocalQty] = useState(String(item.qty));
 
   useEffect(() => {
@@ -109,71 +137,110 @@ const CartItem = ({ item, changeQty, removeItem }) => {
 
   const handleBlur = () => {
     if (!localQty || isNaN(parseInt(localQty, 10)) || parseInt(localQty, 10) <= 0) {
-      // Reset to valid quantity on blur if invalid
       setLocalQty(String(item.qty));
     }
   };
 
   return (
     <View style={styles.cartItem}>
-      <View style={styles.cartItemInfo}>
-        <Text style={styles.cartItemName} numberOfLines={1}>{item.product.name}</Text>
-        <View style={{ marginTop: 4 }}>
-          <Text style={styles.cartItemPrice}>
-            ₹{item.product.price.toFixed(2)}
-          </Text>
+      {/* Row 1: Item Name */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <Text style={styles.cartItemName} numberOfLines={2}>{item.product.name}</Text>
+        <TouchableOpacity onPress={() => removeItem(item.product.id)} style={[styles.removeCartItem, { padding: 8 }]}>
+          <Ionicons name="trash-outline" size={22} color={Colors.error.main} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Row 2: Price | Quantity | Total */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+
+        {/* Price Section */}
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ fontSize: 12, color: Colors.text.secondary, marginRight: 4 }}>@</Text>
+            {isEditable ? (
+              <TextInput
+                style={[styles.cartItemPrice, {
+                  borderBottomWidth: 1,
+                  borderBottomColor: Colors.primary.light,
+                  minWidth: 50,
+                  padding: 0,
+                  fontSize: 15,
+                  fontWeight: '600',
+                  color: Colors.text.primary
+                }]}
+                value={String(item.product.price)}
+                keyboardType="numeric"
+                onChangeText={(text) => {
+                  if (onPriceChange) onPriceChange(item.product.id, text);
+                }}
+              />
+            ) : (
+              <Text style={[styles.cartItemPrice, { fontSize: 15, fontWeight: '600', color: Colors.text.primary }]}>
+                {parseFloat(item.product.price || 0).toFixed(2)}
+              </Text>
+            )}
+          </View>
           {item.product.mrp > item.product.price && (
-            <Text style={{
-              fontSize: 12,
-              color: Colors.text.tertiary,
-              marginTop: 2
-            }}>
-              MRP: ₹{item.product.mrp}
+            <Text style={{ fontSize: 10, color: Colors.text.tertiary }}>
+              MRP: {item.product.mrp}
             </Text>
           )}
         </View>
+
+        {/* Quantity Section (Centered & Big) */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.neutral[50], borderRadius: 8, padding: 2 }}>
+          <TouchableOpacity onPress={() => changeQty(item.product.id, item.qty - 1)} style={{ padding: 8 }}>
+            <Ionicons name="remove-circle" size={32} color={Colors.primary.main} />
+          </TouchableOpacity>
+
+          <TextInput
+            style={{
+              width: 60,
+              height: 40,
+              textAlign: 'center',
+              borderWidth: 1,
+              borderColor: Colors.border.medium,
+              borderRadius: 6,
+              marginHorizontal: 4,
+              fontSize: 18, // Bigger font
+              fontWeight: '700',
+              color: Colors.text.primary,
+              backgroundColor: '#FFF'
+            }}
+            keyboardType="number-pad"
+            selectTextOnFocus={true}
+            value={localQty}
+            onChangeText={handleTextChange}
+            onBlur={handleBlur}
+          />
+
+          <TouchableOpacity onPress={(e) => changeQty(item.product.id, item.qty + 1, e)} style={{ padding: 8 }}>
+            <Ionicons name="add-circle" size={32} color={Colors.primary.main} />
+          </TouchableOpacity>
+        </View>
+
+        {/* Total Section (Right) */}
+        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          <Text style={[styles.cartItemTotal, { fontSize: 15, marginHorizontal: 0 }]}>
+            {(item.qty * item.product.price).toFixed(2)}
+          </Text>
+        </View>
+
       </View>
-
-      {/* Quantity Controls */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 12 }}>
-        <TouchableOpacity onPress={() => changeQty(item.product.id, item.qty - 1)} style={{ padding: 4 }}>
-          <Ionicons name="remove-circle-outline" size={28} color={Colors.primary.main} />
-        </TouchableOpacity>
-
-        <TextInput
-          style={{
-            width: 50,
-            height: 36,
-            textAlign: 'center',
-            borderWidth: 1,
-            borderColor: Colors.border.light,
-            borderRadius: BorderRadius.sm,
-            marginHorizontal: 4,
-            fontSize: 14,
-            color: Colors.text.primary,
-            backgroundColor: '#FFF'
-          }}
-          keyboardType="number-pad"
-          selectTextOnFocus={true}
-          value={localQty}
-          onChangeText={handleTextChange}
-          onBlur={handleBlur}
-        />
-
-        <TouchableOpacity onPress={(e) => changeQty(item.product.id, item.qty + 1, e)} style={{ padding: 4 }}>
-          <Ionicons name="add-circle-outline" size={28} color={Colors.primary.main} />
-        </TouchableOpacity>
-      </View>
-
-      <Text style={[styles.cartItemTotal, { minWidth: 60, textAlign: 'right' }]}>
-        {(item.qty * item.product.price).toFixed(2)}
-      </Text>
-
-      <TouchableOpacity onPress={() => removeItem(item.product.id)} style={[styles.removeCartItem, { marginLeft: 8 }]}>
-        <Ionicons name="trash-outline" size={20} color={Colors.error.main} />
-      </TouchableOpacity>
     </View>
   );
+};
+
+// Helper to map price codes to object properties
+const PRICE_FIELD_MAP = {
+  'MR': 'mrp',
+  'S1': 'sales',
+  'S2': 'retail', // Default usually
+  'S3': 'dp',
+  'S4': 'cb',
+  'S5': 'netRate',
+  'CO': 'cost'
 };
 
 export default function OrderDetails() {
@@ -187,6 +254,12 @@ export default function OrderDetails() {
 
   // Missing state variables
   const [loading, setLoading] = useState(false);
+  const [appSettings, setAppSettings] = useState(null);
+  const [username, setUsername] = useState(null);
+  const [editingPrices, setEditingPrices] = useState({}); // { productId: "100.00" }
+  const [fullCustomer, setFullCustomer] = useState(null);
+  const [effectivePriceCode, setEffectivePriceCode] = useState('S2'); // Default
+  const [restrictedPriceCodes, setRestrictedPriceCodes] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
@@ -238,10 +311,33 @@ export default function OrderDetails() {
     inStock: false
   });
 
+  // Initialize App Settings and User
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const storedSettings = await AsyncStorage.getItem('app_settings');
+        if (storedSettings) {
+          setAppSettings(JSON.parse(storedSettings));
+          console.log('[OrderDetails] App settings loaded');
+        }
+
+        const storedUser = await AsyncStorage.getItem('username');
+        if (storedUser) {
+          setUsername(storedUser);
+          console.log('[OrderDetails] Username loaded:', storedUser);
+        }
+      } catch (error) {
+        console.error('[OrderDetails] Failed to load settings/user:', error);
+      }
+    };
+    loadSettings();
+  }, []);
+
   // Quantity modal state
   const [quantityModalVisible, setQuantityModalVisible] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [tempQuantity, setTempQuantity] = useState("1");
+  const [tempPrice, setTempPrice] = useState("");
 
   // Details modal state
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
@@ -298,6 +394,121 @@ export default function OrderDetails() {
     }
   }, [highlightedProductId, filteredProducts.length]); // Re-run when highlight changes or list length changes
 
+  // Fetch Full Customer Details & Calculate Effective Price Code
+  useEffect(() => {
+    const loadCustomerAndCalcPrice = async () => {
+      let currentCustomer = fullCustomer;
+
+      // 1. Fetch Customer if needed
+      if ((!currentCustomer || currentCustomer.code !== customerCode) && customerCode) {
+        try {
+          await dbService.init();
+          currentCustomer = await dbService.getCustomerByCode(customerCode);
+          setFullCustomer(currentCustomer);
+          console.log('[OrderDetails] Loaded full customer:', currentCustomer?.name, 'RemarkTitle:', currentCustomer?.remarkcolumntitle);
+        } catch (e) {
+          console.error('[OrderDetails] Error loading customer:', e);
+        }
+      }
+
+      // 2. Calculate Effective Price Code
+      let priceCode = 'S2'; // Global Fallback
+
+      if (appSettings) {
+        // Use default from settings if available
+        if (appSettings.default_price_code) {
+          priceCode = appSettings.default_price_code;
+        }
+
+        // Override with Customer Price Code if enabled and available
+        if (appSettings.read_price_category && currentCustomer?.remarkcolumntitle) {
+          // Verify if it's a valid code in price_codes list
+          const isValid = appSettings.price_codes?.some(pc => pc.code === currentCustomer.remarkcolumntitle);
+          if (isValid) {
+            priceCode = currentCustomer.remarkcolumntitle;
+            console.log('[OrderDetails] Using Customer Price Code:', priceCode);
+          }
+        }
+
+        // 3. Determine Restricted Codes for this User
+        // Normalize username to uppercase to match settings keys (e.g. "ARUN")
+        const upperUser = username ? username.toUpperCase() : '';
+        if (upperUser && appSettings.protected_price_users && appSettings.protected_price_users[upperUser]) {
+          const restricted = appSettings.protected_price_users[upperUser];
+          setRestrictedPriceCodes(restricted);
+          console.log('[OrderDetails] Restricted codes for', upperUser, ':', restricted);
+        } else {
+          setRestrictedPriceCodes([]);
+        }
+      }
+
+      setEffectivePriceCode(priceCode);
+      console.log('[OrderDetails] Effective Price Code:', priceCode);
+    };
+
+    if (appSettings) {
+      loadCustomerAndCalcPrice();
+    }
+  }, [customerCode, appSettings, username]);
+
+  // Apply Pricing Rules to a list of products
+  const applyPricingToProducts = useCallback((products) => {
+    if (!products) return [];
+
+    return products.map(p => {
+      // 1. Select Price Code
+      const fieldName = PRICE_FIELD_MAP[effectivePriceCode] || 'retail';
+      let dynamicPrice = p[fieldName];
+
+      // Fallback if price is 0 or missing (optional, usually we want 0 if it's really 0, but safest to fallback to retail/price)
+      if (!dynamicPrice && dynamicPrice !== 0 && fieldName !== 'retail') {
+        dynamicPrice = p.retail || p.price;
+      }
+
+      // Ensure we have a valid price
+      if (dynamicPrice === undefined || dynamicPrice === null) {
+        dynamicPrice = p.price || 0;
+      }
+
+      // 2. Filter Prices (hide restricted ones)
+      // We attach restrictedCodes to the product so the UI can filter them when viewing details
+
+      return {
+        ...p,
+        price: parseFloat(dynamicPrice),
+        originalPrice: p.price, // Keep original
+        priceCodeUsed: effectivePriceCode,
+        restrictedCodes: restrictedPriceCodes
+      };
+    });
+  }, [effectivePriceCode, restrictedPriceCodes]);
+
+  // Re-apply pricing when rules change
+  // Re-apply pricing when rules change OR when products are loaded initially
+  useEffect(() => {
+    if (allProducts.length > 0) {
+      // Check if update is needed to avoid infinite loop
+      // We check the first product's priceCodeUsed to see if it matches current effective code
+      // AND also check if restrictedCodes have changed
+      const currentCode = allProducts[0].priceCodeUsed;
+      const currentRestricted = allProducts[0].restrictedCodes || [];
+
+      // Simple array comparison for restricted codes
+      const restrictedChanged = JSON.stringify(currentRestricted) !== JSON.stringify(restrictedPriceCodes);
+
+      if (currentCode !== effectivePriceCode || restrictedChanged) {
+        console.log('[OrderDetails] Re-applying pricing rules (Code mismatch or Restrictions changed)');
+        const updatedAll = applyPricingToProducts(allProducts);
+        setAllProducts(updatedAll);
+
+        if (filteredProducts.length > 0) {
+          const updatedFiltered = applyPricingToProducts(filteredProducts);
+          setFilteredProducts(updatedFiltered);
+        }
+      }
+    }
+  }, [effectivePriceCode, restrictedPriceCodes, allProducts]); // Dependencies for re-calculation
+
   // OPTIMIZED: Load products with pagination for better performance
   async function fetchAllProducts(isRefresh = false) {
     if (!isRefresh) {
@@ -330,6 +541,9 @@ export default function OrderDetails() {
       if (filters.inStock) {
         cards = cards.filter(card => card.stock > 0);
       }
+
+      // Apply Dynamic Pricing
+      cards = applyPricingToProducts(cards);
 
       console.log(`[OrderDetails] Loaded ${cards.length} cards`);
       setAllProducts(cards);
@@ -386,6 +600,9 @@ export default function OrderDetails() {
       if (filters.inStock) {
         newCards = newCards.filter(card => card.stock > 0);
       }
+
+      // Apply Dynamic Pricing
+      newCards = applyPricingToProducts(newCards);
 
       console.log(`[OrderDetails] Loaded ${newCards.length} more batch cards`);
 
@@ -577,7 +794,7 @@ export default function OrderDetails() {
       const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
 
       return () => subscription.remove();
-    }, [cart]) // Re-register when cart changes to have latest cart state in handleBackPress
+    }, [cart, sheetOpen, detailsModalVisible, quantityModalVisible, imageModalVisible, filterModalVisible])
   );
 
   // Load pending orders count on focus
@@ -732,6 +949,12 @@ export default function OrderDetails() {
 
         console.log('[OrderDetails] Generated new product card with ID:', productCard.id);
 
+        // Apply dynamic pricing to the new card
+        const [pricedCard] = applyPricingToProducts([productCard]);
+        if (pricedCard) {
+          productCard = pricedCard;
+        }
+
         // Add to both lists
         setAllProducts(prev => {
           const exists = prev.find(p => p.id === productCard.id);
@@ -754,7 +977,7 @@ export default function OrderDetails() {
     } else {
       console.log('[OrderDetails] Product not found in database');
     }
-  }, [allProducts, filteredProducts, addToCart]); // Dependencies: product lists and addToCart
+  }, [allProducts, filteredProducts, addToCart, applyPricingToProducts]);
 
   // Highlight and scroll to a product in the list
   function highlightAndScrollToProduct(product) {
@@ -795,6 +1018,8 @@ export default function OrderDetails() {
     console.log('[OrderDetails] Opening quantity modal for:', product.name);
     setSelectedProduct(product);
     setTempQuantity("1");
+    // Initialize temp price
+    setTempPrice(product.price ? String(product.price) : "0");
     setQuantityModalVisible(true);
   }
 
@@ -811,7 +1036,17 @@ export default function OrderDetails() {
         Alert.alert("Invalid Quantity", "Please enter a valid quantity");
         return;
       }
-      addToCart(selectedProduct, qty);
+
+      // Handle Price Override
+      let productToAdd = selectedProduct;
+      if (appSettings?.order_rate_editable) {
+        const price = parseFloat(tempPrice);
+        if (!isNaN(price) && price >= 0) {
+          productToAdd = { ...selectedProduct, price: price };
+        }
+      }
+
+      addToCart(productToAdd, qty);
       closeQuantityModal();
     }
   }
@@ -971,6 +1206,28 @@ export default function OrderDetails() {
   }
 
   function handleBackPress(targetRoute = "/Order/Entry") {
+    // 1. Close Modals if open
+    if (imageModalVisible) {
+      closeImageModal();
+      return;
+    }
+    if (quantityModalVisible) {
+      closeQuantityModal();
+      return;
+    }
+    if (detailsModalVisible) {
+      closeDetailsModal();
+      return;
+    }
+    if (filterModalVisible) {
+      setFilterModalVisible(false);
+      return;
+    }
+    if (sheetOpen) {
+      toggleSheet(false);
+      return;
+    }
+
     if (cart.length > 0) {
       Alert.alert(
         "Cart Not Empty",
@@ -1130,7 +1387,7 @@ export default function OrderDetails() {
 
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
+          <TouchableOpacity onPress={() => handleBackPress()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Order Details</Text>
@@ -1636,6 +1893,8 @@ export default function OrderDetails() {
                     item={item}
                     changeQty={changeQty}
                     removeItem={removeItem}
+                    isEditable={appSettings?.order_rate_editable}
+                    onPriceChange={handleCartItemPriceChange}
                   />
                 )}
               />
@@ -1702,9 +1961,28 @@ export default function OrderDetails() {
                     <Text style={styles.quantityProductName} numberOfLines={2}>
                       {selectedProduct.name}
                     </Text>
-                    <Text style={styles.quantityProductPrice}>
-                      {selectedProduct.price.toFixed(2)} per unit
-                    </Text>
+                    {appSettings?.order_rate_editable ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <Text style={{ marginRight: 8 }}>Price:</Text>
+                        <TextInput
+                          value={tempPrice}
+                          onChangeText={setTempPrice}
+                          keyboardType="numeric"
+                          style={{
+                            borderBottomWidth: 1,
+                            borderBottomColor: Colors.primary.main,
+                            minWidth: 80,
+                            textAlign: 'center',
+                            fontWeight: '700',
+                            fontSize: 16
+                          }}
+                        />
+                      </View>
+                    ) : (
+                      <Text style={styles.quantityProductPrice}>
+                        {selectedProduct.price.toFixed(2)} per unit
+                      </Text>
+                    )}
                   </View>
 
                   <View style={styles.quantityInputContainer}>
@@ -1743,7 +2021,7 @@ export default function OrderDetails() {
                   <View style={styles.quantityTotalContainer}>
                     <Text style={styles.quantityTotalLabel}>Total:</Text>
                     <Text style={styles.quantityTotalValue}>
-                      {((parseInt(tempQuantity, 10) || 0) * selectedProduct.price).toFixed(2)}
+                      {((parseInt(tempQuantity, 10) || 0) * (appSettings?.order_rate_editable ? (parseFloat(tempPrice) || 0) : selectedProduct.price)).toFixed(2)}
                     </Text>
                   </View>
 
@@ -1858,6 +2136,12 @@ export default function OrderDetails() {
                             <Text style={styles.detailsMetaValue}>{selectedBatchDetails.brand}</Text>
                           </View>
                         )}
+                        {selectedBatchDetails.taxcode && (
+                          <View style={[styles.detailsMetaChip, { backgroundColor: Colors.neutral[100] }]}>
+                            <Text style={styles.detailsMetaLabel}>Tax:</Text>
+                            <Text style={styles.detailsMetaValue}>{selectedBatchDetails.taxcode}</Text>
+                          </View>
+                        )}
                       </View>
                       {selectedBatchDetails.barcode && (
                         <View style={styles.barcodeContainer}>
@@ -1871,34 +2155,79 @@ export default function OrderDetails() {
                     <View style={styles.detailsSection}>
                       <Text style={styles.detailsSectionTitle}>Price Details</Text>
                       <View style={styles.priceGrid}>
-                        <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>MRP</Text>
-                          <Text style={styles.priceValue}>{selectedBatchDetails.mrp?.toFixed(2) || '0.00'}</Text>
-                        </View>
-                        <View style={[styles.priceItem, styles.priceItemHighlight]}>
-                          <Text style={[styles.priceLabel, { color: Colors.primary.main }]}>Rate</Text>
-                          <Text style={[styles.priceValue, { color: Colors.primary.main }]}>{selectedBatchDetails.price?.toFixed(2) || '0.00'}</Text>
-                        </View>
-                        <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>Retail</Text>
-                          <Text style={styles.priceValue}>{selectedBatchDetails.retail?.toFixed(2) || '0.00'}</Text>
-                        </View>
-                        <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>D.P</Text>
-                          <Text style={styles.priceValue}>{selectedBatchDetails.dp?.toFixed(2) || '0.00'}</Text>
-                        </View>
-                        <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>CB</Text>
-                          <Text style={styles.priceValue}>{selectedBatchDetails.cb?.toFixed(2) || '0.00'}</Text>
-                        </View>
-                        <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>Net Rate</Text>
-                          <Text style={styles.priceValue}>{selectedBatchDetails.netRate?.toFixed(2) || '0.00'}</Text>
-                        </View>
-                        <View style={styles.priceItem}>
-                          <Text style={styles.priceLabel}>PK Shop</Text>
-                          <Text style={styles.priceValue}>{selectedBatchDetails.pkShop?.toFixed(2) || '0.00'}</Text>
-                        </View>
+
+                        {/* MRP (MR) */}
+                        {selectedBatchDetails.mrp > 0 && !selectedBatchDetails.restrictedCodes?.includes('MR') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>MRP</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.mrp?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* Effective Rate - Always shown if > 0 AND not restricted */}
+                        {selectedBatchDetails.price > 0 && !selectedBatchDetails.restrictedCodes?.includes(selectedBatchDetails.priceCodeUsed || 'S2') && (
+                          <View style={[styles.priceItem, styles.priceItemHighlight]}>
+                            <Text style={[styles.priceLabel, { color: Colors.primary.main }]}>Rate ({selectedBatchDetails.priceCodeUsed || 'S2'})</Text>
+                            <Text style={[styles.priceValue, { color: Colors.primary.main }]}>{selectedBatchDetails.price?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* Retail (S2) */}
+                        {selectedBatchDetails.retail > 0 && !selectedBatchDetails.restrictedCodes?.includes('S2') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>Retail</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.retail?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* Sales (S1) */}
+                        {/* Sales (S1) - Hide if used as effective rate to avoid duplicate "Rate (S1)" and "Sales" */}
+                        {selectedBatchDetails.sales > 0 && selectedBatchDetails.priceCodeUsed !== 'S1' && !selectedBatchDetails.restrictedCodes?.includes('S1') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>Sales</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.sales?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* D.P (S3) */}
+                        {selectedBatchDetails.dp > 0 && !selectedBatchDetails.restrictedCodes?.includes('S3') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>D.P</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.dp?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* CB (S4) */}
+                        {selectedBatchDetails.cb > 0 && !selectedBatchDetails.restrictedCodes?.includes('S4') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>CB</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.cb?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* Net Rate (S5) */}
+                        {selectedBatchDetails.netRate > 0 && !selectedBatchDetails.restrictedCodes?.includes('S5') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>Net Rate</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.netRate?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* Cost (CO) */}
+                        {selectedBatchDetails.cost > 0 && !selectedBatchDetails.restrictedCodes?.includes('CO') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>Cost</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.cost?.toFixed(2)}</Text>
+                          </View>
+                        )}
+
+                        {/* PK Shop */}
+                        {selectedBatchDetails.pkShop > 0 && !selectedBatchDetails.restrictedCodes?.includes('PKS') && (
+                          <View style={styles.priceItem}>
+                            <Text style={styles.priceLabel}>PK Shop</Text>
+                            <Text style={styles.priceValue}>{selectedBatchDetails.pkShop?.toFixed(2)}</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
 
@@ -1991,8 +2320,12 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
         {item.brand && <Text style={styles.productBrand}>{item.brand}</Text>}
 
         <View style={styles.priceColumn}>
-          <Text style={styles.mrpLabel}>MRP: {item.mrp.toFixed(2)}</Text>
-          <Text style={styles.price}>Price: {item.price.toFixed(2)}</Text>
+          {item.mrp > 0 && !item.restrictedCodes?.includes('MR') && (
+            <Text style={styles.mrpLabel}>MRP: {item.mrp.toFixed(2)}</Text>
+          )}
+          {!item.restrictedCodes?.includes(item.priceCodeUsed || 'S2') && (
+            <Text style={styles.price}>Price: {item.price ? item.price.toFixed(2) : '0.00'}</Text>
+          )}
         </View>
       </View>
     </View>
@@ -2634,9 +2967,9 @@ const styles = StyleSheet.create({
   emptyCart: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyCartText: { marginTop: Spacing.md, color: Colors.text.tertiary, fontSize: Typography.sizes.base },
   cartList: { padding: Spacing.md },
-  cartItem: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md, paddingBottom: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.neutral[50] },
+  cartItem: { flexDirection: 'column', marginBottom: Spacing.md, paddingBottom: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.neutral[100] },
   cartItemInfo: { flex: 1 },
-  cartItemName: { fontSize: Typography.sizes.base, fontWeight: '600', color: Colors.text.primary },
+  cartItemName: { fontSize: Typography.sizes.base, fontWeight: '700', color: Colors.text.primary, flex: 1, marginRight: 10 },
   cartItemPrice: { fontSize: Typography.sizes.sm, color: Colors.text.secondary },
   cartItemTotal: { fontSize: Typography.sizes.base, fontWeight: '600', color: Colors.primary.main, marginHorizontal: Spacing.md },
   removeCartItem: { padding: 4 },
