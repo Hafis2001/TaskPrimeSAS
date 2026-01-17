@@ -245,10 +245,48 @@ class DatabaseService {
             await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_goddowns_product_code ON product_goddowns(product_code)');
             await this.db.runAsync('CREATE INDEX IF NOT EXISTS idx_goddowns_barcode ON product_goddowns(barcode)');
 
+            await this.db.runAsync(
+                'CREATE TABLE IF NOT EXISTS customer_geo_data (customer_code TEXT PRIMARY KEY, latitude REAL, longitude REAL, captured_at TEXT, is_synced INTEGER DEFAULT 0)'
+            );
+
             console.log('[DB] ✅ All tables created/verified');
         } catch (error) {
             console.error('[DB] ❌ Error creating tables:', error);
             throw error;
+        }
+    }
+
+    // ==================== GEO LOCATION ====================
+    async saveCustomerLocation(customerCode, latitude, longitude) {
+        try {
+            await this.db.runAsync(
+                'INSERT OR REPLACE INTO customer_geo_data (customer_code, latitude, longitude, captured_at, is_synced) VALUES (?, ?, ?, ?, 0)',
+                [customerCode, latitude, longitude, new Date().toISOString()]
+            );
+            return true;
+        } catch (error) {
+            console.error('[DB] Error saving customer location:', error);
+            return false;
+        }
+    }
+
+    async getCustomerLocations() {
+        try {
+            const result = await this.db.getAllAsync('SELECT * FROM customer_geo_data');
+            return result || [];
+        } catch (error) {
+            console.error('[DB] Error getting customer locations:', error);
+            return [];
+        }
+    }
+
+    async getCustomerLocation(customerCode) {
+        try {
+            const result = await this.db.getFirstAsync('SELECT * FROM customer_geo_data WHERE customer_code = ?', [customerCode]);
+            return result;
+        } catch (error) {
+            console.error('[DB] Error getting customer location:', error);
+            return null;
         }
     }
 
@@ -549,32 +587,75 @@ class DatabaseService {
             await this.db.runAsync('DELETE FROM batches WHERE product_code = ?', [productCode]);
 
             for (const batch of batches) {
-                const mrp = parseFloat(batch.MRP || batch.mrp || 0);
-                const retail = parseFloat(batch.RETAIL || batch.retail || 0);
-                const dp = parseFloat(batch['D.P'] || batch.dp || 0);
-                const cb = parseFloat(batch.CB || batch.cb || 0);
-                const cost = parseFloat(batch.COST || batch.cost || 0);
+                // Extract prices from prices array if available
+                let mrp = 0, sales = 0, cost = 0, retail = 0, dp = 0, cb = 0, netRate = 0, pkShop = 0;
+                let pricesJson = null;
+
+                if (batch.prices && Array.isArray(batch.prices)) {
+                    // Store prices as JSON
+                    pricesJson = JSON.stringify(batch.prices);
+
+                    // Extract common prices for backward compatibility
+                    batch.prices.forEach(priceObj => {
+                        const code = priceObj.price_code;
+                        const value = parseFloat(priceObj.value || 0);
+
+                        if (code === 'MR') mrp = value;
+                        else if (code === 'S1') sales = value;
+                        else if (code === 'CO') cost = value;
+                        else if (code === 'S2') retail = value;
+                        else if (code === 'S3') dp = value;
+                        else if (code === 'S4') cb = value;
+                        else if (code === 'S5') netRate = value;
+                    });
+                } else {
+                    // Fallback to old format
+                    mrp = parseFloat(batch.MRP || batch.mrp || 0);
+                    retail = parseFloat(batch.RETAIL || batch.retail || 0);
+                    dp = parseFloat(batch['D.P'] || batch.dp || 0);
+                    cb = parseFloat(batch.CB || batch.cb || 0);
+                    cost = parseFloat(batch.COST || batch.cost || 0);
+                    sales = parseFloat(batch.sales || batch.Sales || 0);
+                    netRate = parseFloat(batch['NET RATE'] || batch.net_rate || batch.netrate || 0);
+                    pkShop = parseFloat(batch['PK SHOP'] || batch.pk_shop || batch.pkshop || 0);
+                }
+
+                // Explicit field values override array extraction if present
+                if (batch.MRP || batch.mrp) mrp = parseFloat(batch.MRP || batch.mrp || 0);
+                if (batch.RETAIL || batch.retail) retail = parseFloat(batch.RETAIL || batch.retail || 0);
+                if (batch['D.P'] || batch.dp) dp = parseFloat(batch['D.P'] || batch.dp || 0);
+                if (batch.CB || batch.cb) cb = parseFloat(batch.CB || batch.cb || 0);
+                if (batch.COST || batch.cost) cost = parseFloat(batch.COST || batch.cost || 0);
+                if (batch.sales || batch.Sales) sales = parseFloat(batch.sales || batch.Sales || 0);
+
                 const quantity = parseFloat(batch.quantity || 0);
-                const netRate = parseFloat(batch['NET RATE'] || batch.net_rate || batch.netrate || 0);
-                const pkShop = parseFloat(batch['PK SHOP'] || batch.pk_shop || batch.pkshop || 0);
                 const secondPrice = parseFloat(batch.second_price || 0);
                 const thirdPrice = parseFloat(batch.third_price || 0);
-                const sales = parseFloat(batch.sales || batch.Sales || 0);
                 const fourthPrice = parseFloat(batch.fourth_price || batch.fourthprice || 0);
                 const nlc1 = parseFloat(batch.nlc1 || 0);
                 const bmrp = parseFloat(batch.bmrp || 0);
 
                 await this.db.runAsync(
-                    'INSERT INTO batches (product_code, batch_id, barcode, mrp, retail, dp, cb, cost, quantity, expiry_date, second_price, third_price, net_rate, pk_shop, sales, fourth_price, nlc1, bmrp, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO batches (product_code, batch_id, barcode, mrp, retail, dp, cb, cost, quantity, expiry_date, second_price, third_price, net_rate, pk_shop, sales, fourth_price, nlc1, bmrp, prices, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     [productCode, batch.id || batch.batch_id || null, batch.barcode || '', mrp, retail,
                         dp, cb, cost, quantity, batch.expirydate || batch.expiry_date || null,
-                        secondPrice, thirdPrice, netRate, pkShop, sales, fourthPrice, nlc1, bmrp, new Date().toISOString(), new Date().toISOString()]
+                        secondPrice, thirdPrice, netRate, pkShop, sales, fourthPrice, nlc1, bmrp,
+                        pricesJson,
+                        new Date().toISOString(), new Date().toISOString()]
                 );
             }
 
             return true;
         } catch (error) {
             console.error('[DB] Error saving batches for ' + productCode + ': ', error);
+            // Auto-fix column if missing
+            if (error && error.message && error.message.includes('no column named prices')) {
+                try {
+                    console.log('[DB] Auto-adding prices column to batches...');
+                    await this.db.runAsync('ALTER TABLE batches ADD COLUMN prices TEXT');
+                    return await this.saveBatches(productCode, batches);
+                } catch (e) { console.error('Failed to autofix', e); }
+            }
             return false;
         }
     }

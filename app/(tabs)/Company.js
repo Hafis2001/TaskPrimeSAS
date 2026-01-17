@@ -106,6 +106,36 @@ const Company = () => {
             </View>
           </View>
 
+          {/* New Attendance Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Attendance</Text>
+            <View style={styles.attendanceCard}>
+              <TouchableOpacity
+                style={styles.attendanceItem}
+                activeOpacity={0.7}
+                onPress={() => router.push("/location-capture")}
+              >
+                <View style={[styles.attendanceIcon, { backgroundColor: Colors.warning[50] }]}>
+                  <Ionicons name="location" size={24} color={Colors.warning.main} />
+                </View>
+                <Text style={styles.attendanceLabel}>Location Capture</Text>
+              </TouchableOpacity>
+
+              <View style={styles.attendanceDivider} />
+
+              <TouchableOpacity
+                style={styles.attendanceItem}
+                activeOpacity={0.7}
+                onPress={() => router.push("/Punch-In")}
+              >
+                <View style={[styles.attendanceIcon, { backgroundColor: Colors.success[50] }]}>
+                  <Ionicons name="finger-print" size={24} color={Colors.success.main} />
+                </View>
+                <Text style={styles.attendanceLabel}>Punch In</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
           <View style={styles.infoSection}>
             <View style={styles.infoCard}>
               <Ionicons name="information-circle" size={20} color={Colors.primary.main} />
@@ -241,6 +271,40 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.sm,
     color: Colors.primary[900],
     lineHeight: 20,
+  },
+  attendanceCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    ...Shadows.sm,
+  },
+  attendanceItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    gap: Spacing.sm,
+  },
+  attendanceIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  attendanceLabel: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  attendanceDivider: {
+    width: 1,
+    height: '60%',
+    backgroundColor: Colors.border.light,
   }
 });
 

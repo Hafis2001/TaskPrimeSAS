@@ -278,6 +278,11 @@ export default function EntryScreen() {
                     Code: {selectedCustomer.code} • {selectedCustomer.place || selectedCustomer.area}
                   </Text>
                 </View>
+                {selectedCustomer.remarkcolumntitle ? (
+                  <View style={styles.priceBadge}>
+                    <Text style={styles.priceBadgeText}>{selectedCustomer.remarkcolumntitle}</Text>
+                  </View>
+                ) : null}
               </View>
             )}
           </View>
@@ -580,7 +585,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: Spacing.lg,
     gap: 8,
-   
+
   },
   proceedText: {
     fontSize: Typography.sizes.base,
@@ -694,5 +699,18 @@ const styles = StyleSheet.create({
   emptyText: {
     color: Colors.text.secondary,
     fontSize: Typography.sizes.base,
+  },
+
+  priceBadge: {
+    backgroundColor: Colors.primary.main,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
+    marginLeft: Spacing.sm,
+  },
+  priceBadgeText: {
+    color: '#ffffff',
+    fontSize: Typography.sizes.xs,
+    fontWeight: '700',
   },
 });

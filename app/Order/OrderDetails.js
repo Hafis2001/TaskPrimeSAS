@@ -422,23 +422,40 @@ export default function OrderDetails() {
 
         // Override with Customer Price Code if enabled and available
         if (appSettings.read_price_category && currentCustomer?.remarkcolumntitle) {
-          // Verify if it's a valid code in price_codes list
-          const isValid = appSettings.price_codes?.some(pc => pc.code === currentCustomer.remarkcolumntitle);
-          if (isValid) {
-            priceCode = currentCustomer.remarkcolumntitle;
+          const code = currentCustomer.remarkcolumntitle;
+
+          // Verify if it's a valid code:
+          // 1. Check against price_codes list in settings (if available)
+          // 2. OR check against known standard codes (fallback)
+          const isValidInSettings = appSettings.price_codes?.some(pc => pc.code === code);
+          const isStandardCode = ['S1', 'S2', 'S3', 'S4', 'S5', 'MR', 'CO'].includes(code);
+
+          if (isValidInSettings || isStandardCode) {
+            priceCode = code;
             console.log('[OrderDetails] Using Customer Price Code:', priceCode);
+          } else {
+            console.log('[OrderDetails] Customer Price Code ignored (invalid):', code);
           }
         }
 
-        // 3. Determine Restricted Codes for this User
+        // 3. Determine RESTRICTED Codes for this User (Protected Price Users = Deny List)
         // Normalize username to uppercase to match settings keys (e.g. "ARUN")
         const upperUser = username ? username.toUpperCase() : '';
         if (upperUser && appSettings.protected_price_users && appSettings.protected_price_users[upperUser]) {
-          const restricted = appSettings.protected_price_users[upperUser];
-          setRestrictedPriceCodes(restricted);
+          let restricted = [...appSettings.protected_price_users[upperUser]]; // Copy to allow modification
+
+          // CRITICAL: Whitelist the Effective Price Code
+          // If the customer is assigned a specific price code (priceCode), it MUST be visible
+          // even if the user is normally restricted from it.
+          if (priceCode && restricted.includes(priceCode)) {
+            console.log(`[OrderDetails] Whitelisting effective code ${priceCode} for this customer (Auto-Show)`);
+            restricted = restricted.filter(c => c !== priceCode);
+          }
+
+          setRestrictedPriceCodes(restricted); // DENY List
           console.log('[OrderDetails] Restricted codes for', upperUser, ':', restricted);
         } else {
-          setRestrictedPriceCodes([]);
+          setRestrictedPriceCodes([]); // Empty array = No restrictions
         }
       }
 
@@ -460,7 +477,7 @@ export default function OrderDetails() {
       const fieldName = PRICE_FIELD_MAP[effectivePriceCode] || 'retail';
       let dynamicPrice = p[fieldName];
 
-      // Fallback if price is 0 or missing (optional, usually we want 0 if it's really 0, but safest to fallback to retail/price)
+      // Fallback if price is 0 or missing
       if (!dynamicPrice && dynamicPrice !== 0 && fieldName !== 'retail') {
         dynamicPrice = p.retail || p.price;
       }
@@ -470,15 +487,13 @@ export default function OrderDetails() {
         dynamicPrice = p.price || 0;
       }
 
-      // 2. Filter Prices (hide restricted ones)
-      // We attach restrictedCodes to the product so the UI can filter them when viewing details
-
+      // 2. Attach Restricted Codes
       return {
         ...p,
         price: parseFloat(dynamicPrice),
         originalPrice: p.price, // Keep original
         priceCodeUsed: effectivePriceCode,
-        restrictedCodes: restrictedPriceCodes
+        restrictedCodes: restrictedPriceCodes || [] // passing the DENY list
       };
     });
   }, [effectivePriceCode, restrictedPriceCodes]);
@@ -489,11 +504,12 @@ export default function OrderDetails() {
     if (allProducts.length > 0) {
       // Check if update is needed to avoid infinite loop
       // We check the first product's priceCodeUsed to see if it matches current effective code
-      // AND also check if restrictedCodes have changed
+      // AND also check if allowedCodes have changed
       const currentCode = allProducts[0].priceCodeUsed;
-      const currentRestricted = allProducts[0].restrictedCodes || [];
 
-      // Simple array comparison for restricted codes
+      const currentRestricted = allProducts[0].restrictedCodes;
+
+      // Simple comparison
       const restrictedChanged = JSON.stringify(currentRestricted) !== JSON.stringify(restrictedPriceCodes);
 
       if (currentCode !== effectivePriceCode || restrictedChanged) {
@@ -2155,78 +2171,53 @@ export default function OrderDetails() {
                     <View style={styles.detailsSection}>
                       <Text style={styles.detailsSectionTitle}>Price Details</Text>
                       <View style={styles.priceGrid}>
+                        {selectedBatchDetails.prices && selectedBatchDetails.prices.length > 0 ? (
+                          // Dynamic Price Rendering from API Data
+                          selectedBatchDetails.prices.map((priceObj, index) => {
+                            // 1. Visibility Check (Deny List)
+                            const restrictedCodes = selectedBatchDetails.restrictedCodes;
+                            const isRestricted = restrictedCodes?.includes(priceObj.price_code);
 
-                        {/* MRP (MR) */}
-                        {selectedBatchDetails.mrp > 0 && !selectedBatchDetails.restrictedCodes?.includes('MR') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>MRP</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.mrp?.toFixed(2)}</Text>
-                          </View>
-                        )}
+                            if (isRestricted) return null;
 
-                        {/* Effective Rate - Always shown if > 0 AND not restricted */}
-                        {selectedBatchDetails.price > 0 && !selectedBatchDetails.restrictedCodes?.includes(selectedBatchDetails.priceCodeUsed || 'S2') && (
-                          <View style={[styles.priceItem, styles.priceItemHighlight]}>
-                            <Text style={[styles.priceLabel, { color: Colors.primary.main }]}>Rate ({selectedBatchDetails.priceCodeUsed || 'S2'})</Text>
-                            <Text style={[styles.priceValue, { color: Colors.primary.main }]}>{selectedBatchDetails.price?.toFixed(2)}</Text>
-                          </View>
-                        )}
+                            // 2. Effective Price Highlight
+                            // Match against priceCodeUsed (which holds the code like 'S2', 'S1')
+                            const effectiveCode = selectedBatchDetails.priceCodeUsed || 'S2';
+                            const isEffective = effectiveCode === priceObj.price_code;
 
-                        {/* Retail (S2) */}
-                        {selectedBatchDetails.retail > 0 && !selectedBatchDetails.restrictedCodes?.includes('S2') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>Retail</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.retail?.toFixed(2)}</Text>
-                          </View>
-                        )}
-
-                        {/* Sales (S1) */}
-                        {/* Sales (S1) - Hide if used as effective rate to avoid duplicate "Rate (S1)" and "Sales" */}
-                        {selectedBatchDetails.sales > 0 && selectedBatchDetails.priceCodeUsed !== 'S1' && !selectedBatchDetails.restrictedCodes?.includes('S1') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>Sales</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.sales?.toFixed(2)}</Text>
-                          </View>
-                        )}
-
-                        {/* D.P (S3) */}
-                        {selectedBatchDetails.dp > 0 && !selectedBatchDetails.restrictedCodes?.includes('S3') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>D.P</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.dp?.toFixed(2)}</Text>
-                          </View>
-                        )}
-
-                        {/* CB (S4) */}
-                        {selectedBatchDetails.cb > 0 && !selectedBatchDetails.restrictedCodes?.includes('S4') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>CB</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.cb?.toFixed(2)}</Text>
-                          </View>
-                        )}
-
-                        {/* Net Rate (S5) */}
-                        {selectedBatchDetails.netRate > 0 && !selectedBatchDetails.restrictedCodes?.includes('S5') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>Net Rate</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.netRate?.toFixed(2)}</Text>
-                          </View>
-                        )}
-
-                        {/* Cost (CO) */}
-                        {selectedBatchDetails.cost > 0 && !selectedBatchDetails.restrictedCodes?.includes('CO') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>Cost</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.cost?.toFixed(2)}</Text>
-                          </View>
-                        )}
-
-                        {/* PK Shop */}
-                        {selectedBatchDetails.pkShop > 0 && !selectedBatchDetails.restrictedCodes?.includes('PKS') && (
-                          <View style={styles.priceItem}>
-                            <Text style={styles.priceLabel}>PK Shop</Text>
-                            <Text style={styles.priceValue}>{selectedBatchDetails.pkShop?.toFixed(2)}</Text>
-                          </View>
+                            return (
+                              <View key={index} style={[styles.priceItem, isEffective && styles.priceItemHighlight]}>
+                                <Text style={[styles.priceLabel, isEffective && { color: Colors.primary.main }]}>
+                                  {priceObj.price_name} {isEffective ? `(${priceObj.price_code})` : ''}
+                                </Text>
+                                <Text style={[styles.priceValue, isEffective && { color: Colors.primary.main }]}>
+                                  {parseFloat(priceObj.value || 0).toFixed(2)}
+                                </Text>
+                              </View>
+                            );
+                          })
+                        ) : (
+                          // Fallback for Legacy/Missing Data (Hardcoded common fields)
+                          <>
+                            {selectedBatchDetails.mrp > 0 && !selectedBatchDetails.restrictedCodes?.includes('MR') && (
+                              <View style={styles.priceItem}>
+                                <Text style={styles.priceLabel}>MRP</Text>
+                                <Text style={styles.priceValue}>{selectedBatchDetails.mrp?.toFixed(2)}</Text>
+                              </View>
+                            )}
+                            {selectedBatchDetails.price > 0 && !selectedBatchDetails.restrictedCodes?.includes(selectedBatchDetails.priceCodeUsed || 'S2') && (
+                              <View style={[styles.priceItem, styles.priceItemHighlight]}>
+                                <Text style={[styles.priceLabel, { color: Colors.primary.main }]}>Rate ({selectedBatchDetails.priceCodeUsed || 'S2'})</Text>
+                                <Text style={[styles.priceValue, { color: Colors.primary.main }]}>{selectedBatchDetails.price?.toFixed(2)}</Text>
+                              </View>
+                            )}
+                            {selectedBatchDetails.retail > 0 && !selectedBatchDetails.restrictedCodes?.includes('S2') && (
+                              <View style={styles.priceItem}>
+                                <Text style={styles.priceLabel}>Retail</Text>
+                                <Text style={styles.priceValue}>{selectedBatchDetails.retail?.toFixed(2)}</Text>
+                              </View>
+                            )}
+                          </>
                         )}
                       </View>
                     </View>
