@@ -118,6 +118,7 @@ export default function LocationCaptureScreen() {
         try {
             setCapturing(true);
 
+            // Check location permissions
             let { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== 'granted') {
                 Alert.alert('Permission denied', 'Permission to access location was denied');
@@ -125,26 +126,51 @@ export default function LocationCaptureScreen() {
                 return;
             }
 
-            let location = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.High
-            });
+            // Get current location with timeout
+            const location = await Promise.race([
+                Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.High
+                }),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Location timeout')), 10000)
+                )
+            ]);
+
+            if (!location || !location.coords) {
+                throw new Error('Invalid location data');
+            }
 
             const { latitude, longitude } = location.coords;
+
+            // Validate coordinates
+            if (isNaN(latitude) || isNaN(longitude)) {
+                throw new Error('Invalid coordinates');
+            }
+
             const initialRegion = {
                 latitude,
                 longitude,
-                latitudeDelta: 0.005, // Zoom level
+                latitudeDelta: 0.005,
                 longitudeDelta: 0.005,
             };
 
             setCurrentRegion(initialRegion);
             setMarkerCoordinate({ latitude, longitude });
             setSelectedCustomer(customer);
-            setShowMap(true); // Open Modal
+
+            // Small delay before showing map to ensure state is set
+            setTimeout(() => {
+                setShowMap(true);
+            }, 100);
 
         } catch (error) {
-            console.error("Error getting initial location:", error);
-            Alert.alert("Error", "Failed to retrieve current location.");
+            console.error("Error opening map:", error);
+            Alert.alert(
+                "Location Error",
+                error.message === 'Location timeout'
+                    ? "Location request timed out. Please try again."
+                    : "Failed to retrieve current location. Please check your GPS settings."
+            );
         } finally {
             setCapturing(false);
         }
@@ -158,10 +184,43 @@ export default function LocationCaptureScreen() {
 
             const { latitude, longitude } = markerCoordinate;
 
-            // Save to local DB
+            // 1. Save to local DB
             await dbService.saveCustomerLocation(selectedCustomer.code, latitude, longitude);
 
-            // Update local state to reflect captured status
+            // 2. POST to API
+            try {
+                const token = await AsyncStorage.getItem("authToken");
+                const apiPayload = {
+                    firm_name: selectedCustomer.name,
+                    latitude: latitude,
+                    longitude: longitude
+                };
+
+                console.log('[LocationCapture] Posting to API:', apiPayload);
+
+                const response = await fetch('https://tasksas.com/api/shop-location/', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(apiPayload)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.warn('[LocationCapture] API Error:', response.status, errorText);
+                    // Don't fail the whole operation if API fails
+                } else {
+                    const result = await response.json();
+                    console.log('[LocationCapture] API Success:', result);
+                }
+            } catch (apiError) {
+                console.error('[LocationCapture] API request failed:', apiError);
+                // Continue even if API fails - local save is primary
+            }
+
+            // 3. Update local state to reflect captured status
             setCapturedCustomers(prev => new Set(prev).add(selectedCustomer.code));
 
             Alert.alert(
@@ -260,29 +319,43 @@ export default function LocationCaptureScreen() {
                 <Modal
                     visible={showMap}
                     animationType="slide"
-                    onRequestClose={() => setShowMap(false)}
+                    onRequestClose={() => {
+                        setShowMap(false);
+                        setCurrentRegion(null);
+                        setMarkerCoordinate(null);
+                    }}
                 >
                     <View style={styles.mapContainer}>
-                        {currentRegion && (
+                        {currentRegion && markerCoordinate ? (
                             <MapView
                                 style={styles.map}
                                 provider={PROVIDER_GOOGLE}
                                 mapType="hybrid"
-                                region={currentRegion}
-                                onRegionChangeComplete={(region) => {
-                                    // Optional: setMarkerCoordinate({ latitude: region.latitude, longitude: region.longitude });
+                                initialRegion={currentRegion}
+                                onMapReady={() => console.log('[LocationCapture] Map ready')}
+                                onError={(error) => {
+                                    console.error('[LocationCapture] Map error:', error);
+                                    Alert.alert('Map Error', 'Failed to load map. Please try again.');
+                                    setShowMap(false);
                                 }}
                             >
-                                {markerCoordinate && (
-                                    <Marker
-                                        coordinate={markerCoordinate}
-                                        title={selectedCustomer?.name}
-                                        description="Customer Location"
-                                        draggable
-                                        onDragEnd={(e) => setMarkerCoordinate(e.nativeEvent.coordinate)}
-                                    />
-                                )}
+                                <Marker
+                                    coordinate={markerCoordinate}
+                                    title={selectedCustomer?.name || 'Customer'}
+                                    description="Customer Location"
+                                    draggable
+                                    onDragEnd={(e) => {
+                                        if (e?.nativeEvent?.coordinate) {
+                                            setMarkerCoordinate(e.nativeEvent.coordinate);
+                                        }
+                                    }}
+                                />
                             </MapView>
+                        ) : (
+                            <View style={styles.mapLoadingContainer}>
+                                <ActivityIndicator size="large" color={Colors.primary.main} />
+                                <Text style={styles.mapLoadingText}>Loading map...</Text>
+                            </View>
                         )}
 
                         <View style={styles.mapOverlay}>
@@ -483,6 +556,17 @@ const styles = StyleSheet.create({
     mapButtonTextCancel: {
         color: Colors.text.primary,
         fontWeight: '600',
+        fontSize: Typography.sizes.base,
+    },
+    mapLoadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#000',
+    },
+    mapLoadingText: {
+        color: '#FFF',
+        marginTop: Spacing.md,
         fontSize: Typography.sizes.base,
     }
 });

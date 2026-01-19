@@ -1,9 +1,11 @@
 // app/(tabs)/Company.js
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
+  Modal,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -17,6 +19,7 @@ import dbService from "../../src/services/database";
 const Company = () => {
   const router = useRouter();
   const [customersCount, setCustomersCount] = useState(0);
+  const [logoutVisible, setLogoutVisible] = useState(false);
 
   useEffect(() => {
     loadCustomerCount();
@@ -30,6 +33,33 @@ const Company = () => {
     } catch (error) {
       console.error('[Company] Error loading customer count:', error);
     }
+  };
+
+  const handleLogout = async () => {
+    try {
+      // SMART LOGOUT: Preserve License & Device Info, Clear User Data
+      const keys = await AsyncStorage.getAllKeys();
+      const preservedKeys = [
+        'clientId',
+        'licenseInfo',
+        'licenseKey',
+        'deviceId',
+        'device_hardware_id',
+        'app_settings'
+      ];
+
+      const keysToRemove = keys.filter(key => !preservedKeys.includes(key));
+
+      if (keysToRemove.length > 0) {
+        await AsyncStorage.multiRemove(keysToRemove);
+        console.log('[Company] Smart Logout: Cleared', keysToRemove);
+      }
+    } catch (e) {
+      console.error('[Company] Logout Error:', e);
+    }
+
+    setLogoutVisible(false);
+    router.replace("/LoginScreen");
   };
 
   const quickActions = [
@@ -144,7 +174,53 @@ const Company = () => {
               </Text>
             </View>
           </View>
+
+          {/* Logout Button */}
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={() => setLogoutVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="log-out-outline" size={20} color={Colors.error.main} />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
         </ScrollView>
+
+        {/* Logout Confirmation Modal */}
+        <Modal
+          visible={logoutVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setLogoutVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalIcon}>
+                <Ionicons name="log-out" size={32} color={Colors.error.main} />
+              </View>
+              <Text style={styles.modalTitle}>Confirm Logout</Text>
+              <Text style={styles.modalMessage}>
+                Are you sure you want to end your session?
+              </Text>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => setLogoutVisible(false)}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.confirmButton}
+                  onPress={handleLogout}
+                >
+                  <Text style={styles.confirmButtonText}>Logout</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -305,7 +381,90 @@ const styles = StyleSheet.create({
     width: 1,
     height: '60%',
     backgroundColor: Colors.border.light,
-  }
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.error[50],
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginTop: Spacing.xl,
+    borderWidth: 1,
+    borderColor: Colors.error[100],
+  },
+  logoutText: {
+    fontSize: Typography.sizes.base,
+    color: Colors.error.main,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xl,
+  },
+  modalContent: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    ...Shadows.xl,
+  },
+  modalIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: Colors.error[50],
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  modalTitle: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.xs,
+  },
+  modalMessage: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
+    textAlign: 'center',
+    marginBottom: Spacing.xl,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    width: '100%',
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  confirmButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.error.main,
+    alignItems: 'center',
+  },
+  confirmButtonText: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
 });
 
 export default Company;

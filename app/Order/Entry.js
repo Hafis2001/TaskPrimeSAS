@@ -1,5 +1,6 @@
 // app/Order/Entry.js
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -35,10 +36,13 @@ export default function EntryScreen() {
   const [selectedArea, setSelectedArea] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedPayment, setSelectedPayment] = useState("Cash/Bank");
+  const [selectedPriceCode, setSelectedPriceCode] = useState(null); // Code 'S1', 'MR' etc.
+  const [selectedPriceName, setSelectedPriceName] = useState(null); // Name 'Sales', 'MRP'
 
   // Modal states
   const [showAreaModal, setShowAreaModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showPriceCodeModal, setShowPriceCodeModal] = useState(false);
 
   // Search states
   const [areaSearchQuery, setAreaSearchQuery] = useState("");
@@ -47,6 +51,19 @@ export default function EntryScreen() {
   // Filtered data
   const [filteredAreas, setFilteredAreas] = useState([]);
   const [filteredCustomers, setFilteredCustomers] = useState([]);
+
+  // Price Code Logic
+  const [availablePriceCodes, setAvailablePriceCodes] = useState([]);
+  const [appSettings, setAppSettings] = useState(null);
+
+  // Default Price Codes
+  const DEFAULT_PRICE_CODES = [
+    { code: 'S1', name: 'Sales' },
+    { code: 'S2', name: 'Retail' },
+    { code: 'S3', name: 'DP' },
+    { code: 'MR', name: 'MRP' },
+    { code: 'CO', name: 'Cost' }
+  ];
 
   // Handle back press
   const handleBackPress = useCallback(() => {
@@ -60,6 +77,7 @@ export default function EntryScreen() {
     });
 
     loadFromDatabase();
+    loadSettingsAndPriceCodes();
 
     return () => unsubscribe();
   }, []);
@@ -71,6 +89,48 @@ export default function EntryScreen() {
       return () => subscription.remove();
     }, [handleBackPress])
   );
+
+  // Load Settings and Calculate available price codes
+  const loadSettingsAndPriceCodes = async () => {
+    try {
+      const settingsStr = await AsyncStorage.getItem('app_settings');
+      const username = await AsyncStorage.getItem('username');
+      let codes = DEFAULT_PRICE_CODES;
+
+      if (settingsStr) {
+        const settings = JSON.parse(settingsStr);
+        setAppSettings(settings);
+
+        if (settings.price_codes && settings.price_codes.length > 0) {
+          codes = settings.price_codes;
+        }
+
+        // Filter based on restricted users
+        if (username && settings.protected_price_users) {
+          const upperUser = username.toUpperCase();
+          const restrictedCodes = settings.protected_price_users[upperUser]; // Array of codes to HIDE
+
+          if (restrictedCodes && Array.isArray(restrictedCodes)) {
+            console.log(`[Entry] Filtering price codes for ${username}. Restricted:`, restrictedCodes);
+            // Filter OUT the restricted codes
+            codes = codes.filter(pc => !restrictedCodes.includes(pc.code));
+          }
+        }
+      }
+
+      setAvailablePriceCodes(codes);
+      // Set default if valid
+      if (codes.length > 0) {
+        const defaultCode = codes.find(c => c.code === 'S2') || codes[0];
+        setSelectedPriceCode(defaultCode.code);
+        setSelectedPriceName(defaultCode.name);
+      }
+
+    } catch (e) {
+      console.error('[Entry] Error loading settings:', e);
+      setAvailablePriceCodes(DEFAULT_PRICE_CODES);
+    }
+  };
 
   // Filter areas based on search
   useEffect(() => {
@@ -158,6 +218,7 @@ export default function EntryScreen() {
     setAreaSearchQuery("");
     setCustomerSearchQuery("");
     loadFromDatabase();
+    loadSettingsAndPriceCodes();
   };
 
   const handleSelectArea = (area) => {
@@ -171,7 +232,38 @@ export default function EntryScreen() {
     setSelectedCustomer(customer);
     setShowCustomerModal(false);
     setCustomerSearchQuery("");
+
+    // Auto-select Price Code from Customer Default
+    if (customer.remarkcolumntitle) {
+      const code = customer.remarkcolumntitle;
+      // Check if this code is in the AVAILABLE (filtered) list for this user
+      // If it IS available, auto-select it.
+      // If it's RESTRICTED, typically we shouldn't select it, BUT for specific customer assignment
+      // commonly we ALLOW it (whitelist override).
+      // Let's check available list first.
+      const foundInAvailable = availablePriceCodes.find(pc => pc.code === code);
+
+      if (foundInAvailable) {
+        setSelectedPriceCode(foundInAvailable.code);
+        setSelectedPriceName(foundInAvailable.name);
+      } else {
+        // It might be restricted or just invalid.
+        // If it's a valid standard code but restricted, we *could* force it if policy allows.
+        // For now, let's stick to the available list to avoid showing restricted data unintentionally.
+        // Unless we want to support the "whitelist override" logic here too.
+        // Let's try to find it in the DEFAULT list just to get the name, even if not in available.
+        // If it's not available, we keep the current selected (usually default S2) or alert?
+        // Let's just default to S2 if the customer code is not valid for this user.
+        console.log(`[Entry] Customer default code ${code} not in available list for this user.`);
+      }
+    }
   };
+
+  const handleSelectPriceCode = (priceObj) => {
+    setSelectedPriceCode(priceObj.code);
+    setSelectedPriceName(priceObj.name);
+    setShowPriceCodeModal(false);
+  }
 
   const handleProceed = () => {
     /* Area is now optional
@@ -198,6 +290,7 @@ export default function EntryScreen() {
         customer: selectedCustomer.name,
         customerCode: selectedCustomer.code,
         payment: selectedPayment,
+        priceCode: selectedPriceCode // Pass selected price code
       },
     });
   };
@@ -278,14 +371,35 @@ export default function EntryScreen() {
                     Code: {selectedCustomer.code} • {selectedCustomer.place || selectedCustomer.area}
                   </Text>
                 </View>
-                {selectedCustomer.remarkcolumntitle ? (
+                {/* Display Selected Price Code in Card */}
+                {selectedPriceCode && (
                   <View style={styles.priceBadge}>
-                    <Text style={styles.priceBadgeText}>{selectedCustomer.remarkcolumntitle}</Text>
+                    <Text style={styles.priceBadgeText}>{selectedPriceName || selectedPriceCode}</Text>
+                    <Text style={[styles.priceBadgeText, { fontSize: 8, opacity: 0.8 }]}>{selectedPriceCode}</Text>
                   </View>
-                ) : null}
+                )}
               </View>
             )}
           </View>
+
+          {/* Price Code Selection (Only if customer selected) */}
+          {selectedCustomer && (
+            <View style={styles.formSection}>
+              <Text style={styles.label}>
+                Price Level
+              </Text>
+              <TouchableOpacity
+                style={styles.inputBox}
+                onPress={() => setShowPriceCodeModal(true)}
+              >
+                <Ionicons name="pricetag" size={20} color={Colors.primary.main} style={styles.inputIcon} />
+                <Text style={styles.inputText}>
+                  {selectedPriceName} ({selectedPriceCode})
+                </Text>
+                <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Payment Method */}
           <View style={styles.formSection}>
@@ -459,6 +573,53 @@ export default function EntryScreen() {
                 ListEmptyComponent={
                   <View style={styles.emptyContainer}>
                     <Text style={styles.emptyText}>No customers found</Text>
+                  </View>
+                }
+                showsVerticalScrollIndicator={true}
+              />
+            </View>
+          </View>
+        </Modal>
+
+        {/* Price Code Selection Modal */}
+        <Modal
+          visible={showPriceCodeModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowPriceCodeModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { height: '50%' }]}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Select Price Level</Text>
+                <TouchableOpacity onPress={() => setShowPriceCodeModal(false)}>
+                  <Ionicons name="close" size={24} color={Colors.text.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={availablePriceCodes}
+                keyExtractor={(item) => item.code}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.listItem}
+                    onPress={() => handleSelectPriceCode(item)}
+                  >
+                    <View style={styles.listItemIcon}>
+                      <Ionicons name="pricetag" size={20} color={Colors.primary.main} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listItemText}>{item.name}</Text>
+                      <Text style={[styles.listItemText, { fontSize: 12, color: Colors.text.tertiary }]}>Code: {item.code}</Text>
+                    </View>
+                    {selectedPriceCode === item.code && (
+                      <Ionicons name="checkmark-circle" size={20} color={Colors.success.main} />
+                    )}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No price codes available</Text>
                   </View>
                 }
                 showsVerticalScrollIndicator={true}

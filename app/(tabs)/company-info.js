@@ -72,7 +72,28 @@ export default function CompanyInfoScreen() {
   }, []);
 
   const handleLogout = async () => {
-    await AsyncStorage.clear();
+    try {
+      // SMART LOGOUT: Preserve License & Device Info, Clear User Data
+      const keys = await AsyncStorage.getAllKeys();
+      const preservedKeys = [
+        'clientId',
+        'licenseInfo',
+        'licenseKey',
+        'deviceId',
+        'device_hardware_id',
+        'app_settings'
+      ];
+
+      const keysToRemove = keys.filter(key => !preservedKeys.includes(key));
+
+      if (keysToRemove.length > 0) {
+        await AsyncStorage.multiRemove(keysToRemove);
+        console.log('[CompanyInfo] Smart Logout: Cleared', keysToRemove);
+      }
+    } catch (e) {
+      console.error('[CompanyInfo] Logout Error:', e);
+    }
+
     setLogoutVisible(false);
     router.replace("/LoginScreen");
   };

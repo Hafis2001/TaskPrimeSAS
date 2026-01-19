@@ -115,38 +115,46 @@ export default function PlaceOrder() {
       const json = await response.json();
       const apiData = Array.isArray(json) ? json : (json.orders || json.data || []);
 
-      console.log('API RESPONSE', apiData)
+      console.log('Current User:', username);
 
       // Map API data to App's Order Structure
-      const mappedOrders = apiData.map(apiOrder => {
-        const items = apiOrder.items || [];
-        const calcTotal = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+      const mappedOrders = apiData
+        .filter(apiOrder => {
+          if (!username) return false; // If no user is logged in, show nothing
+          const apiUser = apiOrder.username ? String(apiOrder.username).trim() : '';
+          const currentUser = String(username).trim();
+          // Case insensitive comparison
+          return apiUser.toLowerCase() === currentUser.toLowerCase();
+        })
+        .map(apiOrder => {
+          const items = apiOrder.items || [];
+          const calcTotal = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
 
-        return {
-          id: apiOrder.order_id, // Use API Order ID
-          isApiOrder: true,      // Flag to identify source
-          customer: apiOrder.customer_name,
-          customerCode: apiOrder.customer_code,
-          area: apiOrder.area,
-          type: 'Order',
-          payment: apiOrder.payment_type,
-          remark: apiOrder.remark,
-          status: 'uploaded',
-          uploadStatus: 'uploaded',
-          timestamp: `${apiOrder.created_date}T${apiOrder.created_time}`,
-          uploadedAt: `${apiOrder.created_date}T${apiOrder.created_time}`,
-          total: calcTotal,
-          items: items.map(item => ({
-            name: item.product_name,
-            code: item.item_code,
-            barcode: item.barcode,
-            price: parseFloat(item.price),
-            qty: parseFloat(item.quantity),
-            total: parseFloat(item.amount),
-            uploadStatus: 'uploaded'
-          }))
-        };
-      });
+          return {
+            id: apiOrder.order_id, // Use API Order ID
+            isApiOrder: true,      // Flag to identify source
+            customer: apiOrder.customer_name,
+            customerCode: apiOrder.customer_code,
+            area: apiOrder.area,
+            type: 'Order',
+            payment: apiOrder.payment_type,
+            remark: apiOrder.remark,
+            status: 'uploaded',
+            uploadStatus: 'uploaded',
+            timestamp: `${apiOrder.created_date}T${apiOrder.created_time}`,
+            uploadedAt: `${apiOrder.created_date}T${apiOrder.created_time}`,
+            total: calcTotal,
+            items: items.map(item => ({
+              name: item.product_name,
+              code: item.item_code,
+              barcode: item.barcode,
+              price: parseFloat(item.price),
+              qty: parseFloat(item.quantity),
+              total: parseFloat(item.amount),
+              uploadStatus: 'uploaded'
+            }))
+          };
+        });
 
       setUploadedOrders(mappedOrders);
 
@@ -529,22 +537,6 @@ export default function PlaceOrder() {
                 </TouchableOpacity>
               )}
 
-              {!isApi && (filterStatus === 'pending' || filterStatus === 'failed') && (
-                <TouchableOpacity style={styles.actionButton} onPress={() => confirmOrder(order.id)}>
-                  <LinearGradient colors={Gradients.success} style={styles.actionButtonGradient}>
-                    <Ionicons name="cloud-upload" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Upload</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity style={styles.actionButton} onPress={() => handlePrint(order)}>
-                <LinearGradient colors={[Colors.primary.main, Colors.primary[700]]} style={styles.actionButtonGradient}>
-                  <Ionicons name="print" size={18} color="#fff" />
-                  <Text style={styles.actionButtonText}>Print</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-
               <TouchableOpacity style={styles.actionButton} onPress={() => {
                 const isUploaded = order.isApiOrder || order.uploadStatus === 'uploaded' || order.uploadStatus === 'uploaded to server';
                 const printContext = filterStatus === 'uploaded' || isUploaded ? 'uploaded' : 'pending';
@@ -561,6 +553,22 @@ export default function PlaceOrder() {
                   <Text style={styles.actionButtonText}>PDF</Text>
                 </LinearGradient>
               </TouchableOpacity>
+
+              <TouchableOpacity style={styles.actionButton} onPress={() => handlePrint(order)}>
+                <LinearGradient colors={[Colors.primary.main, Colors.primary[700]]} style={styles.actionButtonGradient}>
+                  <Ionicons name="print" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>Print</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+
+              {!isApi && (filterStatus === 'pending' || filterStatus === 'failed') && (
+                <TouchableOpacity style={styles.actionButton} onPress={() => confirmOrder(order.id)}>
+                  <LinearGradient colors={Gradients.success} style={styles.actionButtonGradient}>
+                    <Ionicons name="cloud-upload" size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Upload</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
 
             </View>
           </View>

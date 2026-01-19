@@ -246,7 +246,7 @@ const PRICE_FIELD_MAP = {
 export default function OrderDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { area = "", customer = "", customerCode = "", type = "", payment = "", scanned, timestamp } = params;
+  const { area = "", customer = "", customerCode = "", type = "", payment = "", priceCode: paramPriceCode = "", scanned, timestamp } = params;
 
   // CRITICAL: Use ref as source of truth for cart to prevent state loss
   const cartRef = useRef([]);
@@ -269,12 +269,7 @@ export default function OrderDetails() {
 
   // DEBUG: Monitor cart changes
   useEffect(() => {
-    console.log('🛒🛒🛒 CART STATE CHANGED 🛒🛒🛒');
-    console.log('Cart length:', cart.length);
-    cart.forEach((item, idx) => {
-      console.log(`  Cart[${idx}]:`, item.product.name, '- ID:', item.product.id, '- Qty:', item.qty);
-    });
-    console.log('🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒🛒');
+    /* console.log('🛒🛒🛒 CART STATE CHANGED 🛒🛒🛒'); */
   }, [cart]);
 
 
@@ -414,7 +409,13 @@ export default function OrderDetails() {
       // 2. Calculate Effective Price Code
       let priceCode = 'S2'; // Global Fallback
 
-      if (appSettings) {
+      // PRIORITY 1: Explicit Parameter from Entry Screen
+      if (paramPriceCode) {
+        priceCode = paramPriceCode;
+        console.log('[OrderDetails] Using Param Price Code:', priceCode);
+      }
+      // PRIORITY 2: App Settings / Customer Default (Only if no param)
+      else if (appSettings) {
         // Use default from settings if available
         if (appSettings.default_price_code) {
           priceCode = appSettings.default_price_code;
@@ -437,26 +438,24 @@ export default function OrderDetails() {
             console.log('[OrderDetails] Customer Price Code ignored (invalid):', code);
           }
         }
+      }    // 3. Determine RESTRICTED Codes for this User (Protected Price Users = Deny List)
+      // Normalize username to uppercase to match settings keys (e.g. "ARUN")
+      const upperUser = username ? username.toUpperCase() : '';
+      if (upperUser && appSettings.protected_price_users && appSettings.protected_price_users[upperUser]) {
+        let restricted = [...appSettings.protected_price_users[upperUser]]; // Copy to allow modification
 
-        // 3. Determine RESTRICTED Codes for this User (Protected Price Users = Deny List)
-        // Normalize username to uppercase to match settings keys (e.g. "ARUN")
-        const upperUser = username ? username.toUpperCase() : '';
-        if (upperUser && appSettings.protected_price_users && appSettings.protected_price_users[upperUser]) {
-          let restricted = [...appSettings.protected_price_users[upperUser]]; // Copy to allow modification
-
-          // CRITICAL: Whitelist the Effective Price Code
-          // If the customer is assigned a specific price code (priceCode), it MUST be visible
-          // even if the user is normally restricted from it.
-          if (priceCode && restricted.includes(priceCode)) {
-            console.log(`[OrderDetails] Whitelisting effective code ${priceCode} for this customer (Auto-Show)`);
-            restricted = restricted.filter(c => c !== priceCode);
-          }
-
-          setRestrictedPriceCodes(restricted); // DENY List
-          console.log('[OrderDetails] Restricted codes for', upperUser, ':', restricted);
-        } else {
-          setRestrictedPriceCodes([]); // Empty array = No restrictions
+        // CRITICAL: Whitelist the Effective Price Code
+        // If the customer is assigned a specific price code (priceCode), it MUST be visible
+        // even if the user is normally restricted from it.
+        if (priceCode && restricted.includes(priceCode)) {
+          console.log(`[OrderDetails] Whitelisting effective code ${priceCode} for this customer (Auto-Show)`);
+          restricted = restricted.filter(c => c !== priceCode);
         }
+
+        setRestrictedPriceCodes(restricted); // DENY List
+        console.log('[OrderDetails] Restricted codes for', upperUser, ':', restricted);
+      } else {
+        setRestrictedPriceCodes([]); // Empty array = No restrictions
       }
 
       setEffectivePriceCode(priceCode);
@@ -1429,6 +1428,9 @@ export default function OrderDetails() {
                   {type && ` • ${type}`}
                   {payment && ` • ${payment}`}
                 </Text>
+                <Text style={[styles.customerDetails, { marginTop: 4, opacity: 0.9, fontWeight: '600', color: Colors.secondary.light }]}>
+                  Price Level: {effectivePriceCode}
+                </Text>
               </View>
             </LinearGradient>
           </View>
@@ -2180,6 +2182,9 @@ export default function OrderDetails() {
 
                             if (isRestricted) return null;
 
+                            // 2. Value Check (Hide if 0)
+                            if (parseFloat(priceObj.value || 0) <= 0) return null;
+
                             // 2. Effective Price Highlight
                             // Match against priceCodeUsed (which holds the code like 'S2', 'S1')
                             const effectiveCode = selectedBatchDetails.priceCodeUsed || 'S2';
@@ -2188,7 +2193,7 @@ export default function OrderDetails() {
                             return (
                               <View key={index} style={[styles.priceItem, isEffective && styles.priceItemHighlight]}>
                                 <Text style={[styles.priceLabel, isEffective && { color: Colors.primary.main }]}>
-                                  {priceObj.price_name} {isEffective ? `(${priceObj.price_code})` : ''}
+                                  {priceObj.price_name} ({priceObj.price_code})
                                 </Text>
                                 <Text style={[styles.priceValue, isEffective && { color: Colors.primary.main }]}>
                                   {parseFloat(priceObj.value || 0).toFixed(2)}

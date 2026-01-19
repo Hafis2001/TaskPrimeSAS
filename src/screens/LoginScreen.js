@@ -200,16 +200,26 @@ export default function LoginScreen() {
         JSON.stringify(loginData?.user?.allowedMenuIds || [])
       );
 
-      await AsyncStorage.setItem("role", loginData?.user?.role ?? "");
-      await AsyncStorage.setItem("accountcode", loginData?.user?.accountcode ?? "");
-      await AsyncStorage.setItem("client_id", loginData?.user?.client_id ?? "");
-      await AsyncStorage.setItem("username", loginData?.user?.username ?? "");
+      // ROBUST DATA SAVING: Use Local Variables as Fallback
+      // The API return might be messy or missing fields. We trust our inputs.
+      const savedRole = loginData?.user?.role ?? "";
+      const savedAccountCode = loginData?.user?.accountcode ?? "";
+      const savedClientId = (loginData?.user?.client_id || validClientId || "").trim();
+      const savedUsername = (loginData?.user?.username || username || "").trim();
+
+      await AsyncStorage.setItem("role", savedRole);
+      await AsyncStorage.setItem("accountcode", savedAccountCode);
+      await AsyncStorage.setItem("client_id", savedClientId);
+      await AsyncStorage.setItem("username", savedUsername);
 
       await AsyncStorage.setItem("authToken", loginData.token);
       await AsyncStorage.setItem("user", JSON.stringify(loginData.user));
 
+      console.log('[Login] Saved Credentials:', { savedClientId, savedUsername });
+
       router.replace("/(tabs)/Home");
     } catch (err) {
+      console.log('Login Error', err);
       Alert.alert("Network Error", "Unable to reach login server.");
     } finally {
       setLoading(false);

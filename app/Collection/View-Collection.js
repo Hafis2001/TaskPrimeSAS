@@ -103,24 +103,36 @@ export default function ViewCollectionScreen() {
         }
       });
 
+      const username = await AsyncStorage.getItem("username");
+
       const json = await response.json();
 
       if (json.success && Array.isArray(json.data)) {
-        const mapped = json.data.map(item => ({
-          id: item.id,
-          code: item.code, // IMPORTANT: Voucher Code
-          customer_name: item.name,
-          customer_code: item.code,
-          customer_place: item.place,
-          customer_phone: item.phone,
-          amount: item.amount,
-          payment_type: item.type,
-          cheque_number: item.cheque_no,
-          ref_no: item.ref_no,
-          remarks: item.remark, // Note: Upload.js maps to 'remark', API sends 'remark'
-          synced: 1, // API data is always synced
-          date: item.created_date ? `${item.created_date}T${item.created_time || '00:00:00'}` : new Date().toISOString()
-        }));
+        console.log("Current User:", username);
+
+        const mapped = json.data
+          .filter(item => {
+            if (!username) return false;
+            // API uses 'created_by' for the uploader's name
+            const apiUser = item.created_by ? String(item.created_by).trim() : '';
+            const currentUser = String(username).trim();
+            return apiUser.toLowerCase() === currentUser.toLowerCase();
+          })
+          .map(item => ({
+            id: item.id,
+            code: item.code, // IMPORTANT: Voucher Code
+            customer_name: item.name,
+            customer_code: item.code,
+            customer_place: item.place,
+            customer_phone: item.phone,
+            amount: item.amount,
+            payment_type: item.type,
+            cheque_number: item.cheque_no,
+            ref_no: item.ref_no,
+            remarks: item.remark, // Note: Upload.js maps to 'remark', API sends 'remark'
+            synced: 1, // API data is always synced
+            date: item.created_date ? `${item.created_date}T${item.created_time || '00:00:00'}` : new Date().toISOString()
+          }));
 
         const sortedCollections = mapped.sort((a, b) => {
           return new Date(b.date) - new Date(a.date);
