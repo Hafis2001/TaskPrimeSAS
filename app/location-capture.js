@@ -17,7 +17,6 @@ import {
     TouchableOpacity,
     View
 } from "react-native";
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../constants/theme";
 import dbService from "../src/services/database";
 
@@ -67,21 +66,31 @@ export default function LocationCaptureScreen() {
             }
 
             // 2. Fetch Customers from API
-            console.log("Fetching debtors from:", API_DEBTORS);
+            console.log(`[LocationCapture] Fetching debtors from: ${API_DEBTORS}`);
             const response = await fetch(API_DEBTORS, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
                 }
             });
 
+            console.log('[LocationCapture] GET Status:', response.status);
+            const responseText = await response.text();
+
             if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                console.warn('[LocationCapture] GET Error:', response.status, responseText);
+                throw new Error(`Server returned ${response.status}: ${responseText.substring(0, 100)}`);
             }
 
-            const json = await response.json();
+            let json;
+            try {
+                json = JSON.parse(responseText);
+            } catch (e) {
+                console.error('[LocationCapture] GET JSON Parse Error:', e);
+                throw new Error('Invalid JSON response from server');
+            }
 
             let allCustomers = [];
             if (Array.isArray(json)) {
@@ -177,19 +186,46 @@ export default function LocationCaptureScreen() {
     };
 
     const handleSaveLocation = async () => {
-        if (!selectedCustomer || !markerCoordinate) return;
+        if (!selectedCustomer || !markerCoordinate) {
+            Alert.alert("Error", "Missing customer or location data");
+            return;
+        }
 
         try {
             setCapturing(true);
 
             const { latitude, longitude } = markerCoordinate;
 
+            // Validate coordinates
+            if (!latitude || !longitude || isNaN(latitude) || isNaN(longitude)) {
+                throw new Error("Invalid coordinates");
+            }
+
+            console.log('[LocationCapture] Saving location for:', selectedCustomer.name, { latitude, longitude });
+
             // 1. Save to local DB
-            await dbService.saveCustomerLocation(selectedCustomer.code, latitude, longitude);
+            let localSaveSuccess = false;
+            try {
+                await dbService.init();
+                await dbService.saveCustomerLocation(selectedCustomer.code, latitude, longitude);
+                localSaveSuccess = true;
+                console.log('[LocationCapture] Local save successful');
+            } catch (dbError) {
+                console.error('[LocationCapture] Database save failed:', dbError);
+                Alert.alert(
+                    "Database Error",
+                    "Failed to save location locally. The location will still be sent to the server."
+                );
+            }
 
             // 2. POST to API
+            let apiSaveSuccess = false;
             try {
                 const token = await AsyncStorage.getItem("authToken");
+                if (!token) {
+                    throw new Error("No authentication token");
+                }
+
                 const apiPayload = {
                     firm_name: selectedCustomer.name,
                     latitude: latitude,
@@ -202,39 +238,68 @@ export default function LocationCaptureScreen() {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
                     body: JSON.stringify(apiPayload)
                 });
 
+                console.log('[LocationCapture] POST Status:', response.status);
+                const responseText = await response.text();
+                console.log('[LocationCapture] POST Response:', responseText);
+
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    console.warn('[LocationCapture] API Error:', response.status, errorText);
-                    // Don't fail the whole operation if API fails
+                    console.warn('[LocationCapture] POST Error:', response.status, responseText);
+                    throw new Error(`API returned ${response.status}: ${responseText.substring(0, 100)}`);
                 } else {
-                    const result = await response.json();
-                    console.log('[LocationCapture] API Success:', result);
+                    let result;
+                    try {
+                        result = JSON.parse(responseText);
+                        console.log('[LocationCapture] API Success:', result);
+                        apiSaveSuccess = true;
+                    } catch (e) {
+                        console.error('[LocationCapture] POST JSON Parse Error:', e);
+                        // Still mark as success if status was OK, maybe it's "OK" string
+                        apiSaveSuccess = true;
+                    }
                 }
             } catch (apiError) {
                 console.error('[LocationCapture] API request failed:', apiError);
-                // Continue even if API fails - local save is primary
+
+                let errorMessage = apiError.message;
+                if (errorMessage === 'Network request failed') {
+                    errorMessage = "Network request failed. Please check your internet connection and verify if the API endpoint is accessible.";
+                }
+
+                if (!localSaveSuccess) {
+                    Alert.alert(
+                        "Save Failed",
+                        `Failed to save location both locally and to server. Error: ${errorMessage}`
+                    );
+                    setCapturing(false);
+                    return;
+                }
             }
 
             // 3. Update local state to reflect captured status
             setCapturedCustomers(prev => new Set(prev).add(selectedCustomer.code));
 
-            Alert.alert(
-                "Location Saved",
-                `Coordinates captured for ${selectedCustomer.name}.`
-            );
+            // Show success message
+            const successMessage = apiSaveSuccess
+                ? `Location saved successfully for ${selectedCustomer.name}`
+                : `Location saved locally for ${selectedCustomer.name}. Will sync to server when online.`;
+
+            Alert.alert("Success", successMessage);
 
             // Close Modal
             setShowMap(false);
             setSelectedCustomer(null);
+            setCurrentRegion(null);
+            setMarkerCoordinate(null);
 
         } catch (error) {
-            console.error("Error saving location:", error);
-            Alert.alert("Error", "Failed to save location.");
+            console.error("[LocationCapture] Error saving location:", error);
+            Alert.alert("Error", `Failed to save location: ${error.message}`);
         } finally {
             setCapturing(false);
         }
@@ -315,69 +380,72 @@ export default function LocationCaptureScreen() {
                     />
                 )}
 
-                {/* Satellite Map Modal */}
+                {/* Location Confirmation Modal */}
                 <Modal
                     visible={showMap}
                     animationType="slide"
+                    transparent={true}
                     onRequestClose={() => {
                         setShowMap(false);
                         setCurrentRegion(null);
                         setMarkerCoordinate(null);
                     }}
                 >
-                    <View style={styles.mapContainer}>
-                        {currentRegion && markerCoordinate ? (
-                            <MapView
-                                style={styles.map}
-                                provider={PROVIDER_GOOGLE}
-                                mapType="hybrid"
-                                initialRegion={currentRegion}
-                                onMapReady={() => console.log('[LocationCapture] Map ready')}
-                                onError={(error) => {
-                                    console.error('[LocationCapture] Map error:', error);
-                                    Alert.alert('Map Error', 'Failed to load map. Please try again.');
-                                    setShowMap(false);
-                                }}
-                            >
-                                <Marker
-                                    coordinate={markerCoordinate}
-                                    title={selectedCustomer?.name || 'Customer'}
-                                    description="Customer Location"
-                                    draggable
-                                    onDragEnd={(e) => {
-                                        if (e?.nativeEvent?.coordinate) {
-                                            setMarkerCoordinate(e.nativeEvent.coordinate);
-                                        }
-                                    }}
-                                />
-                            </MapView>
-                        ) : (
-                            <View style={styles.mapLoadingContainer}>
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.confirmModalContent}>
+                            <View style={styles.modalHeader}>
+                                <Ionicons name="location" size={48} color={Colors.primary.main} />
+                                <Text style={styles.modalTitle}>Confirm Location</Text>
+                                <Text style={styles.modalSubtitle}>{selectedCustomer?.name}</Text>
+                            </View>
+
+                            {markerCoordinate ? (
+                                <View style={styles.coordinatesContainer}>
+                                    <View style={styles.coordRow}>
+                                        <Text style={styles.coordLabel}>Latitude:</Text>
+                                        <Text style={styles.coordValue}>{markerCoordinate.latitude.toFixed(6)}</Text>
+                                    </View>
+                                    <View style={styles.coordRow}>
+                                        <Text style={styles.coordLabel}>Longitude:</Text>
+                                        <Text style={styles.coordValue}>{markerCoordinate.longitude.toFixed(6)}</Text>
+                                    </View>
+                                    <View style={styles.infoBox}>
+                                        <Ionicons name="information-circle" size={16} color={Colors.primary.main} />
+                                        <Text style={styles.infoBoxText}>
+                                            This location will be saved for {selectedCustomer?.name}
+                                        </Text>
+                                    </View>
+                                </View>
+                            ) : (
                                 <ActivityIndicator size="large" color={Colors.primary.main} />
-                                <Text style={styles.mapLoadingText}>Loading map...</Text>
-                            </View>
-                        )}
+                            )}
 
-                        <View style={styles.mapOverlay}>
-                            <View style={styles.coordBox}>
-                                <Text style={styles.coordTitle}>Lat: {markerCoordinate?.latitude?.toFixed(6)}</Text>
-                                <Text style={styles.coordTitle}>Lng: {markerCoordinate?.longitude?.toFixed(6)}</Text>
-                            </View>
-
-                            <View style={styles.mapActions}>
+                            <View style={styles.modalActions}>
                                 <TouchableOpacity
-                                    style={[styles.mapButton, styles.mapButtonCancel]}
-                                    onPress={() => setShowMap(false)}
+                                    style={[styles.modalButton, styles.modalButtonCancel]}
+                                    onPress={() => {
+                                        setShowMap(false);
+                                        setCurrentRegion(null);
+                                        setMarkerCoordinate(null);
+                                    }}
+                                    disabled={capturing}
                                 >
-                                    <Text style={styles.mapButtonTextCancel}>Cancel</Text>
+                                    <Text style={styles.modalButtonTextCancel}>Cancel</Text>
                                 </TouchableOpacity>
 
                                 <TouchableOpacity
-                                    style={[styles.mapButton, styles.mapButtonSave]}
+                                    style={[styles.modalButton, styles.modalButtonSave]}
                                     onPress={handleSaveLocation}
+                                    disabled={capturing || !markerCoordinate}
                                 >
-                                    <Ionicons name="save-outline" size={20} color="#FFF" />
-                                    <Text style={styles.mapButtonText}>Save Location</Text>
+                                    {capturing ? (
+                                        <ActivityIndicator size="small" color="#FFF" />
+                                    ) : (
+                                        <>
+                                            <Ionicons name="save-outline" size={20} color="#FFF" />
+                                            <Text style={styles.modalButtonText}>Save Location</Text>
+                                        </>
+                                    )}
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -499,74 +567,104 @@ const styles = StyleSheet.create({
         color: Colors.text.secondary,
         fontSize: Typography.sizes.base,
     },
-    mapContainer: {
+    modalOverlay: {
         flex: 1,
-        backgroundColor: '#000',
-    },
-    map: {
-        width: width,
-        height: height,
-    },
-    mapOverlay: {
-        position: 'absolute',
-        bottom: 40,
-        left: 20,
-        right: 20,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
         padding: Spacing.lg,
-        borderRadius: BorderRadius.xl,
-        ...Shadows.lg,
     },
-    coordBox: {
+    confirmModalContent: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.xl,
+        width: '90%',
+        maxWidth: 400,
+        ...Shadows.xl,
+    },
+    modalHeader: {
+        alignItems: 'center',
+        marginBottom: Spacing.xl,
+    },
+    modalTitle: {
+        fontSize: Typography.sizes.xl,
+        fontWeight: '700',
+        color: Colors.text.primary,
+        marginTop: Spacing.md,
+    },
+    modalSubtitle: {
+        fontSize: Typography.sizes.sm,
+        color: Colors.text.secondary,
+        marginTop: 4,
+    },
+    coordinatesContainer: {
+        backgroundColor: Colors.neutral[50],
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.lg,
+        marginBottom: Spacing.xl,
+    },
+    coordRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: Spacing.lg,
+        alignItems: 'center',
+        paddingVertical: Spacing.sm,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border.light,
     },
-    coordTitle: {
-        fontSize: Typography.sizes.sm,
+    coordLabel: {
+        fontSize: Typography.sizes.base,
         fontWeight: '600',
         color: Colors.text.secondary,
     },
-    mapActions: {
+    coordValue: {
+        fontSize: Typography.sizes.base,
+        fontWeight: '700',
+        color: Colors.primary.main,
+        fontFamily: 'monospace',
+    },
+    infoBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: Spacing.md,
+        padding: Spacing.sm,
+        backgroundColor: Colors.primary[50],
+        borderRadius: BorderRadius.md,
+    },
+    infoBoxText: {
+        flex: 1,
+        fontSize: Typography.sizes.xs,
+        color: Colors.primary[900],
+    },
+    modalActions: {
         flexDirection: 'row',
         gap: Spacing.md,
     },
-    mapButton: {
+    modalButton: {
         flex: 1,
-        paddingVertical: 12,
-        borderRadius: BorderRadius.lg,
+        flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 8,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        gap: 6,
     },
-    mapButtonCancel: {
+    modalButtonCancel: {
         backgroundColor: Colors.neutral[100],
         borderWidth: 1,
         borderColor: Colors.neutral[200],
     },
-    mapButtonSave: {
+    modalButtonSave: {
         backgroundColor: Colors.primary.main,
     },
-    mapButtonText: {
+    modalButtonText: {
         color: '#FFFFFF',
         fontWeight: '600',
         fontSize: Typography.sizes.base,
     },
-    mapButtonTextCancel: {
+    modalButtonTextCancel: {
         color: Colors.text.primary,
         fontWeight: '600',
-        fontSize: Typography.sizes.base,
-    },
-    mapLoadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#000',
-    },
-    mapLoadingText: {
-        color: '#FFF',
-        marginTop: Spacing.md,
         fontSize: Typography.sizes.base,
     }
 });

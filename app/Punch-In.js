@@ -25,7 +25,7 @@ const { width } = Dimensions.get('window');
 
 // Haversine formula to calculate distance in meters
 const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
-  const R = 6371e3; // Radius of the earth in m
+  const R = 6371e3;
   const dLat = deg2rad(lat2 - lat1);
   const dLon = deg2rad(lon2 - lon1);
   const a =
@@ -33,7 +33,7 @@ const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
     Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c; // Distance in m
+  const d = R * c;
   return d;
 };
 
@@ -48,8 +48,11 @@ export default function PunchInScreen() {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [refreshingLocation, setRefreshingLocation] = useState(false);
 
+  // Filter State
+  const [filterTab, setFilterTab] = useState('all'); // 'all', 'active'
+
   // Punch Status
-  const [punchStatus, setPunchStatus] = useState(null); // { is_punched_in, punchin_id, firm_name, current_work_hours }
+  const [punchStatus, setPunchStatus] = useState(null);
   const [workHours, setWorkHours] = useState(0);
 
   // Selfie State
@@ -58,12 +61,14 @@ export default function PunchInScreen() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [notes, setNotes] = useState("");
   const [punching, setPunching] = useState(false);
+  const [completedPunches, setCompletedPunches] = useState([]);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
       getCurrentLocation();
       checkPunchStatus();
+      loadCompletedHistory();
     }, [])
   );
 
@@ -71,7 +76,7 @@ export default function PunchInScreen() {
   useEffect(() => {
     if (punchStatus?.is_punched_in) {
       const interval = setInterval(() => {
-        setWorkHours(prev => prev + (1 / 60)); // Add 1 minute
+        setWorkHours(prev => prev + (1 / 60));
       }, 60000);
       return () => clearInterval(interval);
     }
@@ -93,15 +98,88 @@ export default function PunchInScreen() {
       if (response.ok) {
         const data = await response.json();
         console.log('[PunchIn] Status:', data);
-        if (data.success && data.is_punched_in) {
-          setPunchStatus(data.data);
+        if (data.success && data.is_punched_in && data.data) {
+          setPunchStatus({
+            ...data.data,
+            is_punched_in: true
+          });
           setWorkHours(data.data.current_work_hours || 0);
         } else {
           setPunchStatus(null);
+          setWorkHours(0);
         }
       }
     } catch (error) {
       console.error('[PunchIn] Error checking status:', error);
+    }
+  };
+
+  const loadCompletedHistory = async () => {
+    try {
+      const historyStr = await AsyncStorage.getItem("attendance_history");
+      if (historyStr) {
+        let history = [];
+        try {
+          history = JSON.parse(historyStr);
+        } catch (parseError) {
+          console.error('[PunchIn] Failed to parse history:', parseError);
+          // If corrupted, clear it
+          await AsyncStorage.removeItem("attendance_history");
+          setCompletedPunches([]);
+          return;
+        }
+
+        if (!Array.isArray(history)) {
+          setCompletedPunches([]);
+          return;
+        }
+
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+        // Filter out records older than 3 days
+        const filteredHistory = history.filter(item => {
+          try {
+            if (!item) return false;
+            const punchDate = new Date(item.punchout_time || item.timestamp);
+            return !isNaN(punchDate.getTime()) && punchDate >= threeDaysAgo;
+          } catch (e) {
+            return false;
+          }
+        });
+
+        // Save back if some were removed
+        if (filteredHistory.length !== history.length) {
+          await AsyncStorage.setItem("attendance_history", JSON.stringify(filteredHistory));
+        }
+
+        setCompletedPunches(filteredHistory);
+      }
+    } catch (error) {
+      console.error('[PunchIn] Error loading completed history:', error);
+    }
+  };
+
+  const saveToCompletedHistory = async (record) => {
+    try {
+      const historyStr = await AsyncStorage.getItem("attendance_history");
+      let history = historyStr ? JSON.parse(historyStr) : [];
+
+      // Add new record at the top
+      history.unshift({
+        ...record,
+        timestamp: new Date().toISOString()
+      });
+
+      // Keep only last 3 days (redundant but safe)
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+      history = history.filter(item => new Date(item.punchout_time || item.timestamp) >= threeDaysAgo);
+
+      await AsyncStorage.setItem("attendance_history", JSON.stringify(history));
+      setCompletedPunches(history);
+    } catch (error) {
+      console.error('[PunchIn] Error saving completed history:', error);
     }
   };
 
@@ -115,9 +193,8 @@ export default function PunchInScreen() {
         return;
       }
 
-      // Fetch customers from shop-location/table API
       console.log("[PunchIn] Fetching shop locations...");
-      const response = await fetch('https://tasksas.com/api/shop-location/table/', {
+      const response = await fetch('https://tasksas.com/api/shop-location/firms/', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -129,18 +206,21 @@ export default function PunchInScreen() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
-      console.log(`[PunchIn] Fetched ${data.length} shop locations`);
+      const result = await response.json();
 
-      // Map to customer format
-      const mappedCustomers = data.map(shop => ({
-        code: shop.firm_code,
-        name: shop.storeName,
-        place: shop.storeLocation || '',
-        latitude: shop.latitude,
-        longitude: shop.longitude,
-        status: shop.status,
-        lastCapturedTime: shop.lastCapturedTime
+      if (!result.success || !result.firms) {
+        throw new Error('Invalid API response format');
+      }
+
+      const firms = result.firms;
+      console.log(`[PunchIn] Fetched ${firms.length} shop locations`);
+
+      const mappedCustomers = firms.map(shop => ({
+        code: shop.id,
+        name: shop.firm_name,
+        place: shop.area || '',
+        latitude: parseFloat(shop.latitude) || 0,
+        longitude: parseFloat(shop.longitude) || 0
       }));
 
       setCustomers(mappedCustomers);
@@ -203,7 +283,6 @@ export default function PunchInScreen() {
       return;
     }
 
-    // Location verified -> Take Selfie
     takeSelfie(customer);
   };
 
@@ -218,7 +297,7 @@ export default function PunchInScreen() {
       const result = await ImagePicker.launchCameraAsync({
         cameraType: ImagePicker.CameraType.front,
         allowsEditing: false,
-        quality: 0.7,
+        quality: 0.5,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -239,7 +318,6 @@ export default function PunchInScreen() {
       setPunching(true);
       const token = await AsyncStorage.getItem("authToken");
 
-      // Get address from reverse geocoding
       let address = "";
       try {
         const geocode = await Location.reverseGeocodeAsync({
@@ -254,7 +332,6 @@ export default function PunchInScreen() {
         console.warn("Geocoding failed:", e);
       }
 
-      // Prepare FormData
       const formData = new FormData();
       formData.append('customerCode', pendingCustomer.code);
       formData.append('latitude', currentLocation.latitude.toString());
@@ -262,7 +339,6 @@ export default function PunchInScreen() {
       formData.append('address', address || 'Unknown');
       formData.append('notes', notes || '');
 
-      // Add image
       const filename = selfieUri.split('/').pop();
       const match = /\.(\w+)$/.exec(filename);
       const type = match ? `image/${match[1]}` : 'image/jpeg';
@@ -291,7 +367,7 @@ export default function PunchInScreen() {
           `Punched in at ${result.data.firm_name}\nTime: ${new Date(result.data.punchin_time).toLocaleTimeString()}`
         );
 
-        // Update status
+        // Update status immediately
         await checkPunchStatus();
         closeConfirmModal();
       } else {
@@ -312,12 +388,16 @@ export default function PunchInScreen() {
     setNotes("");
   };
 
-  const handlePunchOut = async () => {
-    if (!punchStatus?.punchin_id) return;
+  const handlePunchOut = async (customer) => {
+    if (!punchStatus?.punchin_id) {
+      console.warn('[PunchOut] Cannot punch out: punchin_id is missing', punchStatus);
+      Alert.alert("Error", "Could not find active punch-in record. Please refresh.");
+      return;
+    }
 
     Alert.alert(
       "Confirm Punch Out",
-      `Are you sure you want to punch out from ${punchStatus.firm_name}?`,
+      `Are you sure you want to punch out from ${customer.name}?\n\nWork Hours: ${workHours.toFixed(2)} hrs`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -328,31 +408,70 @@ export default function PunchInScreen() {
               setPunching(true);
               const token = await AsyncStorage.getItem("authToken");
 
-              const response = await fetch(`https://tasksas.com/api/punch-out/${punchStatus.punchin_id}/`, {
+              const url = `https://tasksas.com/api/punch-out/${punchStatus.punchin_id}/`;
+              console.log('[PunchOut] Requesting URL:', url);
+              console.log('[PunchOut] Notes:', notes);
+
+              const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-                }
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                },
+                body: JSON.stringify({ notes: notes || '' })
               });
 
-              const result = await response.json();
-              console.log('[PunchOut] Response:', result);
+              console.log('[PunchOut] Response Status:', response.status);
+
+              const responseText = await response.text();
+              console.log('[PunchOut] Raw Response:', responseText);
+
+              let result;
+              try {
+                result = JSON.parse(responseText);
+              } catch (e) {
+                console.error('[PunchOut] JSON Parse Error:', e);
+                throw new Error(`Invalid server response: ${responseText.substring(0, 100)}`);
+              }
 
               if (response.ok && result.success) {
                 Alert.alert(
                   "Punch Out Successful",
-                  `Work Duration: ${result.data.work_duration_hours.toFixed(2)} hours\nPunch In: ${new Date(result.data.punchin_time).toLocaleTimeString()}\nPunch Out: ${new Date(result.data.punchout_time).toLocaleTimeString()}`
+                  `Work Duration: ${result.data?.work_duration_hours?.toFixed(2) || 0} hours\nPunch In: ${result.data?.punchin_time ? new Date(result.data.punchin_time).toLocaleTimeString() : 'N/A'}\nPunch Out: ${result.data?.punchout_time ? new Date(result.data.punchout_time).toLocaleTimeString() : 'N/A'}`
                 );
 
                 setPunchStatus(null);
                 setWorkHours(0);
+
+                // Save to local history for 'Completed' section
+                await saveToCompletedHistory({
+                  firm_name: customer.name,
+                  code: customer.code,
+                  place: customer.place,
+                  work_duration_hours: result.data?.work_duration_hours || workHours,
+                  punchin_time: result.data?.punchin_time,
+                  punchout_time: result.data?.punchout_time
+                });
+
+                // Verify status was updated
+                setTimeout(() => {
+                  checkPunchStatus();
+                }, 1000);
               } else {
-                Alert.alert("Error", result.message || "Failed to punch out");
+                Alert.alert("Error", result.message || `Failed to punch out (${response.status})`);
               }
             } catch (error) {
               console.error("[PunchOut] Error:", error);
-              Alert.alert("Error", "Failed to punch out. Please try again.");
+              // Handle the specific "Network request failed" error with more context
+              if (error.message === 'Network request failed') {
+                Alert.alert(
+                  "Network Error",
+                  "Punch out failed due to a network issue. Please check your internet connection and verify if the punch-in ID is valid."
+                );
+              } else {
+                Alert.alert("Error", `Failed to punch out: ${error.message}`);
+              }
             } finally {
               setPunching(false);
             }
@@ -362,69 +481,141 @@ export default function PunchInScreen() {
     );
   };
 
+  const getFilteredCustomers = () => {
+    if (filterTab === 'active' && punchStatus?.is_punched_in) {
+      // Show only the customer where user is punched in
+      return customers.filter(c => c.name === punchStatus.firm_name);
+    }
+    if (filterTab === 'completed') {
+      return completedPunches;
+    }
+    return customers;
+  };
+
   const renderItem = ({ item }) => {
     let distanceText = "Calculating...";
     let canPunch = false;
     let distance = Infinity;
 
-    if (currentLocation) {
+    if (currentLocation && item.latitude && item.longitude) {
       distance = getDistanceFromLatLonInMeters(
         currentLocation.latitude,
         currentLocation.longitude,
-        item.latitude,
-        item.longitude
+        parseFloat(item.latitude),
+        parseFloat(item.longitude)
       );
-      distanceText = `${distance.toFixed(0)}m away`;
-      canPunch = distance <= 100;
+      if (!isNaN(distance)) {
+        distanceText = distance >= 1000
+          ? `${(distance / 1000).toFixed(1)}km away`
+          : `${distance.toFixed(0)}m away`;
+        canPunch = distance <= 100;
+      } else {
+        distanceText = "Location Error";
+      }
+    } else {
+      distanceText = "No Location";
     }
 
-    const isPunchedInHere = punchStatus?.is_punched_in && punchStatus?.punchin_id;
-    const isDisabled = !canPunch || (isPunchedInHere && punchStatus.firm_name !== item.name);
+    const isPunchedInHere = punchStatus?.is_punched_in && punchStatus?.firm_name === item.name;
+    const isCompletedItem = filterTab === 'completed';
 
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.customerName}>{item.name}</Text>
-          <View style={[styles.distanceBadge, canPunch ? styles.badgeSuccess : styles.badgeError]}>
-            <Ionicons
-              name={canPunch ? "checkmark-circle" : "warning"}
-              size={12}
-              color={canPunch ? Colors.success.main : Colors.error.main}
-            />
-            <Text style={[styles.distanceText, { color: canPunch ? Colors.success.main : Colors.error.main }]}>
-              {distanceText}
-            </Text>
-          </View>
+          <Text style={styles.customerName}>{item.name || item.firm_name}</Text>
+          {!isPunchedInHere && !isCompletedItem && (
+            <View style={[styles.distanceBadge, canPunch ? styles.badgeSuccess : styles.badgeError]}>
+              <Ionicons
+                name={canPunch ? "checkmark-circle" : "warning"}
+                size={12}
+                color={canPunch ? Colors.success.main : Colors.error.main}
+              />
+              <Text style={[styles.distanceText, { color: canPunch ? Colors.success.main : Colors.error.main }]}>
+                {distanceText}
+              </Text>
+            </View>
+          )}
         </View>
 
         <Text style={styles.customerDetail}>{item.place || "No Location"}</Text>
         <Text style={styles.customerCode}>Code: {item.code}</Text>
 
+        {isPunchedInHere && (
+          <View style={styles.workHoursCard}>
+            <Ionicons name="time-outline" size={16} color={Colors.success.main} />
+            <Text style={styles.workHoursText}>Work Hours: {workHours.toFixed(2)} hrs</Text>
+          </View>
+        )}
+
+        {isCompletedItem && (
+          <View style={[styles.workHoursCard, { backgroundColor: Colors.neutral[50] }]}>
+            <Ionicons name="time" size={16} color={Colors.neutral[600]} />
+            <Text style={[styles.workHoursText, { color: Colors.neutral[600] }]}>
+              Duration: {item.work_duration_hours?.toFixed(2) || 0} hrs
+            </Text>
+            <Text style={{ fontSize: 10, color: Colors.neutral[400], marginLeft: 'auto' }}>
+              {item.punchout_time ? new Date(item.punchout_time).toLocaleDateString() : ''}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={[
-              styles.punchButton,
-              styles.punchInButton,
-              isDisabled && styles.disabledButton
-            ]}
-            onPress={() => startPunchInFlow(item)}
-            disabled={isDisabled || punching}
-          >
-            {punching ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <>
-                <Ionicons name="camera-outline" size={20} color={isDisabled ? Colors.neutral[400] : "#FFF"} />
-                <Text style={[styles.punchButtonText, isDisabled && styles.disabledText]}>
-                  Punch In
+          {isCompletedItem ? (
+            <View style={styles.completedInfo}>
+              <View style={styles.timeRow}>
+                <Text style={styles.timeLabel}>In:</Text>
+                <Text style={styles.timeValue}>
+                  {item.punchin_time ? new Date(item.punchin_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
                 </Text>
-              </>
-            )}
-          </TouchableOpacity>
+                <Text style={[styles.timeLabel, { marginLeft: 12 }]}>Out:</Text>
+                <Text style={styles.timeValue}>
+                  {item.punchout_time ? new Date(item.punchout_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                </Text>
+              </View>
+            </View>
+          ) : isPunchedInHere ? (
+            <TouchableOpacity
+              style={[styles.punchButton, styles.punchOutButton]}
+              onPress={() => handlePunchOut(item)}
+              disabled={punching}
+            >
+              {punching ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="log-out-outline" size={20} color="#FFF" />
+                  <Text style={styles.punchButtonText}>Punch Out</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.punchButton,
+                styles.punchInButton,
+                (!canPunch || punchStatus?.is_punched_in) && styles.disabledButton
+              ]}
+              onPress={() => startPunchInFlow(item)}
+              disabled={!canPunch || punchStatus?.is_punched_in || punching}
+            >
+              {punching ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <>
+                  <Ionicons name="camera-outline" size={20} color={(!canPunch || punchStatus?.is_punched_in) ? Colors.neutral[400] : "#FFF"} />
+                  <Text style={[styles.punchButtonText, (!canPunch || punchStatus?.is_punched_in) && styles.disabledText]}>
+                    Punch In
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
   };
+
+  const filteredCustomers = getFilteredCustomers();
 
   return (
     <LinearGradient colors={Gradients.background} style={styles.container}>
@@ -433,7 +624,7 @@ export default function PunchInScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
-          <Text style={styles.title}>Punch-In</Text>
+          <Text style={styles.title}>Attendance</Text>
 
           <TouchableOpacity
             style={styles.refreshButton}
@@ -448,39 +639,56 @@ export default function PunchInScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Punch Status Banner */}
+        {/* Filter Tabs */}
+        <View style={styles.filterContainer}>
+          <TouchableOpacity
+            style={[styles.filterTab, filterTab === 'all' && styles.filterTabActive]}
+            onPress={() => setFilterTab('all')}
+          >
+            <Text style={[styles.filterTabText, filterTab === 'all' && styles.filterTabTextActive]}>
+              All Shops ({customers.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterTab, filterTab === 'active' && styles.filterTabActive]}
+            onPress={() => setFilterTab('active')}
+          >
+            <Ionicons
+              name="time"
+              size={16}
+              color={filterTab === 'active' ? Colors.success.main : Colors.text.secondary}
+            />
+            <Text style={[styles.filterTabText, filterTab === 'active' && styles.filterTabTextActive]}>
+              Active {punchStatus?.is_punched_in ? '(1)' : '(0)'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.filterTab, filterTab === 'completed' && styles.filterTabActive, filterTab === 'completed' && { borderColor: Colors.primary.main, backgroundColor: Colors.primary[50] }]}
+            onPress={() => setFilterTab('completed')}
+          >
+            <Ionicons
+              name="checkmark-done-circle"
+              size={16}
+              color={filterTab === 'completed' ? Colors.primary.main : Colors.text.secondary}
+            />
+            <Text style={[styles.filterTabText, filterTab === 'completed' && { color: Colors.primary.main }]}>
+              Completed ({completedPunches.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Status Banner */}
         {punchStatus?.is_punched_in && (
           <View style={styles.statusBanner}>
-            <View style={styles.statusInfo}>
-              <Ionicons name="time" size={20} color={Colors.success.main} />
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.statusTitle}>Punched In at {punchStatus.firm_name}</Text>
-                <Text style={styles.statusTime}>Work Hours: {workHours.toFixed(2)} hrs</Text>
-              </View>
+            <View style={styles.statusRow}>
+              <Ionicons name="checkmark-circle" size={20} color={Colors.success.main} />
+              <Text style={styles.statusText}>Punched in at {punchStatus.firm_name}</Text>
             </View>
-            <TouchableOpacity
-              style={styles.punchOutButton}
-              onPress={handlePunchOut}
-              disabled={punching}
-            >
-              {punching ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <>
-                  <Ionicons name="log-out-outline" size={18} color="#FFF" />
-                  <Text style={styles.punchOutText}>Punch Out</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <Text style={styles.statusSubtext}>Work Hours: {workHours.toFixed(2)} hrs</Text>
           </View>
         )}
-
-        <View style={styles.infoBanner}>
-          <Ionicons name="information-circle" size={20} color={Colors.primary.main} />
-          <Text style={styles.infoText}>
-            You must be within 100 meters of the shop location to Punch In.
-          </Text>
-        </View>
 
         {loading ? (
           <View style={styles.center}>
@@ -488,7 +696,7 @@ export default function PunchInScreen() {
           </View>
         ) : (
           <FlatList
-            data={customers}
+            data={filteredCustomers}
             keyExtractor={item => item.code}
             renderItem={renderItem}
             contentContainerStyle={styles.list}
@@ -497,7 +705,9 @@ export default function PunchInScreen() {
               <View style={styles.center}>
                 <Ionicons name="location-outline" size={48} color={Colors.neutral[300]} />
                 <Text style={styles.emptyText}>
-                  No shop locations found. Please capture locations first.
+                  {filterTab === 'active' && !punchStatus?.is_punched_in
+                    ? "No active punch-in"
+                    : "No shop locations found. Please capture locations first."}
                 </Text>
               </View>
             }
@@ -590,6 +800,35 @@ const styles = StyleSheet.create({
   refreshButton: {
     padding: Spacing.xs,
   },
+  filterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  filterTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.neutral[100],
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  filterTabActive: {
+    backgroundColor: Colors.success[50],
+    borderColor: Colors.success.main,
+  },
+  filterTabText: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+  },
+  filterTabTextActive: {
+    color: Colors.success.main,
+  },
   statusBanner: {
     backgroundColor: Colors.success[50],
     marginHorizontal: Spacing.lg,
@@ -599,49 +838,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.success[100],
   },
-  statusInfo: {
+  statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.sm,
+    gap: 8,
   },
-  statusTitle: {
+  statusText: {
     fontSize: Typography.sizes.base,
     fontWeight: '600',
     color: Colors.success[900],
   },
-  statusTime: {
+  statusSubtext: {
     fontSize: Typography.sizes.sm,
     color: Colors.success[700],
-    marginTop: 2,
-  },
-  punchOutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.error.main,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    gap: 6,
-  },
-  punchOutText: {
-    color: '#FFF',
-    fontWeight: '600',
-    fontSize: Typography.sizes.sm,
-  },
-  infoBanner: {
-    flexDirection: 'row',
-    backgroundColor: Colors.primary[50],
-    marginHorizontal: Spacing.lg,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: Typography.sizes.xs,
-    color: Colors.primary[900],
-    lineHeight: 18,
+    marginTop: 4,
+    marginLeft: 28,
   },
   list: {
     padding: Spacing.lg,
@@ -677,7 +888,22 @@ const styles = StyleSheet.create({
   customerCode: {
     fontSize: Typography.sizes.xs,
     color: Colors.text.tertiary,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  workHoursCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.success[50],
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.sm,
+  },
+  workHoursText: {
+    fontSize: Typography.sizes.sm,
+    fontWeight: '600',
+    color: Colors.success.main,
   },
   distanceBadge: {
     flexDirection: 'row',
@@ -714,6 +940,9 @@ const styles = StyleSheet.create({
   punchInButton: {
     backgroundColor: Colors.success.main,
   },
+  punchOutButton: {
+    backgroundColor: Colors.error.main,
+  },
   disabledButton: {
     backgroundColor: Colors.neutral[100],
   },
@@ -724,6 +953,25 @@ const styles = StyleSheet.create({
   },
   disabledText: {
     color: Colors.neutral[400],
+  },
+  completedInfo: {
+    flex: 1,
+    paddingTop: 4,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  timeLabel: {
+    fontSize: 10,
+    color: Colors.text.tertiary,
+    fontWeight: '600',
+    marginRight: 4,
+  },
+  timeValue: {
+    fontSize: 11,
+    color: Colors.text.secondary,
+    fontWeight: '500',
   },
   center: {
     flex: 1,

@@ -10,6 +10,7 @@ import {
   Dimensions,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   StatusBar,
   StyleSheet,
@@ -60,6 +61,22 @@ export default function LoginScreen() {
         if (stored) setClientId(stored.trim().toUpperCase());
       } catch (e) { }
     })();
+  }, []);
+
+  // AUTO-LOGIN: Check for existing session
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const token = await AsyncStorage.getItem("authToken");
+        if (token) {
+          console.log('[LoginScreen] Found existing session, redirecting to Home');
+          router.replace("/(tabs)/Home");
+        }
+      } catch (e) {
+        console.error('[LoginScreen] Session check failed:', e);
+      }
+    };
+    checkSession();
   }, []);
 
   // LICENSE VALIDATION
@@ -302,6 +319,19 @@ export default function LoginScreen() {
     }
   };
 
+  const handleSocialLink = async (url) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert("Error", "Cannot open this link");
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to open link");
+    }
+  };
+
   return (
     <LinearGradient
       colors={Gradients.background}
@@ -394,7 +424,38 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        <Text style={styles.footerText}>Version 1.0.0 • TaskPrime SAS</Text>
+        {/* Social Media Icons */}
+        <View style={styles.socialContainer}>
+          <TouchableOpacity
+            style={[styles.socialIcon, { backgroundColor: '#FF9800', marginRight: 20, marginTop: 20 }]}
+            onPress={() => handleSocialLink('mailto:info@imcbs.com')}
+          >
+            <Ionicons name="mail" size={24} color="#FFF" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.socialIcon, { backgroundColor: '#4CAF50', marginRight: 20, marginTop: 20 }]}
+            onPress={() => handleSocialLink('https://www.imcbs.com/')}
+          >
+            <Ionicons name="globe" size={24} color="#FFF" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.socialIcon, { backgroundColor: '#E4405F', marginRight: 20, marginTop: 20 }]}
+            onPress={() => handleSocialLink('https://www.instagram.com/imcbusinesssolution?igsh=bTF0aGNyaXJjMHZ4')}
+          >
+            <Ionicons name="logo-instagram" size={24} color="#FFF" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.socialIcon, { backgroundColor: '#1877F2', marginRight: 20, marginTop: 20 }]}
+            onPress={() => handleSocialLink('https://www.facebook.com/people/IMC-Business-Solution/100069040622427/')}
+          >
+            <Ionicons name="logo-facebook" size={24} color="#FFF" />
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.footerText}>© 2025 All rights reserved. IMCB Solutions LLP</Text>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
@@ -475,5 +536,13 @@ const styles = StyleSheet.create({
     bottom: Spacing.xl,
     color: Colors.text.tertiary,
     fontSize: Typography.sizes.xs
+  },
+  socialContainer: {
+    flexDirection: "row",
+
+
+  },
+  socialIcon: {
+    marginleft: 50,
   }
 });
