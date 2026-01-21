@@ -1,5 +1,7 @@
+
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Picker } from '@react-native-picker/picker'; // Added Picker
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from 'expo-location';
@@ -13,6 +15,7 @@ import {
   Image,
   Modal,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -43,32 +46,40 @@ const deg2rad = (deg) => {
 
 export default function PunchInScreen() {
   const router = useRouter();
+
+  // Data State
+  const [allCustomers, setAllCustomers] = useState([]);
+  const [areas, setAreas] = useState([]);
+
+  // Selection State
+  const [selectedArea, setSelectedArea] = useState("All");
+  const [filteredCustomers, setFilteredCustomers] = useState([]);
+  const [selectedCustomerCode, setSelectedCustomerCode] = useState("");
+  const [step, setStep] = useState(1); // 1: Selection, 2: Action
+
+  // Searchable Picker State
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState("");
+  const [pickerFilteredCustomers, setPickerFilteredCustomers] = useState([]);
+
+  // Punch/Location State
   const [loading, setLoading] = useState(true);
-  const [customers, setCustomers] = useState([]);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [refreshingLocation, setRefreshingLocation] = useState(false);
-
-  // Filter State
-  const [filterTab, setFilterTab] = useState('all'); // 'all', 'active'
-
-  // Punch Status
   const [punchStatus, setPunchStatus] = useState(null);
   const [workHours, setWorkHours] = useState(0);
 
-  // Selfie State
-  const [pendingCustomer, setPendingCustomer] = useState(null);
+  // Selfie/Action State
   const [selfieUri, setSelfieUri] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [notes, setNotes] = useState("");
   const [punching, setPunching] = useState(false);
-  const [completedPunches, setCompletedPunches] = useState([]);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
       getCurrentLocation();
       checkPunchStatus();
-      loadCompletedHistory();
     }, [])
   );
 
@@ -81,6 +92,38 @@ export default function PunchInScreen() {
       return () => clearInterval(interval);
     }
   }, [punchStatus?.is_punched_in]);
+
+  // Filter customers when Area changes
+  useEffect(() => {
+    let filtered = allCustomers;
+    if (selectedArea !== "All") {
+      filtered = allCustomers.filter(c => c.place === selectedArea);
+    }
+    // Sort alphabetically
+    filtered.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    setFilteredCustomers(filtered);
+
+    // Reset selected customer if not in new list
+    if (selectedCustomerCode) {
+      const exists = filtered.find(c => c.code === selectedCustomerCode);
+      if (!exists) setSelectedCustomerCode("");
+    }
+  }, [selectedArea, allCustomers]);
+
+  // Filter customers for Picker Search
+  useEffect(() => {
+    if (!showCustomerPicker) return;
+
+    const query = customerSearchQuery.toLowerCase();
+    const filtered = filteredCustomers.filter(c =>
+      (c.name || "").toLowerCase().includes(query) ||
+      (c.code || "").toLowerCase().includes(query)
+    );
+    setPickerFilteredCustomers(filtered);
+  }, [customerSearchQuery, filteredCustomers, showCustomerPicker]);
+
+  // If punched in, maybe redirect or notify?
+  // For now, we just update the status variable which will affect the Action Step UI.
 
   const checkPunchStatus = async () => {
     try {
@@ -104,6 +147,10 @@ export default function PunchInScreen() {
             is_punched_in: true
           });
           setWorkHours(data.data.current_work_hours || 0);
+
+          // Optional: If punched in, maybe auto-select the customer?
+          // We need to find the customer in our list.
+          // This might be tricky if the list hasn't loaded yet.
         } else {
           setPunchStatus(null);
           setWorkHours(0);
@@ -111,75 +158,6 @@ export default function PunchInScreen() {
       }
     } catch (error) {
       console.error('[PunchIn] Error checking status:', error);
-    }
-  };
-
-  const loadCompletedHistory = async () => {
-    try {
-      const historyStr = await AsyncStorage.getItem("attendance_history");
-      if (historyStr) {
-        let history = [];
-        try {
-          history = JSON.parse(historyStr);
-        } catch (parseError) {
-          console.error('[PunchIn] Failed to parse history:', parseError);
-          // If corrupted, clear it
-          await AsyncStorage.removeItem("attendance_history");
-          setCompletedPunches([]);
-          return;
-        }
-
-        if (!Array.isArray(history)) {
-          setCompletedPunches([]);
-          return;
-        }
-
-        const threeDaysAgo = new Date();
-        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-
-        // Filter out records older than 3 days
-        const filteredHistory = history.filter(item => {
-          try {
-            if (!item) return false;
-            const punchDate = new Date(item.punchout_time || item.timestamp);
-            return !isNaN(punchDate.getTime()) && punchDate >= threeDaysAgo;
-          } catch (e) {
-            return false;
-          }
-        });
-
-        // Save back if some were removed
-        if (filteredHistory.length !== history.length) {
-          await AsyncStorage.setItem("attendance_history", JSON.stringify(filteredHistory));
-        }
-
-        setCompletedPunches(filteredHistory);
-      }
-    } catch (error) {
-      console.error('[PunchIn] Error loading completed history:', error);
-    }
-  };
-
-  const saveToCompletedHistory = async (record) => {
-    try {
-      const historyStr = await AsyncStorage.getItem("attendance_history");
-      let history = historyStr ? JSON.parse(historyStr) : [];
-
-      // Add new record at the top
-      history.unshift({
-        ...record,
-        timestamp: new Date().toISOString()
-      });
-
-      // Keep only last 3 days (redundant but safe)
-      const threeDaysAgo = new Date();
-      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-      history = history.filter(item => new Date(item.punchout_time || item.timestamp) >= threeDaysAgo);
-
-      await AsyncStorage.setItem("attendance_history", JSON.stringify(history));
-      setCompletedPunches(history);
-    } catch (error) {
-      console.error('[PunchIn] Error saving completed history:', error);
     }
   };
 
@@ -194,7 +172,7 @@ export default function PunchInScreen() {
       }
 
       console.log("[PunchIn] Fetching shop locations...");
-      const response = await fetch('https://tasksas.com/api/shop-location/firms/', {
+      const response = await fetch('https://tasksas.com/api/shop-location/table/', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -208,22 +186,41 @@ export default function PunchInScreen() {
 
       const result = await response.json();
 
-      if (!result.success || !result.firms) {
-        throw new Error('Invalid API response format');
+      let firms = [];
+      if (Array.isArray(result)) {
+        firms = result;
+      } else if (result.data && Array.isArray(result.data)) {
+        firms = result.data;
+      } else if (result.firms && Array.isArray(result.firms)) {
+        firms = result.firms; // Fallback for old format just in case
+      } else {
+        console.warn("Unexpected API response format", result);
+        // Attempt to use result as is if it looks like an object but not array (unlikely for list)
       }
 
-      const firms = result.firms;
-      console.log(`[PunchIn] Fetched ${firms.length} shop locations`);
+      console.log(`[PunchIn] Fetched ${firms.length} locations (total)`);
 
-      const mappedCustomers = firms.map(shop => ({
-        code: shop.id,
-        name: shop.firm_name,
-        place: shop.area || '',
+      // Filter for Verified only
+      const verifiedFirms = firms.filter(f => f.status === 'verified');
+      console.log(`[PunchIn] Filtered ${verifiedFirms.length} VERIFIED locations`);
+
+      // MAPPING: firm_code -> code, storeName -> name, storeLocation -> place
+      const mappedCustomers = verifiedFirms.map(shop => ({
+        code: shop.firm_code || shop.id?.toString(),
+        name: shop.storeName || shop.firm_name || "Unknown Store",
+        place: shop.storeLocation || shop.area || '',
         latitude: parseFloat(shop.latitude) || 0,
-        longitude: parseFloat(shop.longitude) || 0
+        longitude: parseFloat(shop.longitude) || 0,
+        client_id: shop.client_id
       }));
 
-      setCustomers(mappedCustomers);
+      // Extract Areas
+      const areaSet = new Set(mappedCustomers.map(c => c.place).filter(a => a && a.trim() !== ""));
+      const areaList = ["All", ...Array.from(areaSet).sort()];
+      setAreas(areaList);
+
+      setAllCustomers(mappedCustomers);
+      setFilteredCustomers(mappedCustomers);
     } catch (error) {
       console.error("[PunchIn] Error loading data:", error);
       Alert.alert("Error", `Failed to load shop locations: ${error.message}`);
@@ -254,7 +251,26 @@ export default function PunchInScreen() {
     }
   };
 
-  const startPunchInFlow = async (customer) => {
+  const handleProceed = () => {
+    if (!selectedCustomerCode) {
+      Alert.alert("Selection Required", "Please select a customer to proceed.");
+      return;
+    }
+    setStep(2);
+  };
+
+  const handleReset = () => {
+    setStep(1);
+  };
+
+  const getSelectedCustomerDetails = () => {
+    return allCustomers.find(c => c.code === selectedCustomerCode);
+  };
+
+  const startPunchInFlow = async () => {
+    const customer = getSelectedCustomerDetails();
+    if (!customer) return;
+
     if (!currentLocation) {
       Alert.alert("Location Missing", "Please wait for current location to update.");
       getCurrentLocation();
@@ -283,10 +299,10 @@ export default function PunchInScreen() {
       return;
     }
 
-    takeSelfie(customer);
+    takeSelfie();
   };
 
-  const takeSelfie = async (customer) => {
+  const takeSelfie = async () => {
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -302,7 +318,6 @@ export default function PunchInScreen() {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setSelfieUri(result.assets[0].uri);
-        setPendingCustomer(customer);
         setShowConfirmModal(true);
       }
     } catch (error) {
@@ -312,7 +327,8 @@ export default function PunchInScreen() {
   };
 
   const confirmPunchIn = async () => {
-    if (!selfieUri || !pendingCustomer || !currentLocation) return;
+    const customer = getSelectedCustomerDetails();
+    if (!selfieUri || !customer || !currentLocation) return;
 
     try {
       setPunching(true);
@@ -333,7 +349,7 @@ export default function PunchInScreen() {
       }
 
       const formData = new FormData();
-      formData.append('customerCode', pendingCustomer.code);
+      formData.append('customerCode', customer.code);
       formData.append('latitude', currentLocation.latitude.toString());
       formData.append('longitude', currentLocation.longitude.toString());
       formData.append('address', address || 'Unknown');
@@ -381,14 +397,8 @@ export default function PunchInScreen() {
     }
   };
 
-  const closeConfirmModal = () => {
-    setShowConfirmModal(false);
-    setSelfieUri(null);
-    setPendingCustomer(null);
-    setNotes("");
-  };
-
-  const handlePunchOut = async (customer) => {
+  const handlePunchOut = async () => {
+    const customer = getSelectedCustomerDetails();
     if (!punchStatus?.punchin_id) {
       console.warn('[PunchOut] Cannot punch out: punchin_id is missing', punchStatus);
       Alert.alert("Error", "Could not find active punch-in record. Please refresh.");
@@ -409,9 +419,6 @@ export default function PunchInScreen() {
               const token = await AsyncStorage.getItem("authToken");
 
               const url = `https://tasksas.com/api/punch-out/${punchStatus.punchin_id}/`;
-              console.log('[PunchOut] Requesting URL:', url);
-              console.log('[PunchOut] Notes:', notes);
-
               const response = await fetch(url, {
                 method: 'POST',
                 headers: {
@@ -422,56 +429,25 @@ export default function PunchInScreen() {
                 body: JSON.stringify({ notes: notes || '' })
               });
 
-              console.log('[PunchOut] Response Status:', response.status);
-
-              const responseText = await response.text();
-              console.log('[PunchOut] Raw Response:', responseText);
-
-              let result;
-              try {
-                result = JSON.parse(responseText);
-              } catch (e) {
-                console.error('[PunchOut] JSON Parse Error:', e);
-                throw new Error(`Invalid server response: ${responseText.substring(0, 100)}`);
-              }
+              const result = await response.json();
 
               if (response.ok && result.success) {
                 Alert.alert(
                   "Punch Out Successful",
-                  `Work Duration: ${result.data?.work_duration_hours?.toFixed(2) || 0} hours\nPunch In: ${result.data?.punchin_time ? new Date(result.data.punchin_time).toLocaleTimeString() : 'N/A'}\nPunch Out: ${result.data?.punchout_time ? new Date(result.data.punchout_time).toLocaleTimeString() : 'N/A'}`
+                  `Work Duration: ${result.data?.work_duration_hours?.toFixed(2) || 0} hours`
                 );
 
                 setPunchStatus(null);
                 setWorkHours(0);
-
-                // Save to local history for 'Completed' section
-                await saveToCompletedHistory({
-                  firm_name: customer.name,
-                  code: customer.code,
-                  place: customer.place,
-                  work_duration_hours: result.data?.work_duration_hours || workHours,
-                  punchin_time: result.data?.punchin_time,
-                  punchout_time: result.data?.punchout_time
-                });
-
-                // Verify status was updated
                 setTimeout(() => {
                   checkPunchStatus();
                 }, 1000);
               } else {
-                Alert.alert("Error", result.message || `Failed to punch out (${response.status})`);
+                Alert.alert("Error", result.message || "Failed to punch out");
               }
             } catch (error) {
               console.error("[PunchOut] Error:", error);
-              // Handle the specific "Network request failed" error with more context
-              if (error.message === 'Network request failed') {
-                Alert.alert(
-                  "Network Error",
-                  "Punch out failed due to a network issue. Please check your internet connection and verify if the punch-in ID is valid."
-                );
-              } else {
-                Alert.alert("Error", `Failed to punch out: ${error.message}`);
-              }
+              Alert.alert("Error", `Failed to punch out: ${error.message}`);
             } finally {
               setPunching(false);
             }
@@ -481,49 +457,153 @@ export default function PunchInScreen() {
     );
   };
 
-  const getFilteredCustomers = () => {
-    if (filterTab === 'active' && punchStatus?.is_punched_in) {
-      // Show only the customer where user is punched in
-      return customers.filter(c => c.name === punchStatus.firm_name);
-    }
-    if (filterTab === 'completed') {
-      return completedPunches;
-    }
-    return customers;
+  const closeConfirmModal = () => {
+    setShowConfirmModal(false);
+    setSelfieUri(null);
+    setNotes("");
   };
 
-  const renderItem = ({ item }) => {
-    let distanceText = "Calculating...";
-    let canPunch = false;
-    let distance = Infinity;
+  const handleNavigateToActivePunch = () => {
+    if (!punchStatus?.is_punched_in) return;
 
-    if (currentLocation && item.latitude && item.longitude) {
+    // Find the customer that matches the active punch
+    // We prioritize matching by Name as that is definitely in punchStatus
+    // Ideally we would use code, but punchStatus might not have it unless we check the API response structure again.
+    // Based on previous code: result.data.firm_name is used.
+    const activeCustomer = allCustomers.find(c => c.name === punchStatus.firm_name);
+
+    if (activeCustomer) {
+      setSelectedCustomerCode(activeCustomer.code);
+      setStep(2);
+    } else {
+      Alert.alert("Error", "Could not find the active customer in your list.");
+    }
+  };
+
+  const renderSelectionStep = () => {
+    const selectedCustomer = getSelectedCustomerDetails();
+
+    return (
+      <View style={styles.formContainer}>
+        <Text style={styles.stepTitle}>Select Customer for Punch-In</Text>
+
+        {punchStatus?.is_punched_in && (
+          <TouchableOpacity
+            style={styles.statusBannerSmall}
+            onPress={handleNavigateToActivePunch}
+          >
+            <Ionicons name="time" size={24} color={Colors.primary.main} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statusTextSmall}>
+                Punched in at {punchStatus.firm_name}
+              </Text>
+              <Text style={styles.statusSubtextSmall}>
+                Tap here to Punch Out
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={Colors.primary.main} />
+          </TouchableOpacity>
+        )}
+
+        {/* Area Selection */}
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Area (Optional)</Text>
+          <View style={styles.pickerWrapper}>
+            <Picker
+              selectedValue={selectedArea}
+              onValueChange={(itemValue) => setSelectedArea(itemValue)}
+              style={styles.picker}
+              dropdownIconColor={Colors.text.primary}
+            >
+              {areas.map((area, index) => (
+                <Picker.Item
+                  key={index}
+                  label={area || "All"}
+                  value={area}
+                  style={styles.pickerItem}
+                />
+              ))}
+            </Picker>
+          </View>
+        </View>
+
+        {/* Customer Selection - Searchable */}
+        <View style={styles.inputGroup}>
+          <Text style={styles.label}>Customer</Text>
+          <TouchableOpacity
+            style={styles.searchablePickerTrigger}
+            onPress={() => {
+              setCustomerSearchQuery("");
+              setPickerFilteredCustomers(filteredCustomers);
+              setShowCustomerPicker(true);
+            }}
+          >
+            <Text style={[
+              styles.searchablePickerText,
+              !selectedCustomerCode && styles.placeholderText
+            ]}>
+              {selectedCustomer ? selectedCustomer.name : "Select a customer..."}
+            </Text>
+            <Ionicons name="caret-down" size={12} color={Colors.text.tertiary} />
+          </TouchableOpacity>
+          <Text style={styles.helperText}>
+            {filteredCustomers.length} customers in selected area
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[
+            styles.primaryButton,
+            (!selectedCustomerCode) && styles.disabledButton
+          ]}
+          onPress={handleProceed}
+          disabled={!selectedCustomerCode}
+        >
+          <Text style={styles.primaryButtonText}>Proceed</Text>
+          <Ionicons name="arrow-forward" size={20} color="#FFF" />
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const renderActionStep = () => {
+    const customer = getSelectedCustomerDetails();
+    if (!customer) return null;
+
+    // Check distance
+    let distanceText = "Calculating...";
+    let distance = Infinity;
+    let canPunch = false;
+
+    if (currentLocation && customer.latitude && customer.longitude) {
       distance = getDistanceFromLatLonInMeters(
         currentLocation.latitude,
         currentLocation.longitude,
-        parseFloat(item.latitude),
-        parseFloat(item.longitude)
+        customer.latitude,
+        customer.longitude
       );
-      if (!isNaN(distance)) {
-        distanceText = distance >= 1000
-          ? `${(distance / 1000).toFixed(1)}km away`
-          : `${distance.toFixed(0)}m away`;
-        canPunch = distance <= 100;
-      } else {
-        distanceText = "Location Error";
-      }
-    } else {
-      distanceText = "No Location";
+      distanceText = distance >= 1000
+        ? `${(distance / 1000).toFixed(1)}km away`
+        : `${distance.toFixed(0)}m away`;
+      canPunch = distance <= 100;
     }
 
-    const isPunchedInHere = punchStatus?.is_punched_in && punchStatus?.firm_name === item.name;
-    const isCompletedItem = filterTab === 'completed';
+    // Logic check
+    const isActiveContext = punchStatus?.is_punched_in && punchStatus?.firm_name === customer.name;
+    const isBlocked = punchStatus?.is_punched_in && !isActiveContext;
 
     return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.customerName}>{item.name || item.firm_name}</Text>
-          {!isPunchedInHere && !isCompletedItem && (
+      <View style={styles.actionContainer}>
+        {/* Customer Card */}
+        <View style={styles.customerCard}>
+          <View style={styles.customerHeader}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{customer.name.charAt(0)}</Text>
+            </View>
+            <View style={styles.customerInfo}>
+              <Text style={styles.customerNameBig}>{customer.name}</Text>
+              <Text style={styles.customerCode}>{customer.code}</Text>
+            </View>
             <View style={[styles.distanceBadge, canPunch ? styles.badgeSuccess : styles.badgeError]}>
               <Ionicons
                 name={canPunch ? "checkmark-circle" : "warning"}
@@ -534,185 +614,163 @@ export default function PunchInScreen() {
                 {distanceText}
               </Text>
             </View>
+          </View>
+
+          <View style={styles.divider} />
+
+          <View style={styles.detailsGrid}>
+            <View style={styles.detailItem}>
+              <Ionicons name="location-outline" size={16} color={Colors.text.secondary} />
+              <Text style={styles.detailText}>{customer.place || "N/A"}</Text>
+            </View>
+          </View>
+
+          {isActiveContext && (
+            <View style={styles.statusBannerActive}>
+              <Ionicons name="time" size={20} color={Colors.success.main} />
+              <Text style={styles.statusTextActive}>
+                You are punched in here. Work Hours: {workHours.toFixed(2)}
+              </Text>
+            </View>
+          )}
+
+          {isBlocked && (
+            <View style={styles.statusBannerBlocked}>
+              <Ionicons name="lock-closed" size={20} color={Colors.error.main} />
+              <Text style={styles.statusTextBlocked}>
+                You are already punched in at {punchStatus.firm_name}. Please punch out there first.
+              </Text>
+            </View>
           )}
         </View>
 
-        <Text style={styles.customerDetail}>{item.place || "No Location"}</Text>
-        <Text style={styles.customerCode}>Code: {item.code}</Text>
-
-        {isPunchedInHere && (
-          <View style={styles.workHoursCard}>
-            <Ionicons name="time-outline" size={16} color={Colors.success.main} />
-            <Text style={styles.workHoursText}>Work Hours: {workHours.toFixed(2)} hrs</Text>
-          </View>
-        )}
-
-        {isCompletedItem && (
-          <View style={[styles.workHoursCard, { backgroundColor: Colors.neutral[50] }]}>
-            <Ionicons name="time" size={16} color={Colors.neutral[600]} />
-            <Text style={[styles.workHoursText, { color: Colors.neutral[600] }]}>
-              Duration: {item.work_duration_hours?.toFixed(2) || 0} hrs
-            </Text>
-            <Text style={{ fontSize: 10, color: Colors.neutral[400], marginLeft: 'auto' }}>
-              {item.punchout_time ? new Date(item.punchout_time).toLocaleDateString() : ''}
-            </Text>
-          </View>
-        )}
-
-        <View style={styles.actionRow}>
-          {isCompletedItem ? (
-            <View style={styles.completedInfo}>
-              <View style={styles.timeRow}>
-                <Text style={styles.timeLabel}>In:</Text>
-                <Text style={styles.timeValue}>
-                  {item.punchin_time ? new Date(item.punchin_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
-                </Text>
-                <Text style={[styles.timeLabel, { marginLeft: 12 }]}>Out:</Text>
-                <Text style={styles.timeValue}>
-                  {item.punchout_time ? new Date(item.punchout_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
-                </Text>
-              </View>
-            </View>
-          ) : isPunchedInHere ? (
+        {/* Actions */}
+        <View style={styles.buttonStack}>
+          {isActiveContext ? (
             <TouchableOpacity
-              style={[styles.punchButton, styles.punchOutButton]}
-              onPress={() => handlePunchOut(item)}
+              style={[styles.actionButton, styles.punchOutButton]}
+              onPress={handlePunchOut}
               disabled={punching}
             >
               {punching ? (
-                <ActivityIndicator size="small" color="#FFF" />
+                <ActivityIndicator color="#FFF" />
               ) : (
                 <>
-                  <Ionicons name="log-out-outline" size={20} color="#FFF" />
-                  <Text style={styles.punchButtonText}>Punch Out</Text>
+                  <Ionicons name="log-out-outline" size={24} color="#FFF" />
+                  <Text style={styles.actionButtonText}>Punch Out</Text>
                 </>
               )}
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[
-                styles.punchButton,
+                styles.actionButton,
                 styles.punchInButton,
-                (!canPunch || punchStatus?.is_punched_in) && styles.disabledButton
+                (isBlocked || !canPunch) && styles.disabledButton
               ]}
-              onPress={() => startPunchInFlow(item)}
-              disabled={!canPunch || punchStatus?.is_punched_in || punching}
+              onPress={startPunchInFlow}
+              disabled={punching || isBlocked || !canPunch}
             >
               {punching ? (
-                <ActivityIndicator size="small" color="#FFF" />
+                <ActivityIndicator color="#FFF" />
               ) : (
                 <>
-                  <Ionicons name="camera-outline" size={20} color={(!canPunch || punchStatus?.is_punched_in) ? Colors.neutral[400] : "#FFF"} />
-                  <Text style={[styles.punchButtonText, (!canPunch || punchStatus?.is_punched_in) && styles.disabledText]}>
-                    Punch In
-                  </Text>
+                  <Ionicons name="camera-outline" size={24} color="#FFF" />
+                  <Text style={styles.actionButtonText}>Punch In</Text>
                 </>
               )}
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={handleReset}
+            disabled={punching}
+          >
+            <Text style={styles.secondaryButtonText}>Select Different Customer</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
   };
 
-  const filteredCustomers = getFilteredCustomers();
-
   return (
     <LinearGradient colors={Gradients.background} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => router.push("/Company")} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
-          <Text style={styles.title}>Attendance</Text>
-
-          <TouchableOpacity
-            style={styles.refreshButton}
-            onPress={getCurrentLocation}
-            disabled={refreshingLocation}
-          >
-            {refreshingLocation ? (
-              <ActivityIndicator size="small" color={Colors.primary.main} />
-            ) : (
-              <Ionicons name="locate" size={24} color={Colors.primary.main} />
-            )}
-          </TouchableOpacity>
+          <Text style={styles.title}>PUNCH-IN MANAGEMENT</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        {/* Filter Tabs */}
-        <View style={styles.filterContainer}>
-          <TouchableOpacity
-            style={[styles.filterTab, filterTab === 'all' && styles.filterTabActive]}
-            onPress={() => setFilterTab('all')}
-          >
-            <Text style={[styles.filterTabText, filterTab === 'all' && styles.filterTabTextActive]}>
-              All Shops ({customers.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterTab, filterTab === 'active' && styles.filterTabActive]}
-            onPress={() => setFilterTab('active')}
-          >
-            <Ionicons
-              name="time"
-              size={16}
-              color={filterTab === 'active' ? Colors.success.main : Colors.text.secondary}
-            />
-            <Text style={[styles.filterTabText, filterTab === 'active' && styles.filterTabTextActive]}>
-              Active {punchStatus?.is_punched_in ? '(1)' : '(0)'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterTab, filterTab === 'completed' && styles.filterTabActive, filterTab === 'completed' && { borderColor: Colors.primary.main, backgroundColor: Colors.primary[50] }]}
-            onPress={() => setFilterTab('completed')}
-          >
-            <Ionicons
-              name="checkmark-done-circle"
-              size={16}
-              color={filterTab === 'completed' ? Colors.primary.main : Colors.text.secondary}
-            />
-            <Text style={[styles.filterTabText, filterTab === 'completed' && { color: Colors.primary.main }]}>
-              Completed ({completedPunches.length})
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Status Banner */}
-        {punchStatus?.is_punched_in && (
-          <View style={styles.statusBanner}>
-            <View style={styles.statusRow}>
-              <Ionicons name="checkmark-circle" size={20} color={Colors.success.main} />
-              <Text style={styles.statusText}>Punched in at {punchStatus.firm_name}</Text>
+        <ScrollView contentContainerStyle={styles.content}>
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={Colors.primary.main} />
+              <Text style={styles.loadingText}>Loading Shop Locations...</Text>
             </View>
-            <Text style={styles.statusSubtext}>Work Hours: {workHours.toFixed(2)} hrs</Text>
-          </View>
-        )}
+          ) : (
+            step === 1 ? renderSelectionStep() : renderActionStep()
+          )}
+        </ScrollView>
 
-        {loading ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={Colors.primary.main} />
-          </View>
-        ) : (
-          <FlatList
-            data={filteredCustomers}
-            keyExtractor={item => item.code}
-            renderItem={renderItem}
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.center}>
-                <Ionicons name="location-outline" size={48} color={Colors.neutral[300]} />
-                <Text style={styles.emptyText}>
-                  {filterTab === 'active' && !punchStatus?.is_punched_in
-                    ? "No active punch-in"
-                    : "No shop locations found. Please capture locations first."}
-                </Text>
+        {/* Searchable Picker Modal */}
+        <Modal
+          visible={showCustomerPicker}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowCustomerPicker(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.pickerModalContent}>
+              <View style={styles.pickerModalHeader}>
+                <Text style={styles.pickerModalTitle}>Select Customer</Text>
+                <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
+                  <Ionicons name="close-circle" size={24} color={Colors.text.tertiary} />
+                </TouchableOpacity>
               </View>
-            }
-          />
-        )}
+
+              <View style={styles.pickerSearchContainer}>
+                <Ionicons name="search" size={20} color={Colors.text.tertiary} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={styles.pickerSearchInput}
+                  placeholder="Search customer..."
+                  value={customerSearchQuery}
+                  onChangeText={setCustomerSearchQuery}
+                  autoFocus
+                />
+              </View>
+
+              <FlatList
+                data={pickerFilteredCustomers}
+                keyExtractor={item => item.code}
+                style={styles.pickerList}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.pickerListItem}
+                    onPress={() => {
+                      setSelectedCustomerCode(item.code);
+                      setShowCustomerPicker(false);
+                    }}
+                  >
+                    <View>
+                      <Text style={styles.pickerListItemText}>{item.name}</Text>
+                      <Text style={styles.pickerListItemSubText}>{item.place || "N/A"}</Text>
+                    </View>
+                    {selectedCustomerCode === item.code && (
+                      <Ionicons name="checkmark" size={20} color={Colors.primary.main} />
+                    )}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={styles.pickerEmptyText}>No customers found</Text>
+                }
+              />
+            </View>
+          </View>
+        </Modal>
 
         {/* Selfie Confirmation Modal */}
         <Modal
@@ -722,9 +780,9 @@ export default function PunchInScreen() {
           onRequestClose={closeConfirmModal}
         >
           <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
+            <View style={styles.confirmModalContent}>
               <Text style={styles.modalTitle}>Confirm Punch In</Text>
-              <Text style={styles.modalSubtitle}>Shop: {pendingCustomer?.name}</Text>
+              <Text style={styles.modalSubtitle}>Shop: {getSelectedCustomerDetails()?.name}</Text>
 
               {selfieUri && (
                 <Image source={{ uri: selfieUri }} style={styles.selfieImage} />
@@ -743,14 +801,14 @@ export default function PunchInScreen() {
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={[styles.modalButton, styles.modalButtonCancel]}
-                  onPress={() => takeSelfie(pendingCustomer)}
+                  onPress={takeSelfie}
                   disabled={punching}
                 >
                   <Text style={styles.modalButtonTextCancel}>Retake</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonConfirm]}
+                  style={[styles.modalButton, styles.modalButtonSave]}
                   onPress={confirmPunchIn}
                   disabled={punching}
                 >
@@ -768,7 +826,6 @@ export default function PunchInScreen() {
             </View>
           </View>
         </Modal>
-
       </SafeAreaView>
     </LinearGradient>
   );
@@ -797,121 +854,238 @@ const styles = StyleSheet.create({
   backButton: {
     padding: Spacing.xs,
   },
-  refreshButton: {
-    padding: Spacing.xs,
+  content: {
+    padding: Spacing.lg,
+    flexGrow: 1,
   },
-  filterContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: Spacing.lg,
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  filterTab: {
-    flexDirection: 'row',
+  center: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.neutral[100],
-    borderWidth: 1,
-    borderColor: Colors.border.light,
+    minHeight: 300,
   },
-  filterTabActive: {
-    backgroundColor: Colors.success[50],
-    borderColor: Colors.success.main,
+  loadingText: {
+    marginTop: Spacing.md,
+    color: Colors.text.secondary,
+    fontSize: Typography.sizes.base,
   },
-  filterTabText: {
+  formContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    ...Shadows.md,
+  },
+  stepTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: Spacing.xl,
+  },
+  inputGroup: {
+    marginBottom: Spacing.xl,
+  },
+  label: {
     fontSize: Typography.sizes.sm,
     fontWeight: '600',
     color: Colors.text.secondary,
+    marginBottom: Spacing.xs,
   },
-  filterTabTextActive: {
-    color: Colors.success.main,
-  },
-  statusBanner: {
-    backgroundColor: Colors.success[50],
-    marginHorizontal: Spacing.lg,
-    padding: Spacing.md,
+  pickerWrapper: {
+    backgroundColor: Colors.neutral[50],
     borderRadius: BorderRadius.lg,
-    marginBottom: Spacing.sm,
-    borderWidth: 1,
-    borderColor: Colors.success[100],
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusText: {
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
-    color: Colors.success[900],
-  },
-  statusSubtext: {
-    fontSize: Typography.sizes.sm,
-    color: Colors.success[700],
-    marginTop: 4,
-    marginLeft: 28,
-  },
-  list: {
-    padding: Spacing.lg,
-    paddingBottom: 100,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
     borderWidth: 1,
     borderColor: Colors.border.light,
-    ...Shadows.sm,
+    overflow: 'hidden',
   },
-  cardHeader: {
+  picker: {
+    color: Colors.text.primary,
+  },
+  pickerItem: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+  },
+  // Searchable Picker Styles
+  searchablePickerTrigger: {
+    backgroundColor: Colors.neutral[50],
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  searchablePickerText: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+  },
+  placeholderText: {
+    color: Colors.text.tertiary,
+  },
+  pickerModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.md,
+    width: '100%',
+    maxWidth: 400,
+    height: '80%',
+    ...Shadows.xl,
+  },
+  pickerModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.xs
   },
-  customerName: {
-    fontSize: Typography.sizes.base,
-    fontWeight: '600',
+  pickerModalTitle: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
     color: Colors.text.primary,
-    flex: 1,
-    marginRight: 8,
   },
-  customerDetail: {
-    fontSize: Typography.sizes.xs,
-    color: Colors.text.secondary,
-    marginBottom: 2,
-  },
-  customerCode: {
-    fontSize: Typography.sizes.xs,
-    color: Colors.text.tertiary,
-    marginBottom: Spacing.sm,
-  },
-  workHoursCard: {
+  pickerSearchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: Colors.success[50],
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.sm,
+    backgroundColor: Colors.neutral[50],
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    height: 48,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    marginBottom: Spacing.md,
   },
-  workHoursText: {
+  pickerSearchInput: {
+    flex: 1,
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+    height: '100%'
+  },
+  pickerList: {
+    flex: 1,
+  },
+  pickerListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+  },
+  pickerListItemText: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.primary,
+    fontWeight: '500',
+  },
+  pickerListItemSubText: {
     fontSize: Typography.sizes.sm,
-    fontWeight: '600',
-    color: Colors.success.main,
+    color: Colors.text.secondary,
+    marginTop: 2,
+  },
+  pickerEmptyText: {
+    textAlign: 'center',
+    marginTop: Spacing.lg,
+    color: Colors.text.secondary,
+    fontStyle: 'italic',
+  },
+  helperText: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  primaryButton: {
+    flexDirection: 'row',
+    backgroundColor: Colors.primary.main,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+    ...Shadows.sm,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: Typography.sizes.base,
+    fontWeight: '700',
+  },
+  disabledButton: {
+    backgroundColor: Colors.neutral[300],
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  actionContainer: {
+    gap: Spacing.xl,
+  },
+  customerCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.xl,
+    ...Shadows.lg,
+  },
+  customerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  avatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: Colors.primary[100],
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: Typography.sizes['2xl'],
+    fontWeight: '700',
+    color: Colors.primary.main,
+  },
+  customerInfo: {
+    flex: 1,
+  },
+  customerNameBig: {
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: 4,
+  },
+  customerCode: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+    backgroundColor: Colors.neutral[100],
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.xs,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: Colors.border.light,
+    marginVertical: Spacing.md,
+  },
+  detailsGrid: {
+    gap: Spacing.md,
+  },
+  detailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  detailText: {
+    fontSize: Typography.sizes.base,
+    color: Colors.text.secondary,
   },
   distanceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    gap: 4,
+    backgroundColor: Colors.neutral[100],
   },
   badgeSuccess: {
     backgroundColor: Colors.success[50],
@@ -920,71 +1094,96 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.error[50],
   },
   distanceText: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  actionRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  punchButton: {
+  statusBannerSmall: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    gap: 12, // Increased gap
+    backgroundColor: Colors.primary[50],
+    padding: Spacing.md,
     borderRadius: BorderRadius.md,
+    marginBottom: Spacing.xl, // Increased margin
+    borderWidth: 1, // Added border to make it look interactive
+    borderColor: Colors.primary[100],
+  },
+  statusTextSmall: {
+    color: Colors.primary.main,
+    fontSize: Typography.sizes.md, // Increased font size
+    fontWeight: '700', // Bold
+  },
+  statusSubtextSmall: {
+    color: Colors.primary[700],
+    fontSize: Typography.sizes.xs,
+    marginTop: 2,
+  },
+  statusBannerActive: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    minWidth: 120,
-    justifyContent: 'center',
+    marginTop: Spacing.lg,
+    padding: Spacing.sm,
+    backgroundColor: Colors.success[50],
+    borderRadius: BorderRadius.md,
   },
-  punchInButton: {
-    backgroundColor: Colors.success.main,
-  },
-  punchOutButton: {
-    backgroundColor: Colors.error.main,
-  },
-  disabledButton: {
-    backgroundColor: Colors.neutral[100],
-  },
-  punchButtonText: {
-    color: '#FFFFFF',
+  statusTextActive: {
+    color: Colors.success.main,
     fontWeight: '600',
     fontSize: Typography.sizes.sm,
   },
-  disabledText: {
-    color: Colors.neutral[400],
-  },
-  completedInfo: {
-    flex: 1,
-    paddingTop: 4,
-  },
-  timeRow: {
+  statusBannerBlocked: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    marginTop: Spacing.lg,
+    padding: Spacing.sm,
+    backgroundColor: Colors.error[50],
+    borderRadius: BorderRadius.md,
   },
-  timeLabel: {
-    fontSize: 10,
-    color: Colors.text.tertiary,
+  statusTextBlocked: {
+    color: Colors.error.main,
     fontWeight: '600',
-    marginRight: 4,
+    fontSize: Typography.sizes.sm,
+    flex: 1
   },
-  timeValue: {
-    fontSize: 11,
-    color: Colors.text.secondary,
-    fontWeight: '500',
+  buttonStack: {
+    gap: Spacing.md,
   },
-  center: {
-    flex: 1,
+  actionButton: {
+    flexDirection: 'row',
+    paddingVertical: Spacing.lg,
+    borderRadius: BorderRadius.xl,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: Spacing.xl,
+    gap: Spacing.md,
+    ...Shadows.md,
   },
-  emptyText: {
-    color: Colors.text.secondary,
+  punchInButton: {
+    backgroundColor: Colors.primary.main,
+  },
+  punchOutButton: {
+    backgroundColor: Colors.warning.main,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border.medium,
+  },
+  secondaryButtonText: {
+    color: Colors.text.primary,
     fontSize: Typography.sizes.base,
-    textAlign: 'center',
-    marginTop: Spacing.md,
+    fontWeight: '600',
   },
+  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -992,72 +1191,79 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: Spacing.lg,
   },
-  modalContent: {
+  confirmModalContent: {
     backgroundColor: '#FFFFFF',
     borderRadius: BorderRadius.xl,
     padding: Spacing.xl,
     width: '100%',
-    alignItems: 'center',
-    ...Shadows.md,
+    maxWidth: 400,
+    ...Shadows.xl,
   },
   modalTitle: {
-    fontSize: Typography.sizes.lg,
+    fontSize: Typography.sizes.xl,
     fontWeight: '700',
     color: Colors.text.primary,
     marginBottom: 4,
+    textAlign: 'center'
   },
   modalSubtitle: {
     fontSize: Typography.sizes.sm,
     color: Colors.text.secondary,
+    textAlign: 'center',
     marginBottom: Spacing.lg,
   },
   selfieImage: {
-    width: 200,
+    width: '100%',
     height: 200,
-    borderRadius: 100,
+    borderRadius: BorderRadius.lg,
     marginBottom: Spacing.md,
-    borderWidth: 2,
-    borderColor: Colors.border.light,
   },
   notesInput: {
-    width: '100%',
+    backgroundColor: Colors.neutral[50],
     borderWidth: 1,
     borderColor: Colors.border.light,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     padding: Spacing.md,
-    fontSize: Typography.sizes.sm,
-    color: Colors.text.primary,
-    marginBottom: Spacing.lg,
+    height: 80,
     textAlignVertical: 'top',
+    marginBottom: Spacing.xl,
+    color: Colors.text.primary,
   },
   modalActions: {
     flexDirection: 'row',
     gap: Spacing.md,
-    width: '100%',
   },
   modalButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: BorderRadius.lg,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
   },
   modalButtonCancel: {
     backgroundColor: Colors.neutral[100],
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+  },
+  modalButtonSave: {
+    backgroundColor: Colors.primary.main,
   },
   modalButtonConfirm: {
-    backgroundColor: Colors.success.main,
+    backgroundColor: Colors.primary.main,
   },
   modalButtonText: {
     color: '#FFFFFF',
     fontWeight: '600',
+    fontSize: Typography.sizes.base,
   },
   modalButtonTextCancel: {
     color: Colors.text.primary,
     fontWeight: '600',
+    fontSize: Typography.sizes.base,
   },
   closeButton: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-  }
+    top: Spacing.md,
+    right: Spacing.md,
+  },
 });

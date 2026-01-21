@@ -1,5 +1,7 @@
+
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Picker } from '@react-native-picker/picker';
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from 'expo-location';
 import { useRouter } from "expo-router";
@@ -7,10 +9,19 @@ import { useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
-    Dimensions,
-    FlatList,
+    Dimensions, // Added TextInput
+    FlatList // Added FlatList for searchable modal
+    ,
+
+
+
+
+
+
+
     Modal,
     SafeAreaView,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
@@ -25,33 +36,65 @@ const API_DEBTORS = "https://tasksas.com/api/debtors/get-debtors/";
 
 export default function LocationCaptureScreen() {
     const router = useRouter();
-    const [customers, setCustomers] = useState([]);
-    const [filtered, setFiltered] = useState([]);
-    const [searchQuery, setSearchQuery] = useState("");
+
+    // Data State
+    const [allCustomers, setAllCustomers] = useState([]);
+    const [areas, setAreas] = useState([]);
+
+    // Selection State
+    const [selectedArea, setSelectedArea] = useState("All");
+    const [filteredCustomers, setFilteredCustomers] = useState([]);
+    const [selectedCustomerCode, setSelectedCustomerCode] = useState("");
+
+    // UI State
     const [loading, setLoading] = useState(true);
     const [capturing, setCapturing] = useState(false);
     const [capturedCustomers, setCapturedCustomers] = useState(new Set());
+    const [step, setStep] = useState(1); // 1: Selection, 2: Action
+
+    // Searchable Picker State
+    const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+    const [customerSearchQuery, setCustomerSearchQuery] = useState("");
+    const [pickerFilteredCustomers, setPickerFilteredCustomers] = useState([]);
 
     // Map State
     const [showMap, setShowMap] = useState(false);
-    const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [currentRegion, setCurrentRegion] = useState(null);
     const [markerCoordinate, setMarkerCoordinate] = useState(null);
+    const [capturedAddress, setCapturedAddress] = useState(null); // Added state for address
 
     useEffect(() => {
         loadData();
     }, []);
 
+    // Filter customers when Area changes
     useEffect(() => {
-        const q = searchQuery.toLowerCase();
-        const f = customers.filter(c =>
-            (c.name || "").toLowerCase().includes(q) ||
-            (c.place || "").toLowerCase().includes(q) ||
-            (c.phone || "").toLowerCase().includes(q) ||
-            (c.code || "").toLowerCase().includes(q)
+        let filtered = allCustomers;
+        if (selectedArea !== "All") {
+            filtered = allCustomers.filter(c => c.area === selectedArea);
+        }
+        // Sort alphabetically
+        filtered.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        setFilteredCustomers(filtered);
+
+        // Reset selected customer if not in new list
+        if (selectedCustomerCode) {
+            const exists = filtered.find(c => c.code === selectedCustomerCode);
+            if (!exists) setSelectedCustomerCode("");
+        }
+    }, [selectedArea, allCustomers]);
+
+    // Filter customers for Picker Search
+    useEffect(() => {
+        if (!showCustomerPicker) return;
+
+        const query = customerSearchQuery.toLowerCase();
+        const filtered = filteredCustomers.filter(c =>
+            (c.name || "").toLowerCase().includes(query) ||
+            (c.code || "").toLowerCase().includes(query)
         );
-        setFiltered(f);
-    }, [searchQuery, customers]);
+        setPickerFilteredCustomers(filtered);
+    }, [customerSearchQuery, filteredCustomers, showCustomerPicker]);
 
     const loadData = async () => {
         try {
@@ -80,7 +123,6 @@ export default function LocationCaptureScreen() {
             const responseText = await response.text();
 
             if (!response.ok) {
-                console.warn('[LocationCapture] GET Error:', response.status, responseText);
                 throw new Error(`Server returned ${response.status}: ${responseText.substring(0, 100)}`);
             }
 
@@ -88,23 +130,64 @@ export default function LocationCaptureScreen() {
             try {
                 json = JSON.parse(responseText);
             } catch (e) {
-                console.error('[LocationCapture] GET JSON Parse Error:', e);
                 throw new Error('Invalid JSON response from server');
             }
 
-            let allCustomers = [];
+            let customersData = [];
             if (Array.isArray(json)) {
-                allCustomers = json;
+                customersData = json;
             } else if (json.data && Array.isArray(json.data)) {
-                allCustomers = json.data;
+                customersData = json.data;
             } else if (json.debtors && Array.isArray(json.debtors)) {
-                allCustomers = json.debtors;
-            } else {
-                console.warn("Unexpected API response format:", json);
-                // Try to handle single object if that was the case, but likely it's one of above
+                customersData = json.debtors;
             }
 
-            console.log(`Fetched ${allCustomers.length} debtors from API`);
+            // 2b. Fetch Verified Locations to Exclude
+            console.log(`[LocationCapture] Fetching verified locations...`);
+            let verifiedCodes = new Set();
+            try {
+                const verifiedResponse = await fetch('https://tasksas.com/api/shop-location/table/', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (verifiedResponse.ok) {
+                    const verifiedResult = await verifiedResponse.json();
+                    let verifiedList = [];
+                    if (Array.isArray(verifiedResult)) {
+                        verifiedList = verifiedResult;
+                    } else if (verifiedResult.data && Array.isArray(verifiedResult.data)) {
+                        verifiedList = verifiedResult.data;
+                    } else if (verifiedResult.firms && Array.isArray(verifiedResult.firms)) {
+                        verifiedList = verifiedResult.firms;
+                    }
+
+                    // Filter only status === 'verified' and extract codes
+                    verifiedList.forEach(item => {
+                        if (item.status === 'verified') {
+                            // Support both field names just in case
+                            const code = item.firm_code || item.code || item.id?.toString();
+                            if (code) verifiedCodes.add(code);
+                        }
+                    });
+                    console.log(`[LocationCapture] Found ${verifiedCodes.size} verified locations to exclude`);
+                }
+            } catch (vError) {
+                console.warn("[LocationCapture] Failed to fetch verified locations:", vError);
+                // We continue even if this fails, just won't filter
+            }
+
+            // Filter customers to exclude verified ones
+            const filteredCustomersData = customersData.filter(c => !verifiedCodes.has(c.code));
+            console.log(`[LocationCapture] Showing ${filteredCustomersData.length} customers (Excluded ${customersData.length - filteredCustomersData.length})`);
+
+            // Extract Areas from filtered data
+            const areaSet = new Set(filteredCustomersData.map(c => c.area).filter(a => a && a.trim() !== ""));
+            const areaList = ["All", ...Array.from(areaSet).sort()];
+            setAreas(areaList);
 
             // 3. Get Local Locations (to show captured status)
             await dbService.init();
@@ -112,8 +195,8 @@ export default function LocationCaptureScreen() {
             const capturedSet = new Set(locations.map(l => l.customer_code));
             setCapturedCustomers(capturedSet);
 
-            setCustomers(allCustomers);
-            setFiltered(allCustomers);
+            setAllCustomers(filteredCustomersData);
+            setFilteredCustomers(filteredCustomersData);
 
         } catch (error) {
             console.error("Error loading data:", error);
@@ -123,7 +206,27 @@ export default function LocationCaptureScreen() {
         }
     };
 
-    const openMapForCustomer = async (customer) => {
+    const handleProceed = () => {
+        if (!selectedCustomerCode) {
+            Alert.alert("Selection Required", "Please select a customer to proceed.");
+            return;
+        }
+        setStep(2);
+    };
+
+    const handleReset = () => {
+        setStep(1);
+        // Optional: Keep selection or clear it? keeping it is usually friendlier.
+    };
+
+    const getSelectedCustomerDetails = () => {
+        return allCustomers.find(c => c.code === selectedCustomerCode);
+    };
+
+    const openMapForCustomer = async () => {
+        const customer = getSelectedCustomerDetails();
+        if (!customer) return;
+
         try {
             setCapturing(true);
 
@@ -156,6 +259,29 @@ export default function LocationCaptureScreen() {
                 throw new Error('Invalid coordinates');
             }
 
+            // Reverse Geocoding
+            try {
+                setCapturedAddress("Fetching address...");
+                const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+                if (reverseGeocode && reverseGeocode.length > 0) {
+                    const address = reverseGeocode[0];
+                    // Construct a readable address string
+                    const parts = [
+                        address.street,
+                        address.district,
+                        address.city,
+                        address.subregion,
+                        address.region
+                    ].filter(p => p); // Filter out null/undefined
+                    setCapturedAddress(parts.join(', '));
+                } else {
+                    setCapturedAddress("Address not found");
+                }
+            } catch (geocodeError) {
+                console.warn("Reverse geocoding failed:", geocodeError);
+                setCapturedAddress("Could not fetch address");
+            }
+
             const initialRegion = {
                 latitude,
                 longitude,
@@ -165,7 +291,6 @@ export default function LocationCaptureScreen() {
 
             setCurrentRegion(initialRegion);
             setMarkerCoordinate({ latitude, longitude });
-            setSelectedCustomer(customer);
 
             // Small delay before showing map to ensure state is set
             setTimeout(() => {
@@ -186,6 +311,7 @@ export default function LocationCaptureScreen() {
     };
 
     const handleSaveLocation = async () => {
+        const selectedCustomer = getSelectedCustomerDetails();
         if (!selectedCustomer || !markerCoordinate) {
             Alert.alert("Error", "Missing customer or location data");
             return;
@@ -246,35 +372,25 @@ export default function LocationCaptureScreen() {
 
                 console.log('[LocationCapture] POST Status:', response.status);
                 const responseText = await response.text();
-                console.log('[LocationCapture] POST Response:', responseText);
 
                 if (!response.ok) {
                     console.warn('[LocationCapture] POST Error:', response.status, responseText);
                     throw new Error(`API returned ${response.status}: ${responseText.substring(0, 100)}`);
                 } else {
-                    let result;
-                    try {
-                        result = JSON.parse(responseText);
-                        console.log('[LocationCapture] API Success:', result);
-                        apiSaveSuccess = true;
-                    } catch (e) {
-                        console.error('[LocationCapture] POST JSON Parse Error:', e);
-                        // Still mark as success if status was OK, maybe it's "OK" string
-                        apiSaveSuccess = true;
-                    }
+                    apiSaveSuccess = true;
                 }
             } catch (apiError) {
                 console.error('[LocationCapture] API request failed:', apiError);
 
                 let errorMessage = apiError.message;
                 if (errorMessage === 'Network request failed') {
-                    errorMessage = "Network request failed. Please check your internet connection and verify if the API endpoint is accessible.";
+                    errorMessage = "Network request failed. Check internet connection.";
                 }
 
                 if (!localSaveSuccess) {
                     Alert.alert(
                         "Save Failed",
-                        `Failed to save location both locally and to server. Error: ${errorMessage}`
+                        `Failed to save location. Error: ${errorMessage}`
                     );
                     setCapturing(false);
                     return;
@@ -287,15 +403,15 @@ export default function LocationCaptureScreen() {
             // Show success message
             const successMessage = apiSaveSuccess
                 ? `Location saved successfully for ${selectedCustomer.name}`
-                : `Location saved locally for ${selectedCustomer.name}. Will sync to server when online.`;
+                : `Location saved locally. Will sync when online.`;
 
             Alert.alert("Success", successMessage);
 
             // Close Modal
             setShowMap(false);
-            setSelectedCustomer(null);
             setCurrentRegion(null);
             setMarkerCoordinate(null);
+            setCapturedAddress(null);
 
         } catch (error) {
             console.error("[LocationCapture] Error saving location:", error);
@@ -305,36 +421,146 @@ export default function LocationCaptureScreen() {
         }
     };
 
-    const renderItem = ({ item }) => {
-        const isCaptured = capturedCustomers.has(item.code);
+    const renderSelectionStep = () => {
+        const selectedCustomer = getSelectedCustomerDetails();
 
         return (
-            <View style={styles.card}>
-                <View style={styles.cardContent}>
-                    <Text style={styles.customerName}>{item.name}</Text>
-                    <Text style={styles.customerDetail}>{item.place || "No Place"} • {item.phone || "No Phone"}</Text>
+            <View style={styles.formContainer}>
+                <Text style={styles.stepTitle}>Select Customer</Text>
+
+                {/* Area Selection */}
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Area (Optional)</Text>
+                    <View style={styles.pickerWrapper}>
+                        <Picker
+                            selectedValue={selectedArea}
+                            onValueChange={(itemValue) => setSelectedArea(itemValue)}
+                            style={styles.picker}
+                            dropdownIconColor={Colors.text.primary}
+                        >
+                            {areas.map((area, index) => (
+                                <Picker.Item
+                                    key={index}
+                                    label={area}
+                                    value={area}
+                                    style={styles.pickerItem}
+                                />
+                            ))}
+                        </Picker>
+                    </View>
+                </View>
+
+                {/* Customer Selection - Searchable */}
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Customer</Text>
+                    <TouchableOpacity
+                        style={styles.searchablePickerTrigger}
+                        onPress={() => {
+                            setCustomerSearchQuery("");
+                            setPickerFilteredCustomers(filteredCustomers);
+                            setShowCustomerPicker(true);
+                        }}
+                    >
+                        <Text style={[
+                            styles.searchablePickerText,
+                            !selectedCustomerCode && styles.placeholderText
+                        ]}>
+                            {selectedCustomer ? selectedCustomer.name : "Select a customer..."}
+                        </Text>
+                        <Ionicons name="caret-down" size={12} color={Colors.text.tertiary} />
+                    </TouchableOpacity>
+                    <Text style={styles.helperText}>
+                        {filteredCustomers.length} customers in selected area
+                    </Text>
+                </View>
+
+                <TouchableOpacity
+                    style={[
+                        styles.primaryButton,
+                        (!selectedCustomerCode) && styles.disabledButton
+                    ]}
+                    onPress={handleProceed}
+                    disabled={!selectedCustomerCode}
+                >
+                    <Text style={styles.primaryButtonText}>Proceed</Text>
+                    <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                </TouchableOpacity>
+            </View>
+        );
+    };
+
+    const renderActionStep = () => {
+        const customer = getSelectedCustomerDetails();
+        if (!customer) return null;
+
+        const isCaptured = capturedCustomers.has(customer.code);
+
+        return (
+            <View style={styles.actionContainer}>
+                {/* Customer Card */}
+                <View style={styles.customerCard}>
+                    <View style={styles.customerHeader}>
+                        <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>{customer.name.charAt(0)}</Text>
+                        </View>
+                        <View style={styles.customerInfo}>
+                            <Text style={styles.customerNameBig}>{customer.name}</Text>
+                            <Text style={styles.customerCode}>{customer.code}</Text>
+                        </View>
+                    </View>
+
+                    <View style={styles.divider} />
+
+                    <View style={styles.detailsGrid}>
+                        <View style={styles.detailItem}>
+                            <Ionicons name="location-outline" size={16} color={Colors.text.secondary} />
+                            <Text style={styles.detailText}>{customer.place || "N/A"}</Text>
+                        </View>
+                        <View style={styles.detailItem}>
+                            <Ionicons name="call-outline" size={16} color={Colors.text.secondary} />
+                            <Text style={styles.detailText}>{customer.phone || "N/A"}</Text>
+                        </View>
+                        <View style={styles.detailItem}>
+                            <Ionicons name="map-outline" size={16} color={Colors.text.secondary} />
+                            <Text style={styles.detailText}>{customer.area || "N/A"}</Text>
+                        </View>
+                    </View>
+
                     {isCaptured && (
-                        <View style={styles.capturedBadge}>
-                            <Ionicons name="checkmark-circle" size={12} color={Colors.success.main} />
-                            <Text style={styles.capturedText}>Location Captured</Text>
+                        <View style={styles.statusBadge}>
+                            <Ionicons name="checkmark-circle" size={16} color={Colors.success.main} />
+                            <Text style={styles.statusText}>Location Captured</Text>
                         </View>
                     )}
                 </View>
 
-                <TouchableOpacity
-                    style={[styles.captureButton, isCaptured ? styles.captureButtonUpdate : null]}
-                    onPress={() => openMapForCustomer(item)}
-                    disabled={capturing && selectedCustomer?.code === item.code}
-                >
-                    {capturing && selectedCustomer?.code === item.code ? (
-                        <ActivityIndicator size="small" color="#FFF" />
-                    ) : (
-                        <Ionicons name="location" size={20} color="#FFF" />
-                    )}
-                    <Text style={styles.captureButtonText}>
-                        {isCaptured ? "Update" : "Capture"}
-                    </Text>
-                </TouchableOpacity>
+                {/* Actions */}
+                <View style={styles.buttonStack}>
+                    <TouchableOpacity
+                        style={[styles.captureActionButton, isCaptured && styles.updateActionButton]}
+                        onPress={openMapForCustomer}
+                        disabled={capturing}
+                    >
+                        {capturing ? (
+                            <ActivityIndicator color="#FFF" />
+                        ) : (
+                            <>
+                                <Ionicons name="location" size={24} color="#FFF" />
+                                <Text style={styles.captureActionText}>
+                                    {isCaptured ? "Update Location" : "Capture Location"}
+                                </Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.secondaryButton}
+                        onPress={handleReset}
+                        disabled={capturing}
+                    >
+                        <Text style={styles.secondaryButtonText}>Select Different Customer</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
         );
     };
@@ -343,44 +569,81 @@ export default function LocationCaptureScreen() {
         <LinearGradient colors={Gradients.background} style={styles.container}>
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+                    <TouchableOpacity onPress={() => router.push("/Company")} style={styles.backButton}>
                         <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
                     </TouchableOpacity>
                     <Text style={styles.title}>Location Capture</Text>
                     <View style={{ width: 24 }} />
                 </View>
 
-                <View style={styles.searchContainer}>
-                    <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
-                    <TextInput
-                        placeholder="Search Customer..."
-                        placeholderTextColor={Colors.text.tertiary}
-                        style={styles.searchBox}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                    />
-                </View>
+                <ScrollView contentContainerStyle={styles.content}>
+                    {loading ? (
+                        <View style={styles.center}>
+                            <ActivityIndicator size="large" color={Colors.primary.main} />
+                            <Text style={styles.loadingText}>Loading Data...</Text>
+                        </View>
+                    ) : (
+                        step === 1 ? renderSelectionStep() : renderActionStep()
+                    )}
+                </ScrollView>
 
-                {loading ? (
-                    <View style={styles.center}>
-                        <ActivityIndicator size="large" color={Colors.primary.main} />
-                    </View>
-                ) : (
-                    <FlatList
-                        data={filtered}
-                        keyExtractor={item => item.code}
-                        renderItem={renderItem}
-                        contentContainerStyle={styles.list}
-                        showsVerticalScrollIndicator={false}
-                        ListEmptyComponent={
-                            <View style={styles.center}>
-                                <Text style={styles.emptyText}>No customers found</Text>
+                {/* Searchable Picker Modal */}
+                <Modal
+                    visible={showCustomerPicker}
+                    animationType="slide"
+                    transparent={true}
+                    onRequestClose={() => setShowCustomerPicker(false)}
+                >
+                    <View style={styles.modalOverlay}>
+                        <View style={styles.pickerModalContent}>
+                            <View style={styles.pickerModalHeader}>
+                                <Text style={styles.pickerModalTitle}>Select Customer</Text>
+                                <TouchableOpacity onPress={() => setShowCustomerPicker(false)}>
+                                    <Ionicons name="close-circle" size={24} color={Colors.text.tertiary} />
+                                </TouchableOpacity>
                             </View>
-                        }
-                    />
-                )}
 
-                {/* Location Confirmation Modal */}
+                            <View style={styles.pickerSearchContainer}>
+                                <Ionicons name="search" size={20} color={Colors.text.tertiary} style={{ marginRight: 8 }} />
+                                <TextInput
+                                    style={styles.pickerSearchInput}
+                                    placeholder="Search customer..."
+                                    value={customerSearchQuery}
+                                    onChangeText={setCustomerSearchQuery}
+                                    autoFocus
+                                />
+                            </View>
+
+                            <FlatList
+                                data={pickerFilteredCustomers}
+                                keyExtractor={item => item.code}
+                                style={styles.pickerList}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity
+                                        style={styles.pickerListItem}
+                                        onPress={() => {
+                                            setSelectedCustomerCode(item.code);
+                                            setShowCustomerPicker(false);
+                                        }}
+                                    >
+                                        <View>
+                                            <Text style={styles.pickerListItemText}>{item.name}</Text>
+                                            <Text style={styles.pickerListItemSubText}>{item.place || "N/A"}</Text>
+                                        </View>
+                                        {selectedCustomerCode === item.code && (
+                                            <Ionicons name="checkmark" size={20} color={Colors.primary.main} />
+                                        )}
+                                    </TouchableOpacity>
+                                )}
+                                ListEmptyComponent={
+                                    <Text style={styles.pickerEmptyText}>No customers found</Text>
+                                }
+                            />
+                        </View>
+                    </View>
+                </Modal>
+
+                {/* Map Modal */}
                 <Modal
                     visible={showMap}
                     animationType="slide"
@@ -396,7 +659,7 @@ export default function LocationCaptureScreen() {
                             <View style={styles.modalHeader}>
                                 <Ionicons name="location" size={48} color={Colors.primary.main} />
                                 <Text style={styles.modalTitle}>Confirm Location</Text>
-                                <Text style={styles.modalSubtitle}>{selectedCustomer?.name}</Text>
+                                <Text style={styles.modalSubtitle}>{getSelectedCustomerDetails()?.name}</Text>
                             </View>
 
                             {markerCoordinate ? (
@@ -409,12 +672,12 @@ export default function LocationCaptureScreen() {
                                         <Text style={styles.coordLabel}>Longitude:</Text>
                                         <Text style={styles.coordValue}>{markerCoordinate.longitude.toFixed(6)}</Text>
                                     </View>
-                                    <View style={styles.infoBox}>
-                                        <Ionicons name="information-circle" size={16} color={Colors.primary.main} />
-                                        <Text style={styles.infoBoxText}>
-                                            This location will be saved for {selectedCustomer?.name}
-                                        </Text>
-                                    </View>
+                                    {capturedAddress && (
+                                        <View style={styles.addressContainer}>
+                                            <Ionicons name="map" size={16} color={Colors.primary.main} style={{ marginTop: 2 }} />
+                                            <Text style={styles.addressText}>{capturedAddress}</Text>
+                                        </View>
+                                    )}
                                 </View>
                             ) : (
                                 <ActivityIndicator size="large" color={Colors.primary.main} />
@@ -443,7 +706,7 @@ export default function LocationCaptureScreen() {
                                     ) : (
                                         <>
                                             <Ionicons name="save-outline" size={20} color="#FFF" />
-                                            <Text style={styles.modalButtonText}>Save Location</Text>
+                                            <Text style={styles.modalButtonText}>Save</Text>
                                         </>
                                     )}
                                 </TouchableOpacity>
@@ -451,7 +714,6 @@ export default function LocationCaptureScreen() {
                         </View>
                     </View>
                 </Modal>
-
             </SafeAreaView>
         </LinearGradient>
     );
@@ -480,93 +742,297 @@ const styles = StyleSheet.create({
     backButton: {
         padding: Spacing.xs,
     },
-    searchContainer: {
-        marginHorizontal: Spacing.lg,
-        marginBottom: Spacing.md,
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#FFFFFF',
-        borderRadius: BorderRadius.lg,
-        paddingHorizontal: Spacing.md,
-        borderWidth: 1,
-        borderColor: Colors.border.light,
-        height: 50,
-        ...Shadows.sm,
-    },
-    searchIcon: {
-        marginRight: Spacing.sm,
-    },
-    searchBox: {
-        flex: 1,
-        fontSize: Typography.sizes.base,
-        color: Colors.text.primary,
-    },
-    list: {
+    content: {
         padding: Spacing.lg,
-    },
-    card: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: BorderRadius.lg,
-        padding: Spacing.md,
-        marginBottom: Spacing.md,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderWidth: 1,
-        borderColor: Colors.border.light,
-        ...Shadows.sm,
-    },
-    cardContent: {
-        flex: 1,
-        marginRight: Spacing.md,
-    },
-    customerName: {
-        fontSize: Typography.sizes.base,
-        fontWeight: '600',
-        color: Colors.text.primary,
-        marginBottom: 4,
-    },
-    customerDetail: {
-        fontSize: Typography.sizes.xs,
-        color: Colors.text.secondary,
-    },
-    capturedBadge: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: 6,
-        gap: 4,
-    },
-    capturedText: {
-        fontSize: 10,
-        color: Colors.success.main,
-        fontWeight: '600',
-    },
-    captureButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: Colors.warning.main,
-        paddingHorizontal: Spacing.md,
-        paddingVertical: Spacing.sm,
-        borderRadius: BorderRadius.md,
-        gap: 6,
-    },
-    captureButtonUpdate: {
-        backgroundColor: Colors.success.main,
-    },
-    captureButtonText: {
-        color: '#FFFFFF',
-        fontWeight: '600',
-        fontSize: Typography.sizes.sm,
+        flexGrow: 1,
     },
     center: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        minHeight: 300,
     },
-    emptyText: {
+    loadingText: {
+        marginTop: Spacing.md,
         color: Colors.text.secondary,
         fontSize: Typography.sizes.base,
     },
+    formContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.xl,
+        ...Shadows.md,
+    },
+    stepTitle: {
+        fontSize: Typography.sizes.lg,
+        fontWeight: '700',
+        color: Colors.text.primary,
+        marginBottom: Spacing.xl,
+    },
+    inputGroup: {
+        marginBottom: Spacing.xl,
+    },
+    label: {
+        fontSize: Typography.sizes.sm,
+        fontWeight: '600',
+        color: Colors.text.secondary,
+        marginBottom: Spacing.xs,
+    },
+    pickerWrapper: {
+        backgroundColor: Colors.neutral[50],
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: Colors.border.light,
+        overflow: 'hidden',
+    },
+    picker: {
+        // height: 50,
+        color: Colors.text.primary,
+    },
+    pickerItem: {
+        fontSize: Typography.sizes.base,
+        color: Colors.text.primary,
+    },
+    // Searchable Picker Styles
+    searchablePickerTrigger: {
+        backgroundColor: Colors.neutral[50],
+        borderRadius: BorderRadius.lg,
+        borderWidth: 1,
+        borderColor: Colors.border.light,
+        padding: Spacing.md,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+    },
+    searchablePickerText: {
+        fontSize: Typography.sizes.base,
+        color: Colors.text.primary,
+    },
+    placeholderText: {
+        color: Colors.text.tertiary,
+    },
+    pickerModalContent: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.md,
+        width: '100%',
+        maxWidth: 400,
+        height: '80%', // Taller for list
+        ...Shadows.xl,
+    },
+    pickerModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: Spacing.md,
+        paddingHorizontal: Spacing.xs
+    },
+    pickerModalTitle: {
+        fontSize: Typography.sizes.lg,
+        fontWeight: '700',
+        color: Colors.text.primary,
+    },
+    pickerSearchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.neutral[50],
+        borderRadius: BorderRadius.lg,
+        paddingHorizontal: Spacing.md,
+        height: 48,
+        borderWidth: 1,
+        borderColor: Colors.border.light,
+        marginBottom: Spacing.md,
+    },
+    pickerSearchInput: {
+        flex: 1,
+        fontSize: Typography.sizes.base,
+        color: Colors.text.primary,
+        height: '100%'
+    },
+    pickerList: {
+        flex: 1,
+    },
+    pickerListItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        paddingHorizontal: Spacing.xs,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border.light,
+    },
+    pickerListItemText: {
+        fontSize: Typography.sizes.base,
+        color: Colors.text.primary,
+        fontWeight: '500',
+    },
+    pickerListItemSubText: {
+        fontSize: Typography.sizes.sm,
+        color: Colors.text.secondary,
+        marginTop: 2,
+    },
+    pickerEmptyText: {
+        textAlign: 'center',
+        marginTop: Spacing.lg,
+        color: Colors.text.secondary,
+        fontStyle: 'italic',
+    },
+    addressContainer: {
+        flexDirection: 'row',
+        gap: 8,
+        marginTop: Spacing.md,
+        padding: Spacing.sm,
+        backgroundColor: Colors.primary[50], // Light purple bg
+        borderRadius: BorderRadius.md,
+        width: '100%',
+    },
+    addressText: {
+        flex: 1,
+        fontSize: Typography.sizes.sm,
+        color: Colors.primary[900], // Darker purple text
+        lineHeight: 20,
+    },
+
+    helperText: {
+        fontSize: Typography.sizes.xs,
+        color: Colors.text.tertiary,
+        marginTop: 4,
+        fontStyle: 'italic',
+    },
+    primaryButton: {
+        flexDirection: 'row',
+        backgroundColor: Colors.primary.main,
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginTop: Spacing.sm,
+        ...Shadows.sm,
+    },
+    primaryButtonText: {
+        color: '#FFFFFF',
+        fontSize: Typography.sizes.base,
+        fontWeight: '700',
+    },
+    disabledButton: {
+        backgroundColor: Colors.neutral[300],
+        elevation: 0,
+        shadowOpacity: 0,
+    },
+    actionContainer: {
+        gap: Spacing.xl,
+    },
+    customerCard: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.xl,
+        ...Shadows.lg,
+    },
+    customerHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.md,
+        marginBottom: Spacing.lg,
+    },
+    avatar: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        backgroundColor: Colors.primary[100],
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    avatarText: {
+        fontSize: Typography.sizes['2xl'],
+        fontWeight: '700',
+        color: Colors.primary.main,
+    },
+    customerInfo: {
+        flex: 1,
+    },
+    customerNameBig: {
+        fontSize: Typography.sizes.xl,
+        fontWeight: '700',
+        color: Colors.text.primary,
+        marginBottom: 4,
+    },
+    customerCode: {
+        fontSize: Typography.sizes.sm,
+        color: Colors.text.secondary,
+        backgroundColor: Colors.neutral[100],
+        alignSelf: 'flex-start',
+        paddingHorizontal: Spacing.xs,
+        paddingVertical: 2,
+        borderRadius: BorderRadius.sm,
+    },
+    divider: {
+        height: 1,
+        backgroundColor: Colors.border.light,
+        marginVertical: Spacing.md,
+    },
+    detailsGrid: {
+        gap: Spacing.md,
+    },
+    detailItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+    },
+    detailText: {
+        fontSize: Typography.sizes.base,
+        color: Colors.text.secondary,
+    },
+    statusBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: Spacing.lg,
+        padding: Spacing.sm,
+        backgroundColor: Colors.success[50],
+        borderRadius: BorderRadius.md,
+        alignSelf: 'flex-start',
+    },
+    statusText: {
+        color: Colors.success.main,
+        fontWeight: '600',
+        fontSize: Typography.sizes.sm,
+    },
+    buttonStack: {
+        gap: Spacing.md,
+    },
+    captureActionButton: {
+        flexDirection: 'row',
+        backgroundColor: Colors.warning.main,
+        paddingVertical: Spacing.lg,
+        borderRadius: BorderRadius.xl,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: Spacing.md,
+        ...Shadows.md,
+    },
+    updateActionButton: {
+        backgroundColor: Colors.success.main,
+    },
+    captureActionText: {
+        color: '#FFFFFF',
+        fontSize: Typography.sizes.lg,
+        fontWeight: '700',
+    },
+    secondaryButton: {
+        paddingVertical: Spacing.md,
+        borderRadius: BorderRadius.lg,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: Colors.border.medium,
+    },
+    secondaryButtonText: {
+        color: Colors.text.primary,
+        fontSize: Typography.sizes.base,
+        fontWeight: '600',
+    },
+    // Modal Styles
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
@@ -578,7 +1044,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#FFFFFF',
         borderRadius: BorderRadius.xl,
         padding: Spacing.xl,
-        width: '90%',
+        width: '100%',
         maxWidth: 400,
         ...Shadows.xl,
     },
@@ -596,6 +1062,7 @@ const styles = StyleSheet.create({
         fontSize: Typography.sizes.sm,
         color: Colors.text.secondary,
         marginTop: 4,
+        textAlign: 'center',
     },
     coordinatesContainer: {
         backgroundColor: Colors.neutral[50],
@@ -622,20 +1089,6 @@ const styles = StyleSheet.create({
         color: Colors.primary.main,
         fontFamily: 'monospace',
     },
-    infoBox: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginTop: Spacing.md,
-        padding: Spacing.sm,
-        backgroundColor: Colors.primary[50],
-        borderRadius: BorderRadius.md,
-    },
-    infoBoxText: {
-        flex: 1,
-        fontSize: Typography.sizes.xs,
-        color: Colors.primary[900],
-    },
     modalActions: {
         flexDirection: 'row',
         gap: Spacing.md,
@@ -647,7 +1100,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: Spacing.md,
         borderRadius: BorderRadius.lg,
-        gap: 6,
     },
     modalButtonCancel: {
         backgroundColor: Colors.neutral[100],

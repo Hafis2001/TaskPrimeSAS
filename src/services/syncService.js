@@ -115,7 +115,8 @@ class SyncService {
             const parallelDownloads = await Promise.allSettled([
                 this.downloadCustomers(),
                 this.downloadAreas(),
-                this.downloadSettings()
+                this.downloadSettings(),
+                this.downloadUsers()
             ]);
 
             // Process results
@@ -477,6 +478,57 @@ class SyncService {
             return true;
         } catch (error) {
             console.error('[Sync] Error downloading settings:', error);
+            return false;
+        }
+    }
+
+    async downloadUsers() {
+        try {
+            console.log('[Sync] Downloading users...');
+            const token = await this.getAuthToken();
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+            const response = await fetch(`${API_BASE_URL}/users_api/list/`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                console.warn(`[Sync] Users API returned ${response.status}`);
+                return false;
+            }
+
+            const data = await response.json();
+
+            if (data.success && Array.isArray(data.users)) {
+                // Get current username to find our specific details
+                const currentUsername = await AsyncStorage.getItem('username');
+
+                if (currentUsername) {
+                    const currentUser = data.users.find(u =>
+                        (u.id || '').toUpperCase() === currentUsername.toUpperCase()
+                    );
+
+                    if (currentUser) {
+                        console.log(`[Sync] Updated user details for ${currentUsername}: accountcode=${currentUser.accountcode}`);
+                        // Update accountcode and role if available
+                        await AsyncStorage.setItem('accountcode', currentUser.accountcode || '');
+                        if (currentUser.role) await AsyncStorage.setItem('role', currentUser.role);
+                        if (currentUser.client_id) await AsyncStorage.setItem('client_id', currentUser.client_id);
+                    }
+                }
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('[Sync] Error downloading users:', error);
             return false;
         }
     }

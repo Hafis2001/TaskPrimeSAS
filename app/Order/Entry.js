@@ -38,6 +38,7 @@ export default function EntryScreen() {
   const [selectedPayment, setSelectedPayment] = useState("Cash/Bank");
   const [selectedPriceCode, setSelectedPriceCode] = useState(null); // Code 'S1', 'MR' etc.
   const [selectedPriceName, setSelectedPriceName] = useState(null); // Name 'Sales', 'MRP'
+  const [isCustomerLocked, setIsCustomerLocked] = useState(false); // NEW: Lock selection if account matched
 
   // Modal states
   const [showAreaModal, setShowAreaModal] = useState(false);
@@ -189,6 +190,51 @@ export default function EntryScreen() {
 
       setDebtorsData(filteredDebtors);
 
+      // ---------------------------------------------------------
+      // AUTO-SELECT CUSTOMER LOGIC (Based on Account Code)
+      // ---------------------------------------------------------
+      const accountCode = await AsyncStorage.getItem('accountcode');
+      let finalFilteredDebtors = filteredDebtors;
+      let autoSelected = false;
+
+      console.log(`[Entry] DEBUG: Account Code from Storage: '${accountCode}'`);
+
+      if (accountCode && String(accountCode).trim() !== "") {
+        const normalizedAccountCode = String(accountCode).trim().toUpperCase();
+        console.log(`[Entry] DEBUG: Looking for match with: '${normalizedAccountCode}'`);
+
+        // DEBUG: Print first 5 customer codes
+        filteredDebtors.slice(0, 5).forEach(c =>
+          console.log(`[Entry] DEBUG: Customer Code: '${c.code}', Normalized: '${String(c.code).trim().toUpperCase()}'`)
+        );
+
+        // STRICTER FIND
+        const matchedCustomer = filteredDebtors.find(c =>
+          String(c.code || '').trim().toUpperCase() === normalizedAccountCode
+        );
+
+        if (matchedCustomer) {
+          console.log(`[Entry] Auto-selected LOCKED customer: ${matchedCustomer.name}`);
+          // Restrict list to ONLY this customer
+          finalFilteredDebtors = [matchedCustomer];
+
+          // Trigger selection logic
+          handleSelectCustomer(matchedCustomer);
+          autoSelected = true;
+          setIsCustomerLocked(true); // LOCK THE UI
+        } else {
+          console.log(`[Entry] DEBUG: No match found for account code '${normalizedAccountCode}'`);
+        }
+      } else {
+        console.log('[Entry] DEBUG: No account code found for user.');
+      }
+
+      // Update debtors data if filtered
+      if (autoSelected) {
+        setDebtorsData(finalFilteredDebtors);
+        setFilteredCustomers(finalFilteredDebtors);
+      }
+
       // Load areas from database (from API)
       let areasFromDb = await dbService.getAreas();
       console.log(`[Entry] Loaded ${areasFromDb?.length || 0} areas from database`);
@@ -328,38 +374,44 @@ export default function EntryScreen() {
             </View>
           )}
 
-          {/* Area Selection */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>
-              Filter by Area
-            </Text>
-            <TouchableOpacity
-              style={styles.inputBox}
-              onPress={() => setShowAreaModal(true)}
-            >
-              <Ionicons name="location" size={20} color={selectedArea ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
-              <Text style={[styles.inputText, !selectedArea && styles.placeholderText]}>
-                {selectedArea || "Select Area"}
+          {/* Area Selection - Hidden if customer locked */}
+          {!isCustomerLocked && (
+            <View style={styles.formSection}>
+              <Text style={styles.label}>
+                Filter by Area
               </Text>
-              <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                style={styles.inputBox}
+                onPress={() => setShowAreaModal(true)}
+              >
+                <Ionicons name="location" size={20} color={selectedArea ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
+                <Text style={[styles.inputText, !selectedArea && styles.placeholderText]}>
+                  {selectedArea || "Select Area"}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Customer Selection */}
           <View style={styles.formSection}>
             <Text style={styles.label}>
-              Select Customer <Text style={styles.required}>*</Text>
+              {isCustomerLocked ? "Ordering For" : <>Select Customer <Text style={styles.required}>*</Text></>}
             </Text>
-            <TouchableOpacity
-              style={styles.inputBox}
-              onPress={() => setShowCustomerModal(true)}
-            >
-              <Ionicons name="person" size={20} color={selectedCustomer ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
-              <Text style={[styles.inputText, !selectedCustomer && styles.placeholderText]}>
-                {selectedCustomer ? selectedCustomer.name : "Select Customer"}
-              </Text>
-              <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
-            </TouchableOpacity>
+
+            {/* Show dropdown ONLY if NOT locked */}
+            {!isCustomerLocked && (
+              <TouchableOpacity
+                style={styles.inputBox}
+                onPress={() => setShowCustomerModal(true)}
+              >
+                <Ionicons name="person" size={20} color={selectedCustomer ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
+                <Text style={[styles.inputText, !selectedCustomer && styles.placeholderText]}>
+                  {selectedCustomer ? selectedCustomer.name : "Select Customer"}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
+              </TouchableOpacity>
+            )}
             {selectedCustomer && (
               <View style={styles.selectedCustomerCard}>
                 <View style={styles.customerAvatar}>

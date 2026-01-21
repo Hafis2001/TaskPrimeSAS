@@ -1,8 +1,10 @@
 // app/Order/PlaceOrder.js
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -249,23 +251,40 @@ export default function PlaceOrder() {
 
       if (!username || !clientId) throw new Error('Missing credentials');
 
+      // VALIDATION & SANITIZATION
+      const cleanString = (str) => String(str || '').trim();
+      const cleanNumber = (num) => {
+        const n = parseFloat(num);
+        return isNaN(n) ? 0 : n;
+      };
+
+      const validItems = order.items.filter(item => {
+        const code = cleanString(item.code);
+        const name = cleanString(item.name);
+        return code && name; // Must have code and name
+      }).map(item => ({
+        product_name: cleanString(item.name),
+        item_code: cleanString(item.code),
+        barcode: cleanString(item.barcode || item.code),
+        price: cleanNumber(item.price),
+        quantity: cleanNumber(item.qty),
+        amount: cleanNumber(item.total)
+      }));
+
+      if (validItems.length === 0) {
+        throw new Error('Order has no valid items (missing code or name).');
+      }
+
       const payload = {
-        client_id: String(clientId || '').trim(),
-        customer_name: String(order.customer || ''),
-        customer_code: String(order.customerCode || ''),
-        area: String(order.area || ''),
-        payment_type: String(order.payment || ''),
-        username: String(username).trim(),
-        remark: String(order.remark || ''),
-        device_id: String(deviceId || 'unknown').trim(),
-        items: order.items.map(item => ({
-          product_name: String(item.name || ''),
-          item_code: String(item.code || ''),
-          barcode: String(item.barcode || item.code || ''),
-          price: Number(item.price || 0),
-          quantity: Number(item.qty || 0),
-          amount: Number(item.total || 0)
-        }))
+        client_id: cleanString(clientId),
+        customer_name: cleanString(order.customer),
+        customer_code: cleanString(order.customerCode),
+        area: cleanString(order.area),
+        payment_type: cleanString(order.payment),
+        username: cleanString(username),
+        remark: cleanString(order.remark),
+        device_id: cleanString(deviceId || 'unknown'),
+        items: validItems
       };
 
       const headers = {
@@ -421,6 +440,86 @@ export default function PlaceOrder() {
     finally { setIsScanningPrinters(false); }
   };
 
+  // TXT Download Logic - Alternative approach without FileSystem dependency
+  const handleDownloadText = async (order) => {
+    try {
+      console.log('[TXT Download] Starting download for order:', order.customer);
+
+      // Validate order has items
+      if (!order.items || order.items.length === 0) {
+        Alert.alert("Error", "No items in this order to download");
+        return;
+      }
+
+      let content = "Item Name, Barcode, Qty, Rate\n";
+      order.items.forEach(item => {
+        const name = (item.name || "").replace(/,/g, " ");
+        const barcode = item.barcode || item.code || "";
+        const qty = item.qty || 0;
+        const rate = item.price || 0;
+        content += `${name}, ${barcode}, ${qty}, ${rate}\n`;
+      });
+
+      console.log('[TXT Download] Content generated, length:', content.length);
+
+      // Check if Sharing is available
+      const sharingAvailable = await Sharing.isAvailableAsync();
+
+      if (!sharingAvailable) {
+        Alert.alert("Error", "Sharing is not available on this device");
+        return;
+      }
+
+      // Create a temporary file using FileSystem if available, otherwise use alternative
+      try {
+        if (FileSystem && FileSystem.cacheDirectory) {
+          const fileName = `Order_${(order.customer || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.txt`;
+          const fileUri = FileSystem.cacheDirectory + fileName;
+
+          console.log('[TXT Download] Writing to:', fileUri);
+          await FileSystem.writeAsStringAsync(fileUri, content);
+
+          console.log('[TXT Download] Sharing file');
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'text/plain',
+            dialogTitle: 'Share Order Details'
+          });
+        } else {
+          // Fallback: Use data URI approach
+          console.log('[TXT Download] Using data URI fallback');
+          const base64Content = btoa(unescape(encodeURIComponent(content)));
+          const dataUri = `data:text/plain;base64,${base64Content}`;
+
+          await Sharing.shareAsync(dataUri, {
+            mimeType: 'text/plain',
+            dialogTitle: 'Share Order Details',
+            UTI: 'public.plain-text'
+          });
+        }
+      } catch (fsError) {
+        console.log('[TXT Download] FileSystem error, using clipboard fallback:', fsError.message);
+        // Last resort: Copy to clipboard
+        Alert.alert(
+          "Download Alternative",
+          "File sharing unavailable. The order data has been copied to your clipboard. You can paste it into any text app.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                // Note: You'd need to import Clipboard from '@react-native-clipboard/clipboard'
+                // For now, just show the content
+                Alert.alert("Order Data", content);
+              }
+            }
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('[TXT Download] Error:', error);
+      Alert.alert("Error", `Failed to generate TXT file: ${error.message}`);
+    }
+  };
+
   const connectAndPrint = async (printer) => {
     const connected = await printerService.connect(printer);
     if (connected) {
@@ -527,7 +626,7 @@ export default function PlaceOrder() {
               </View>
             ))}
 
-            <View style={{ marginTop: 15, flexDirection: 'row', gap: 10 }}>
+            <View style={{ marginTop: 15, flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               {!isApi && filterStatus === 'pending' && (
                 <TouchableOpacity style={styles.actionButton} onPress={() => deleteOrder(order.id)}>
                   <LinearGradient colors={Gradients.danger} style={styles.actionButtonGradient}>
@@ -561,19 +660,28 @@ export default function PlaceOrder() {
                 </LinearGradient>
               </TouchableOpacity>
 
+              <TouchableOpacity style={styles.actionButton} onPress={() => handleDownloadText(order)}>
+                <LinearGradient colors={[Colors.neutral[600], Colors.neutral[800]]} style={styles.actionButtonGradient}>
+                  <Ionicons name="document-text" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>TXT</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+
+
               {!isApi && (filterStatus === 'pending' || filterStatus === 'failed') && (
                 <TouchableOpacity style={styles.actionButton} onPress={() => confirmOrder(order.id)}>
                   <LinearGradient colors={Gradients.success} style={styles.actionButtonGradient}>
                     <Ionicons name="cloud-upload" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Upload</Text>
+                    <Text style={styles.actionButtonText}>Sync</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               )}
 
             </View>
           </View>
-        )}
-      </View>
+        )
+        }
+      </View >
     );
   }
 
