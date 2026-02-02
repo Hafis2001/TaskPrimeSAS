@@ -260,31 +260,57 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         return false;
       }
 
-      if (!data.customers || data.customers.length === 0) {
-        console.log("No customers found");
+      if ((!data.customers || data.customers.length === 0) && (!data.demo_licenses || data.demo_licenses.length === 0)) {
+        console.log("No customers or demo licenses found");
         return false;
       }
 
       // Check if this device is registered under any customer
-      for (const customer of data.customers) {
-        if (customer.registered_devices && customer.registered_devices.length > 0) {
-          const deviceFound = customer.registered_devices.some(
-            device => device.device_id === deviceIdToCheck
-          );
+      if (data.customers) {
+        for (const customer of data.customers) {
+          if (customer.registered_devices && customer.registered_devices.length > 0) {
+            const deviceFound = customer.registered_devices.some(
+              device => device.device_id === deviceIdToCheck
+            );
 
-          if (deviceFound) {
-            console.log("✅ Device found in customer:", customer.customer_name);
+            if (deviceFound) {
+              console.log("✅ Device found in customer:", customer.customer_name);
 
-            // Store customer info for later use
-            await AsyncStorage.setItem("licenseActivated", "true");
-            await AsyncStorage.setItem("licenseKey", customer.license_key);
-            await AsyncStorage.setItem("deviceId", deviceIdToCheck);
-            await AsyncStorage.setItem("customerName", customer.customer_name);
-            await AsyncStorage.setItem("projectName", data.project_name);
-            await AsyncStorage.setItem("clientId", customer.client_id);
+              // Store customer info for later use
+              await AsyncStorage.setItem("licenseActivated", "true");
+              await AsyncStorage.setItem("licenseKey", customer.license_key);
+              await AsyncStorage.setItem("deviceId", deviceIdToCheck);
+              await AsyncStorage.setItem("customerName", customer.customer_name);
+              await AsyncStorage.setItem("projectName", data.project_name);
+              await AsyncStorage.setItem("clientId", customer.client_id);
+              await AsyncStorage.removeItem("isDemo"); // Clear demo flag if found in normal customers
 
-            console.log("✅ Stored client_id:", customer.client_id);
+              console.log("✅ Stored client_id:", customer.client_id);
 
+              return true;
+            }
+          }
+        }
+      }
+
+      // Check if device is registered in demo licenses (Logic: Demo licenses might just be keyed by Client ID/License Key)
+      // Since demo license logic usually implies a temporary state, we might not have a 'registered_devices' array in the same way,
+      // OR the user might just be re-activating a demo. 
+      // Based on the user request: "if the user is enter the demo license it need to show a alert"
+      // This implies checking registration might fail for demo initially if we don't track it, 
+      // but let's assume if they are already active as demo we should let them in.
+      // For now, simpler to just return false here and let them re-activate via handleActivate if not found in standard list,
+      // UNLESS we want silently auto-login for demo too.
+      // Let's check stored 'isDemo' to confirm.
+
+      const storedIsDemo = await AsyncStorage.getItem("isDemo");
+      if (storedIsDemo === "true") {
+        // Re-validate against demo list
+        if (data.demo_licenses) {
+          const storedKey = await AsyncStorage.getItem("licenseKey");
+          const demoMatch = data.demo_licenses.find(d => d.demo_license === storedKey);
+          if (demoMatch) {
+            console.log("✅ Device found in demo licenses");
             return true;
           }
         }
@@ -340,19 +366,38 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
       }
 
       // Check if customer exists
-      if (!checkData.customers || checkData.customers.length === 0) {
-        Alert.alert(
-          "Invalid License",
-          "No customer found for this license"
+      let customer = null;
+      let isDemo = false;
+
+      // 1. Check Normal Customers
+      if (checkData.customers && checkData.customers.length > 0) {
+        customer = checkData.customers.find(
+          c => c.license_key === licenseKey.trim()
         );
-        setLoading(false);
-        return;
       }
 
-      // Find the customer with matching license key
-      const customer = checkData.customers.find(
-        c => c.license_key === licenseKey.trim()
-      );
+      // 2. Check Demo Licenses
+      if (!customer && checkData.demo_licenses && checkData.demo_licenses.length > 0) {
+        const demoMatch = checkData.demo_licenses.find(
+          d => d.demo_license === licenseKey.trim()
+        );
+
+        if (demoMatch) {
+          isDemo = true;
+          // Map demo object to customer-like object for consistency
+          customer = {
+            customer_name: demoMatch.company,
+            client_id: demoMatch.client_id,
+            license_key: demoMatch.demo_license,
+            license_summary: {
+              registered_devices: 0, // Demos might not track this, or need separate logic. Assuming 0 for now or handled by API.
+              max_devices: demoMatch.demo_login_limit || 1
+            },
+            registered_devices: [], // Assuming empty for new demo checks
+            expires_at: demoMatch.expires_at
+          };
+        }
+      }
 
       if (!customer) {
         Alert.alert(
@@ -362,6 +407,25 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         setLoading(false);
         return;
       }
+
+      // IF DEMO: Show alert
+      if (isDemo) {
+        let daysRemaining = "Unknown";
+        if (customer.expires_at) {
+          const now = new Date();
+          const expiry = new Date(customer.expires_at);
+          const diffTime = expiry - now;
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          daysRemaining = diffDays > 0 ? diffDays : 0;
+        }
+
+        Alert.alert(
+          "Demo License",
+          `You are now in demo mode. Your license will expire on ${customer.expires_at} (${daysRemaining} days remaining)`,
+          [{ text: "OK" }]
+        );
+      }
+
 
       // Check if this device is already registered for this license
       const isAlreadyRegistered = customer.registered_devices?.some(
@@ -376,6 +440,14 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         await AsyncStorage.setItem("customerName", customer.customer_name);
         await AsyncStorage.setItem("projectName", checkData.project_name);
         await AsyncStorage.setItem("clientId", customer.client_id);
+
+        if (isDemo) {
+          await AsyncStorage.setItem("isDemo", "true");
+          await AsyncStorage.setItem("demoExpiresAt", customer.expires_at);
+        } else {
+          await AsyncStorage.removeItem("isDemo");
+          await AsyncStorage.removeItem("demoExpiresAt");
+        }
 
         console.log("✅ Device already registered");
         console.log("✅ Stored client_id:", customer.client_id);
@@ -396,6 +468,10 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
 
       // Check if device limit reached
       if (customer.license_summary.registered_devices >= customer.license_summary.max_devices) {
+        // Allow if it is the same device re-registering (already checked above in registered_devices), 
+        // but if we are here, it means device ID wasn't found in registered_devices (or array is empty).
+
+        // For DEMO: If limit is 1, and someone else used it, we block.
         Alert.alert(
           "License Limit Reached",
           `Maximum devices (${customer.license_summary.max_devices}) already registered for this license`
@@ -454,6 +530,14 @@ export default function LicenseActivationScreen({ onActivationSuccess }) {
         await AsyncStorage.setItem("customerName", customer.customer_name);
         await AsyncStorage.setItem("projectName", checkData.project_name);
         await AsyncStorage.setItem("clientId", customer.client_id);
+
+        if (isDemo) {
+          await AsyncStorage.setItem("isDemo", "true");
+          await AsyncStorage.setItem("demoExpiresAt", customer.expires_at || "");
+        } else {
+          await AsyncStorage.removeItem("isDemo");
+          await AsyncStorage.removeItem("demoExpiresAt");
+        }
 
         console.log("✅ Device registered successfully!");
         console.log("✅ Stored client_id:", customer.client_id);

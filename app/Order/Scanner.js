@@ -41,7 +41,7 @@ export default function Scanner() {
 
     Vibration.vibrate(100);
 
-    router.push({
+    router.replace({
       pathname: "/Order/OrderDetails",
       params: { ...params, scanned: String(data) },
     });

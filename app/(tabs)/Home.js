@@ -1,9 +1,10 @@
 // app/(tabs)/Home.js
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -27,6 +28,11 @@ const Home = ({ navigation }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const [username, setUsername] = useState('User');
+
+  // Demo Banner State
+  const [isDemo, setIsDemo] = useState(false);
+  const [expiresAt, setExpiresAt] = useState("");
+  const [daysRemaining, setDaysRemaining] = useState(0);
 
   // Settings Modal State
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
@@ -63,6 +69,22 @@ const Home = ({ navigation }) => {
       }),
     ]).start();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      const checkDemoStatus = async () => {
+        try {
+          const demoStatus = await AsyncStorage.getItem("isDemo");
+          if (demoStatus === "true") {
+            setIsDemo(true);
+          } else {
+            setIsDemo(false);
+          }
+        } catch (e) { }
+      };
+      checkDemoStatus();
+    }, [])
+  );
 
   const quickActions = [
     {
@@ -106,6 +128,14 @@ const Home = ({ navigation }) => {
       shadowColor: Colors.primary.main,
     },
     {
+      icon: 'finger-print',
+      title: 'PUNCH IN',
+      description: 'Mark your attendance',
+      onPress: () => router.push("/Punch-In"),
+      gradient: Gradients.success,
+      shadowColor: Colors.success.main,
+    },
+    {
       icon: 'settings-outline',
       title: 'SETTINGS',
       description: 'Printer configuration',
@@ -121,13 +151,21 @@ const Home = ({ navigation }) => {
 
   const loadPrinterSettings = async () => {
     // We can rely on printerService to load its own settings, but we need to know the current value for UI
-    await printerService.loadSettings();
-    setPaperSize(printerService.printerWidthMM);
+    try {
+      await printerService.loadSettings();
+      setPaperSize(printerService.printerWidthMM);
+    } catch (e) {
+      console.log("Printer settings load error", e);
+    }
   };
 
   const handlePaperSizeSelection = async (size) => {
     setPaperSize(size);
-    await printerService.setPaperWidth(size);
+    try {
+      await printerService.setPaperWidth(size);
+    } catch (e) {
+      console.log("Printer paper size set error", e);
+    }
   };
 
   const getCurrentDate = () => {
@@ -144,6 +182,8 @@ const Home = ({ navigation }) => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
+
+
           {/* Header Section */}
           <Animated.View
             style={[
@@ -157,6 +197,9 @@ const Home = ({ navigation }) => {
             <View style={styles.headerRow}>
               <View style={styles.headerLeft}>
                 <Text style={styles.greeting}>Hello, {username}</Text>
+                {isDemo && (
+                  <Text style={[styles.date, { color: '#FF9800', fontWeight: 'bold' }]}>DEMO LICENSE</Text>
+                )}
                 <Text style={styles.date}>{getCurrentDate()}</Text>
               </View>
               <View>
@@ -164,9 +207,6 @@ const Home = ({ navigation }) => {
               </View>
             </View>
           </Animated.View>
-
-          {/* Download/Sync Button */}
-
 
           {/* Quick Actions Grid */}
           <Animated.View
@@ -357,11 +397,15 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  scrollView: {
+    flex: 1,
+  },
   scrollContent: {
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.xl,
+    paddingTop: Spacing.md,
     paddingBottom: Spacing['3xl'],
   },
+
   headerSection: {
     marginBottom: Spacing.xl,
   },

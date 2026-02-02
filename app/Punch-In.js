@@ -62,6 +62,10 @@ export default function PunchInScreen() {
   const [customerSearchQuery, setCustomerSearchQuery] = useState("");
   const [pickerFilteredCustomers, setPickerFilteredCustomers] = useState([]);
 
+  // Location Log State
+  const [rawLocations, setRawLocations] = useState([]);
+  const [showLocationLog, setShowLocationLog] = useState(false);
+
   // Punch/Location State
   const [loading, setLoading] = useState(true);
   const [currentLocation, setCurrentLocation] = useState(null);
@@ -74,6 +78,7 @@ export default function PunchInScreen() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [notes, setNotes] = useState("");
   const [punching, setPunching] = useState(false);
+  const [loggedInUser, setLoggedInUser] = useState("");
 
   useFocusEffect(
     useCallback(() => {
@@ -93,22 +98,11 @@ export default function PunchInScreen() {
     }
   }, [punchStatus?.is_punched_in]);
 
-  // Filter customers when Area changes
+  // Sort customers alphabetically
   useEffect(() => {
-    let filtered = allCustomers;
-    if (selectedArea !== "All") {
-      filtered = allCustomers.filter(c => c.place === selectedArea);
-    }
-    // Sort alphabetically
-    filtered.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    setFilteredCustomers(filtered);
-
-    // Reset selected customer if not in new list
-    if (selectedCustomerCode) {
-      const exists = filtered.find(c => c.code === selectedCustomerCode);
-      if (!exists) setSelectedCustomerCode("");
-    }
-  }, [selectedArea, allCustomers]);
+    const sorted = [...allCustomers].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    setFilteredCustomers(sorted);
+  }, [allCustomers]);
 
   // Filter customers for Picker Search
   useEffect(() => {
@@ -171,7 +165,32 @@ export default function PunchInScreen() {
         return;
       }
 
-      console.log("[PunchIn] Fetching shop locations...");
+      console.log("[PunchIn] Fetching areas and shop locations...");
+      const username = await AsyncStorage.getItem("username");
+      if (username) setLoggedInUser(username);
+
+      let fetchedAreas = ["All"];
+      try {
+        const areaResponse = await fetch('https://tasksas.com/api/area/list/', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (areaResponse.ok) {
+          const areaData = await areaResponse.json();
+          console.log("[PunchIn] Areas API Result:", areaData);
+          if (areaData.success && Array.isArray(areaData.areas)) {
+            fetchedAreas = ["All", ...areaData.areas.sort()];
+          }
+        }
+      } catch (areaErr) {
+        console.error("[PunchIn] Error fetching areas:", areaErr);
+      }
+      setAreas(fetchedAreas);
+
       const response = await fetch('https://tasksas.com/api/shop-location/table/', {
         method: 'GET',
         headers: {
@@ -181,43 +200,56 @@ export default function PunchInScreen() {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(`Shop Location API error! status: ${response.status}`);
       }
 
       const result = await response.json();
-
       let firms = [];
       if (Array.isArray(result)) {
         firms = result;
       } else if (result.data && Array.isArray(result.data)) {
         firms = result.data;
       } else if (result.firms && Array.isArray(result.firms)) {
-        firms = result.firms; // Fallback for old format just in case
-      } else {
-        console.warn("Unexpected API response format", result);
-        // Attempt to use result as is if it looks like an object but not array (unlikely for list)
+        firms = result.firms;
       }
 
-      console.log(`[PunchIn] Fetched ${firms.length} locations (total)`);
+      console.log(`[PunchIn] Fetched ${firms.length} shop locations for log`);
+      setRawLocations(firms);
 
-      // Filter for Verified only
-      const verifiedFirms = firms.filter(f => f.status === 'verified');
-      console.log(`[PunchIn] Filtered ${verifiedFirms.length} VERIFIED locations`);
+      // Fetch Debtors for Selection List
+      console.log("[PunchIn] Fetching debtors for selection...");
+      const debtorsResp = await fetch('https://tasksas.com/api/debtors/get-debtors/', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
 
-      // MAPPING: firm_code -> code, storeName -> name, storeLocation -> place
-      const mappedCustomers = verifiedFirms.map(shop => ({
-        code: shop.firm_code || shop.id?.toString(),
-        name: shop.storeName || shop.firm_name || "Unknown Store",
-        place: shop.storeLocation || shop.area || '',
-        latitude: parseFloat(shop.latitude) || 0,
-        longitude: parseFloat(shop.longitude) || 0,
-        client_id: shop.client_id
+      if (!debtorsResp.ok) {
+        throw new Error(`Debtors API error! status: ${debtorsResp.status}`);
+      }
+
+      const debtorsData = await debtorsResp.json();
+      let debtors = [];
+      if (Array.isArray(debtorsData)) {
+        debtors = debtorsData;
+      } else if (debtorsData.data && Array.isArray(debtorsData.data)) {
+        debtors = debtorsData.data;
+      } else if (debtorsData.debtors && Array.isArray(debtorsData.debtors)) {
+        debtors = debtorsData.debtors;
+      }
+
+      console.log(`[PunchIn] Fetched ${debtors.length} debtors for selection`);
+
+      // MAPPING Debtors: code, name, place, balance, client_id
+      const mappedCustomers = debtors.map(debtor => ({
+        code: debtor.code || debtor.id?.toString(),
+        name: debtor.name || "Unknown Debtor",
+        place: debtor.place || debtor.area || '',
+        balance: debtor.balance || 0,
+        client_id: debtor.client_id
       }));
-
-      // Extract Areas
-      const areaSet = new Set(mappedCustomers.map(c => c.place).filter(a => a && a.trim() !== ""));
-      const areaList = ["All", ...Array.from(areaSet).sort()];
-      setAreas(areaList);
 
       setAllCustomers(mappedCustomers);
       setFilteredCustomers(mappedCustomers);
@@ -232,20 +264,68 @@ export default function PunchInScreen() {
   const getCurrentLocation = async () => {
     try {
       setRefreshingLocation(true);
+
+      // 1. Check Permissions
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Location permission is required for Punch In.');
+        Alert.alert('Permission denied', 'Location permission is required for Punch In/Out.');
         setRefreshingLocation(false);
         return;
       }
 
-      let location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High
-      });
-      setCurrentLocation(location.coords);
+      // 2. Check Device Services (GPS enabled?)
+      const providerStatus = await Location.getProviderStatusAsync();
+      if (!providerStatus.locationServicesEnabled) {
+        Alert.alert(
+          "Location Disabled",
+          "Please enable Location Services (GPS) on your device to proceed.",
+          [{ text: "OK" }]
+        );
+        setRefreshingLocation(false);
+        return;
+      }
+
+      // 3. Attempt High Accuracy Fetch
+      try {
+        let location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+          timeout: 10000 // Increased to 10 seconds
+        });
+        setCurrentLocation(location.coords);
+      } catch (highAccuracyError) {
+        console.warn("High accuracy location failed, retrying with balanced...", highAccuracyError);
+
+        // 4. Fallback to Balanced Accuracy
+        try {
+          let location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+            timeout: 10000 // Increased to 10 seconds
+          });
+          setCurrentLocation(location.coords);
+        } catch (balancedError) {
+          console.warn("Balanced location failed, trying last known...", balancedError);
+
+          // 5. Final Fallback: Last Known Position
+          try {
+            let lastLocation = await Location.getLastKnownPositionAsync();
+            if (lastLocation) {
+              setCurrentLocation(lastLocation.coords);
+              Alert.alert("Location Warning", "Using last known location. Some features may be less accurate.");
+            } else {
+              throw new Error("No last known location available.");
+            }
+          } catch (lastKnownError) {
+            console.error("All location fetch attempts failed:", lastKnownError);
+            Alert.alert(
+              "Location Error",
+              "Could not determine your location. Please ensure GPS is ON and you have a clear view of the sky, then try again."
+            );
+          }
+        }
+      }
     } catch (error) {
       console.error("Error getting current location:", error);
-      Alert.alert("Location Error", "Could not fetch current location.");
+      Alert.alert("Location Error", "An unexpected error occurred while fetching location.");
     } finally {
       setRefreshingLocation(false);
     }
@@ -311,7 +391,7 @@ export default function PunchInScreen() {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        cameraType: ImagePicker.CameraType.front,
+        cameraType: 'front',
         allowsEditing: false,
         quality: 0.5,
       });
@@ -504,7 +584,6 @@ export default function PunchInScreen() {
             <Ionicons name="chevron-forward" size={20} color={Colors.primary.main} />
           </TouchableOpacity>
         )}
-
         {/* Area Selection */}
         <View style={styles.inputGroup}>
           <Text style={styles.label}>Area (Optional)</Text>
@@ -547,9 +626,12 @@ export default function PunchInScreen() {
             <Ionicons name="caret-down" size={12} color={Colors.text.tertiary} />
           </TouchableOpacity>
           <Text style={styles.helperText}>
-            {filteredCustomers.length} customers in selected area
+            {filteredCustomers.length} total customers
           </Text>
         </View>
+
+        {/* Location Verification Log Card */}
+        {renderLocationLogCard()}
 
         <TouchableOpacity
           style={[
@@ -647,20 +729,33 @@ export default function PunchInScreen() {
         {/* Actions */}
         <View style={styles.buttonStack}>
           {isActiveContext ? (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.punchOutButton]}
-              onPress={handlePunchOut}
-              disabled={punching}
-            >
-              {punching ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <>
-                  <Ionicons name="log-out-outline" size={24} color="#FFF" />
-                  <Text style={styles.actionButtonText}>Punch Out</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            <>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.punchOutButton]}
+                onPress={handlePunchOut}
+                disabled={punching}
+              >
+                {punching ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <>
+                    <Ionicons name="log-out-outline" size={24} color="#FFF" />
+                    <Text style={styles.actionButtonText}>Punch Out</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.takeOrderButton]}
+                onPress={() => router.push({
+                  pathname: "/Order/Entry",
+                  params: { preselectedCustomerCode: customer.code }
+                })}
+              >
+                <Ionicons name="cart-outline" size={24} color="#FFF" />
+                <Text style={styles.actionButtonText}>Take Order</Text>
+              </TouchableOpacity>
+            </>
           ) : (
             <TouchableOpacity
               style={[
@@ -694,11 +789,60 @@ export default function PunchInScreen() {
     );
   };
 
+  const renderLocationLogCard = () => {
+    // Filter log by logged in user
+    const userLocations = rawLocations.filter(l =>
+      (l.status === 'verified' || l.status === 'pending') &&
+      l.taskDoneBy === loggedInUser
+    );
+
+    const verifiedCount = userLocations.filter(l => l.status === 'verified').length;
+    const pendingCount = userLocations.filter(l => l.status === 'pending').length;
+
+    return (
+      <TouchableOpacity
+        style={styles.logCard}
+        onPress={() => setShowLocationLog(true)}
+        activeOpacity={0.7}
+      >
+        <LinearGradient
+          colors={['#fff', '#f8f9fa']}
+          style={styles.logCardGradient}
+        >
+          <View style={styles.logCardHeader}>
+            <View style={styles.logIconContainer}>
+              <Ionicons name="shield-checkmark" size={24} color={Colors.primary.main} />
+            </View>
+            <View style={styles.logCardContent}>
+              <Text style={styles.logCardTitle}>Location Verification Log</Text>
+              <Text style={styles.logCardSubtitle}>Check status of shop locations</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={Colors.text.tertiary} />
+          </View>
+
+          <View style={styles.logStatsRow}>
+            <View style={styles.logStatItem}>
+              <Text style={styles.logStatValue}>{verifiedCount}</Text>
+              <Text style={styles.logStatLabel}>Verified</Text>
+              <View style={[styles.statusDot, { backgroundColor: Colors.success.main }]} />
+            </View>
+            <View style={styles.logStatDivider} />
+            <View style={styles.logStatItem}>
+              <Text style={styles.logStatValue}>{pendingCount}</Text>
+              <Text style={styles.logStatLabel}>Pending</Text>
+              <View style={[styles.statusDot, { backgroundColor: Colors.warning.main }]} />
+            </View>
+          </View>
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <LinearGradient colors={Gradients.background} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.push("/Company")} style={styles.backButton}>
+          <TouchableOpacity onPress={() => router.push("/Home")} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
           </TouchableOpacity>
           <Text style={styles.title}>PUNCH-IN MANAGEMENT</Text>
@@ -739,7 +883,7 @@ export default function PunchInScreen() {
                   placeholder="Search customer..."
                   value={customerSearchQuery}
                   onChangeText={setCustomerSearchQuery}
-                  autoFocus
+                  autoFocus={true}
                 />
               </View>
 
@@ -772,6 +916,70 @@ export default function PunchInScreen() {
           </View>
         </Modal>
 
+        {/* Location Log Modal */}
+        <Modal
+          visible={showLocationLog}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowLocationLog(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.pickerModalContent}>
+              <View style={styles.pickerModalHeader}>
+                <Text style={styles.pickerModalTitle}>Location Log</Text>
+                <TouchableOpacity onPress={() => setShowLocationLog(false)}>
+                  <Ionicons name="close-circle" size={24} color={Colors.text.tertiary} />
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={rawLocations.filter(l =>
+                  (l.status === 'verified' || l.status === 'pending') &&
+                  l.taskDoneBy === loggedInUser
+                )}
+                keyExtractor={(item, index) => item.id?.toString() || index.toString()}
+                style={styles.pickerList}
+                contentContainerStyle={{ paddingBottom: 20 }}
+                renderItem={({ item }) => (
+                  <View style={styles.logListItem}>
+                    <View style={styles.logListHeader}>
+                      <Text style={styles.logListStoreName}>{item.storeName || item.firm_name}</Text>
+                      <View style={[
+                        styles.logStatusBadge,
+                        { backgroundColor: item.status === 'verified' ? Colors.success[50] : Colors.warning[50] }
+                      ]}>
+                        <Text style={[
+                          styles.logStatusText,
+                          { color: item.status === 'verified' ? Colors.success.main : Colors.warning.main }
+                        ]}>
+                          {(item.status || 'unknown').toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.logListRow}>
+                      <Ionicons name="location-outline" size={14} color={Colors.text.tertiary} />
+                      <Text style={styles.logListLocation}>{item.storeLocation || item.area || 'Unknown Location'}</Text>
+                    </View>
+
+                    <View style={styles.logListFooter}>
+                      <Text style={styles.logListMeta}>
+                        By: <Text style={{ fontWeight: '600' }}>{item.taskDoneBy || 'N/A'}</Text>
+                      </Text>
+                      <Text style={styles.logListMeta}>
+                        {item.lastCapturedTime ? new Date(item.lastCapturedTime).toLocaleDateString() : '-'}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                ListEmptyComponent={
+                  <Text style={styles.pickerEmptyText}>No verification logs found</Text>
+                }
+              />
+            </View>
+          </View>
+        </Modal>
+
         {/* Selfie Confirmation Modal */}
         <Modal
           visible={showConfirmModal}
@@ -794,7 +1002,7 @@ export default function PunchInScreen() {
                 placeholderTextColor={Colors.text.tertiary}
                 value={notes}
                 onChangeText={setNotes}
-                multiline
+                multiline={true}
                 numberOfLines={3}
               />
 
@@ -1165,6 +1373,9 @@ const styles = StyleSheet.create({
   punchOutButton: {
     backgroundColor: Colors.warning.main,
   },
+  takeOrderButton: {
+    backgroundColor: Colors.secondary.main, // Or any distinct color
+  },
   actionButtonText: {
     color: '#FFFFFF',
     fontSize: Typography.sizes.lg,
@@ -1265,5 +1476,137 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: Spacing.md,
     right: Spacing.md,
+  },
+
+  // Log Card Styles
+  logCard: {
+    marginBottom: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    ...Shadows.sm,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    overflow: 'hidden'
+  },
+  logCardGradient: {
+    padding: Spacing.md,
+  },
+  logCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  logIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primary[50],
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  logCardContent: {
+    flex: 1,
+  },
+  logCardTitle: {
+    fontSize: Typography.sizes.md,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: 2,
+  },
+  logCardSubtitle: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.secondary,
+  },
+  logStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  logStatItem: {
+    flex: 1,
+    alignItems: 'center',
+    flexDirection: 'column',
+    position: 'relative',
+  },
+  logStatValue: {
+    fontSize: Typography.sizes.lg,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: 2,
+  },
+  logStatLabel: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  logStatDivider: {
+    width: 1,
+    height: '60%',
+    backgroundColor: Colors.border.light,
+  },
+
+  // Log List Item Styles
+  logListItem: {
+    padding: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border.light,
+    backgroundColor: '#fff',
+  },
+  logListHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  logListStoreName: {
+    fontSize: Typography.sizes.base,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    flex: 1,
+    marginRight: 8,
+  },
+  logStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.full,
+  },
+  logStatusText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  logListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 4,
+  },
+  logListLocation: {
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.secondary,
+  },
+  logListFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border.light,
+  },
+  logListMeta: {
+    fontSize: Typography.sizes.xs,
+    color: Colors.text.tertiary,
   },
 });

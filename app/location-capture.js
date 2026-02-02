@@ -19,6 +19,7 @@ import {
 
 
 
+
     Modal,
     SafeAreaView,
     ScrollView,
@@ -610,7 +611,7 @@ export default function LocationCaptureScreen() {
                                     placeholder="Search customer..."
                                     value={customerSearchQuery}
                                     onChangeText={setCustomerSearchQuery}
-                                    autoFocus
+                                    autoFocus={true}
                                 />
                             </View>
 

@@ -84,7 +84,11 @@ export default function CompanyInfoScreen() {
         'app_settings'
       ];
 
-      const keysToRemove = keys.filter(key => !preservedKeys.includes(key));
+      const keysToRemove = keys.filter(key => {
+        if (preservedKeys.includes(key)) return false;
+        if (key.startsWith('placed_orders_')) return false; // Preserve order data
+        return true;
+      });
 
       if (keysToRemove.length > 0) {
         await AsyncStorage.multiRemove(keysToRemove);
@@ -205,7 +209,7 @@ export default function CompanyInfoScreen() {
         {/* Logout Modal */}
         <Modal
           visible={logoutVisible}
-          transparent
+          transparent={true}
           animationType="fade"
           onRequestClose={() => setLogoutVisible(false)}
         >

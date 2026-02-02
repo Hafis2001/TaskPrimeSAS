@@ -251,6 +251,7 @@ export default function OrderDetails() {
   // CRITICAL: Use ref as source of truth for cart to prevent state loss
   const cartRef = useRef([]);
   const [cart, setCart] = useState([]);
+  const [cartLoaded, setCartLoaded] = useState(false); // Flag to prevent overwriting storage before load
 
   // Missing state variables
   const [loading, setLoading] = useState(false);
@@ -760,6 +761,7 @@ export default function OrderDetails() {
         unit: product.unit || '',
         photos: product.photos || [],
         taxcode: product.taxcode || '',
+        text6: product.text6 || '', // HSN Code (mapped from text6)
         productCategory: product.category || '',
       };
 
@@ -821,7 +823,9 @@ export default function OrderDetails() {
 
   const loadPendingOrdersCount = async () => {
     try {
-      const existingOrders = await AsyncStorage.getItem('placed_orders');
+      const username = await AsyncStorage.getItem('username');
+      const storageKey = `placed_orders_${username}`;
+      const existingOrders = await AsyncStorage.getItem(storageKey);
       if (existingOrders) {
         const orders = JSON.parse(existingOrders);
         // Filter: Count only if status is NOT uploaded
@@ -1066,35 +1070,66 @@ export default function OrderDetails() {
     }
   }
 
-  // Key for persisting temporary cart
-  const TEMP_CART_KEY = 'temp_active_cart';
+  // Key for persisting temporary cart - dynamic based on username
+  const getCartKey = (user) => `temp_active_cart_${user}`;
 
-  // Load cart from storage on mount
+  // Load cart from storage when username changes
   useEffect(() => {
     async function loadCart() {
+      if (!username) return;
       try {
-        const savedCart = await AsyncStorage.getItem(TEMP_CART_KEY);
-        if (savedCart) {
-          const parsedCart = JSON.parse(savedCart);
-          console.log('[OrderDetails] 📥 Loaded persisted cart:', parsedCart.length, 'items');
-          setCart(parsedCart);
-          cartRef.current = parsedCart;
+        const key = getCartKey(username);
+        const savedCartStr = await AsyncStorage.getItem(key);
+
+        let initialCart = [];
+        if (savedCartStr) {
+          initialCart = JSON.parse(savedCartStr);
+          console.log('[OrderDetails] 📥 Loaded persisted cart for', username, ':', initialCart.length, 'items');
+        }
+
+        // MERGE LOGIC: Combine persisted cart with any items added to cartRef while loading
+        const currentItems = cartRef.current || [];
+
+        if (currentItems.length > 0) {
+          console.log('[OrderDetails] ⚠️ Merging loaded cart with currently added items');
+          const merged = [...currentItems];
+          initialCart.forEach(loadedItem => {
+            // Add loaded items only if they aren't already in the current (newest) list
+            const exists = merged.find(p => p.product.id === loadedItem.product.id);
+            if (!exists) {
+              merged.push(loadedItem);
+            }
+          });
+          initialCart = merged;
+        }
+
+        setCart(initialCart);
+        cartRef.current = initialCart;
+
+        // If we merged, we should save the merged result back to storage immediately
+        if (currentItems.length > 0) {
+          saveCartToStorage(initialCart);
         }
       } catch (error) {
         console.error('[OrderDetails] Error loading cart:', error);
+      } finally {
+        setCartLoaded(true); // Mark as loaded so future updates can save
       }
     }
     loadCart();
-  }, []);
+  }, [username]);
 
   // Save cart to storage whenever it changes (via helper)
-  const saveCartToStorage = async (newCart) => {
+  const saveCartToStorage = useCallback(async (newCart) => {
+    if (!username) return;
     try {
-      await AsyncStorage.setItem(TEMP_CART_KEY, JSON.stringify(newCart));
+      const key = getCartKey(username);
+      await AsyncStorage.setItem(key, JSON.stringify(newCart));
+      console.log('[OrderDetails] 💾 Cart saved:', newCart.length, 'items');
     } catch (error) {
       console.error('[OrderDetails] Error saving cart:', error);
     }
-  };
+  }, [username]);
 
 
 
@@ -1120,6 +1155,9 @@ export default function OrderDetails() {
   const addToCart = useCallback((product, quantity = 1, startCoords = null) => {
     console.log('═══════════════════════════════════════════════════════');
     console.log('[OrderDetails] ➕ ADD TO CART CALLED');
+    console.log('[OrderDetails] Product:', product.name, 'ID:', product.id);
+    console.log('[OrderDetails] Quantity:', quantity);
+    console.log('[OrderDetails] Current cartRef length:', cartRef.current?.length || 0);
 
     // Trigger Flying Animation first
     if (startCoords) {
@@ -1128,14 +1166,16 @@ export default function OrderDetails() {
       triggerFlyAnimation(); // Defaults to center (for modal)
     }
 
-    // CRITICAL FIX: Use cartRef as source of truth
-    const currentCart = [...cartRef.current];
+    // CRITICAL FIX: Use cartRef as source of truth with safe initialization
+    const currentCart = [...(cartRef.current || [])];
+    console.log('[OrderDetails] Current cart contents:', currentCart.map(i => ({ name: i.product.name, id: i.product.id, qty: i.qty })));
+
     const idx = currentCart.findIndex((it) => it.product.id === product.id);
 
     let newCart;
     if (idx >= 0) {
       // Item already exists - update quantity
-      console.log('[OrderDetails] ✏️  Updating existing item');
+      console.log('[OrderDetails] ✏️  Updating existing item at index', idx);
       newCart = [...currentCart];
       newCart[idx] = {
         ...newCart[idx],
@@ -1147,14 +1187,25 @@ export default function OrderDetails() {
       newCart = [{ product, qty: quantity }, ...currentCart];
     }
 
+    console.log('[OrderDetails] New cart length:', newCart.length);
+    console.log('[OrderDetails] New cart contents:', newCart.map(i => ({ name: i.product.name, id: i.product.id, qty: i.qty })));
+
     // Update state, ref, and storage
     cartRef.current = newCart;
     setCart(newCart);
-    saveCartToStorage(newCart);
-  }, [triggerCartAnimation]);
+
+    // Only save to storage if initial load is complete
+    if (cartLoaded) {
+      saveCartToStorage(newCart);
+    } else {
+      console.log('[OrderDetails] ⚠️ Skipping save to storage (Wait for loadCart merge)');
+    }
+
+    console.log('═══════════════════════════════════════════════════════');
+  }, [cartLoaded, triggerCartAnimation, saveCartToStorage]);
 
   const changeQty = useCallback((productId, qty, event) => {
-    const currentCart = [...cartRef.current];
+    const currentCart = [...(cartRef.current || [])];
     const item = currentCart.find((it) => it.product.id === productId);
     const oldQty = item ? item.qty : 0;
 
@@ -1172,17 +1223,21 @@ export default function OrderDetails() {
 
     cartRef.current = newCart;
     setCart(newCart);
-    saveCartToStorage(newCart);
-  }, []);
+    if (cartLoaded) {
+      saveCartToStorage(newCart);
+    }
+  }, [cartLoaded, saveCartToStorage, triggerFlyAnimation]);
 
   const removeItem = useCallback((productId) => {
-    const currentCart = [...cartRef.current];
+    const currentCart = [...(cartRef.current || [])];
     const newCart = currentCart.filter((it) => it.product.id !== productId);
 
     cartRef.current = newCart;
     setCart(newCart);
-    saveCartToStorage(newCart);
-  }, []);
+    if (cartLoaded) {
+      saveCartToStorage(newCart);
+    }
+  }, [cartLoaded, saveCartToStorage]);
 
   function toggleSheet(open) {
     setSheetOpen(open);
@@ -1258,7 +1313,7 @@ export default function OrderDetails() {
             onPress: async () => {
               setCart([]);
               cartRef.current = [];
-              await AsyncStorage.removeItem(TEMP_CART_KEY);
+              if (username) await AsyncStorage.removeItem(getCartKey(username));
               router.replace(targetRoute);
             },
             style: "destructive"
@@ -1297,22 +1352,27 @@ export default function OrderDetails() {
           mrp: item.product.mrp || 0,
           price: item.product.price,
           qty: item.qty,
-          total: item.qty * item.product.price
+          total: item.qty * item.product.price,
+          hsn: item.product.text6 || '', // Save HSN
+          gst: item.product.taxcode || '' // Save GST
         })),
         total: cart.reduce((s, it) => s + it.qty * it.product.price, 0),
         timestamp: new Date().toISOString(),
         status: 'pending'
       };
 
-      const existingOrders = await AsyncStorage.getItem('placed_orders');
+      const username = await AsyncStorage.getItem('username');
+      const storageKey = `placed_orders_${username}`;
+      const existingOrders = await AsyncStorage.getItem(storageKey);
       const orders = existingOrders ? JSON.parse(existingOrders) : [];
       orders.push(order);
-      await AsyncStorage.setItem('placed_orders', JSON.stringify(orders));
+      await AsyncStorage.setItem(storageKey, JSON.stringify(orders));
 
-      // Clear cart and storage
       setCart([]);
       cartRef.current = [];
-      await AsyncStorage.removeItem(TEMP_CART_KEY);
+      if (username) {
+        await AsyncStorage.removeItem(getCartKey(username));
+      }
 
       toggleSheet(false);
 
@@ -2022,7 +2082,7 @@ export default function OrderDetails() {
                         const cleaned = text.replace(/[^0-9]/g, '');
                         setTempQuantity(cleaned);
                       }}
-                      selectTextOnFocus
+                      selectTextOnFocus={true}
                     />
 
                     <TouchableOpacity
@@ -2154,10 +2214,15 @@ export default function OrderDetails() {
                             <Text style={styles.detailsMetaValue}>{selectedBatchDetails.brand}</Text>
                           </View>
                         )}
-                        {selectedBatchDetails.taxcode && (
+                        <View style={[styles.detailsMetaChip, { backgroundColor: Colors.neutral[100] }]}>
+                          <Text style={styles.detailsMetaLabel}>GST:</Text>
+                          <Text style={styles.detailsMetaValue}>{selectedBatchDetails.taxcode || '0'}{selectedBatchDetails.taxcode ? '%' : ''}</Text>
+                        </View>
+
+                        {selectedBatchDetails.text6 && (
                           <View style={[styles.detailsMetaChip, { backgroundColor: Colors.neutral[100] }]}>
-                            <Text style={styles.detailsMetaLabel}>Tax:</Text>
-                            <Text style={styles.detailsMetaValue}>{selectedBatchDetails.taxcode}</Text>
+                            <Text style={styles.detailsMetaLabel}>HSN:</Text>
+                            <Text style={styles.detailsMetaValue}>{selectedBatchDetails.text6}</Text>
                           </View>
                         )}
                       </View>

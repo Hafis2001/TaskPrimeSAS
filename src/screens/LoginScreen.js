@@ -38,6 +38,9 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isDemo, setIsDemo] = useState(false);
+  const [demoExpiresAt, setDemoExpiresAt] = useState("");
+  const [demoDaysRemaining, setDemoDaysRemaining] = useState(0);
 
   // Glow animation
   const glow = useSharedValue(0);
@@ -53,12 +56,26 @@ export default function LoginScreen() {
     elevation: glow.value * 10,
   }));
 
-  // Load clientId
+  // Load clientId and Demo Status
   useEffect(() => {
     (async () => {
       try {
         const stored = await AsyncStorage.getItem("clientId");
         if (stored) setClientId(stored.trim().toUpperCase());
+
+        const demoStatus = await AsyncStorage.getItem("isDemo");
+        if (demoStatus === "true") {
+          const expiry = await AsyncStorage.getItem("demoExpiresAt");
+          setIsDemo(true);
+          setDemoExpiresAt(expiry);
+          if (expiry) {
+            const now = new Date();
+            const expDate = new Date(expiry);
+            const diffTime = expDate - now;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            setDemoDaysRemaining(diffDays > 0 ? diffDays : 0);
+          }
+        }
       } catch (e) { }
     })();
   }, []);
@@ -68,8 +85,20 @@ export default function LoginScreen() {
     const checkSession = async () => {
       try {
         const token = await AsyncStorage.getItem("authToken");
+        const loginTimestamp = await AsyncStorage.getItem("loginTimestamp");
+
         if (token) {
-          console.log('[LoginScreen] Found existing session, redirecting to Home');
+          // Check if session is expired (24 hours = 86400000 ms)
+          const now = Date.now();
+          const twentyFourHours = 24 * 60 * 60 * 1000;
+
+          if (!loginTimestamp || (now - parseInt(loginTimestamp, 10) > twentyFourHours)) {
+            console.log('[LoginScreen] Session expired or invalid timestamp');
+            await AsyncStorage.multiRemove(["authToken", "user", "loginTimestamp"]);
+            return; // Stay on login screen
+          }
+
+          console.log('[LoginScreen] Found valid session, redirecting to Home');
           router.replace("/(tabs)/Home");
         }
       } catch (e) {
@@ -111,14 +140,47 @@ export default function LoginScreen() {
         return { ok: false, reason: "invalid_response" };
       }
 
-      if (!Array.isArray(data.customers))
+      if (!Array.isArray(data.customers) && !Array.isArray(data.demo_licenses))
         return { ok: false, reason: "invalid_response" };
 
-      const matched = data.customers.find(
-        (c) => (c?.client_id ?? "").toString().trim().toUpperCase() === usedClientId
-      );
+      let matched = null;
+      let isDemo = false;
+
+      // 1. Check Normal Customers
+      if (data.customers) {
+        matched = data.customers.find(
+          (c) => (c?.client_id ?? "").toString().trim().toUpperCase() === usedClientId
+        );
+      }
+
+      // 2. Check Demo Licenses if not found
+      if (!matched && data.demo_licenses) {
+        const demoMatch = data.demo_licenses.find(
+          (d) => (d?.client_id ?? "").toString().trim().toUpperCase() === usedClientId
+        );
+
+        if (demoMatch) {
+          matched = {
+            client_id: demoMatch.client_id,
+            license_key: demoMatch.demo_license,
+            status: demoMatch.status,
+            package: "DEMO",
+            expires_at: demoMatch.expires_at // Keep for validaton
+          };
+          isDemo = true;
+        }
+      }
 
       if (!matched) return { ok: false, reason: "not_found" };
+
+      // Expired demo check
+      if (isDemo && matched.expires_at) {
+        const expires = new Date(matched.expires_at);
+        const now = new Date();
+        if (expires < now) {
+          return { ok: false, reason: "inactive" }; // Treat expired demo as inactive
+        }
+      }
 
       const status = (matched.status ?? "").toString().trim().toUpperCase();
       if (status !== "ACTIVE") return { ok: false, reason: "inactive" };
@@ -133,6 +195,24 @@ export default function LoginScreen() {
             package: matched.package ?? "",
           })
         );
+
+        if (isDemo) {
+          await AsyncStorage.setItem("isDemo", "true");
+          await AsyncStorage.setItem("demoExpiresAt", matched.expires_at || "");
+        } else {
+          // CHECK EXISTING: If we are already in Demo mode locally, don't wipe it
+          // unless we are absolutely sure this is a different license that is NOT demo.
+          // But since we are validating against the server, and server said "Not found in demo_licenses" (if isDemo is false here),
+          // it means this specific client_id is not a demo.
+          // However, the user might be using a demo license key that the API put in 'customers' list?
+          // OR simply, likely, we should just preserve it if it exists.
+
+          const existingDemo = await AsyncStorage.getItem("isDemo");
+          if (existingDemo !== "true") {
+            await AsyncStorage.removeItem("isDemo");
+            await AsyncStorage.removeItem("demoExpiresAt");
+          }
+        }
       } catch { }
 
       return { ok: true, customer: matched };
@@ -231,6 +311,7 @@ export default function LoginScreen() {
 
       await AsyncStorage.setItem("authToken", loginData.token);
       await AsyncStorage.setItem("user", JSON.stringify(loginData.user));
+      await AsyncStorage.setItem("loginTimestamp", Date.now().toString());
 
       console.log('[Login] Saved Credentials:', { savedClientId, savedUsername });
 
@@ -338,6 +419,11 @@ export default function LoginScreen() {
       style={styles.container}
     >
       <StatusBar barStyle="dark-content" />
+      {isDemo && (
+        <View style={styles.demoBanner}>
+          <Text style={styles.demoText}>DEMO MODE - Expires {demoExpiresAt} ({demoDaysRemaining} days remaining)</Text>
+        </View>
+      )}
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
@@ -544,5 +630,20 @@ const styles = StyleSheet.create({
   },
   socialIcon: {
     marginleft: 50,
-  }
+  },
+  demoBanner: {
+    backgroundColor: '#FF9800',
+    width: '100%',
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Platform.OS === 'ios' ? 40 : 0,
+    elevation: 5,
+    zIndex: 1000
+  },
+  demoText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
 });

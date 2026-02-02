@@ -23,11 +23,22 @@ module.exports = {
       }
     },
     android: {
+      package: "com.hafis2001.TaskSAS",
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#ffffff"
       },
-      package: "com.hafis2001.TaskSAS",
+      intentFilters: [
+        {
+          action: "VIEW",
+          data: [
+            {
+              scheme: "tasksas"
+            }
+          ],
+          category: ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       permissions: [
         "android.permission.CAMERA",
         "android.permission.READ_PHONE_STATE",
@@ -39,6 +50,7 @@ module.exports = {
         "android.permission.ACCESS_COARSE_LOCATION"
       ]
     },
+
     web: {
       favicon: "./assets/images/app-icon.png"
     },
@@ -57,12 +69,13 @@ module.exports = {
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-file-system",
+
     ],
     extra: {
-      router: {},
       eas: {
-        projectId: "c5368bc1-f81f-4c4a-b8e3-2fe907a8ff40"
+        "projectId": "c0dd53fe-8624-4c0f-aa1a-851f1c3b14fb"
       }
     },
     experiments: {

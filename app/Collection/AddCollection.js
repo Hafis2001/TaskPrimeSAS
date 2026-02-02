@@ -493,7 +493,7 @@ export default function AddCollectionScreen() {
               placeholderTextColor={Colors.text.tertiary}
               value={remarks}
               onChangeText={setRemarks}
-              multiline
+              multiline={true}
               numberOfLines={4}
               textAlignVertical="top"
             />

@@ -47,9 +47,24 @@ export default function DashboardScreen() {
       const storedDeviceId = await AsyncStorage.getItem("deviceId");
       const storedCustomerName = await AsyncStorage.getItem("customerName");
 
+      const demoStatus = await AsyncStorage.getItem("isDemo");
+      const demoExpiry = await AsyncStorage.getItem("demoExpiresAt");
+
       setLicenseKey(storedLicenseKey || "");
       setDeviceId(storedDeviceId || "");
       setCustomerName(storedCustomerName || "");
+
+      // Override for Demo
+      if (demoStatus === "true" && demoExpiry) {
+        setExpiryDate(demoExpiry);
+        const now = new Date();
+        const exp = new Date(demoExpiry);
+        const diff = exp - now;
+        const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+        setRemainingDays(days > 0 ? days : 0);
+        setIsExpired(days <= 0);
+        // Prevent fetching API again purely for validity if known
+      }
     } catch (error) {
       console.error("Error loading stored data:", error);
     } finally {
@@ -59,6 +74,10 @@ export default function DashboardScreen() {
 
   const fetchLicenseInfo = async () => {
     try {
+      // Check demo status first to avoid overwriting with potentially empty API match if not in customer list
+      const demoStatus = await AsyncStorage.getItem("isDemo");
+      if (demoStatus === "true") return;
+
       const LICENSE_INFO_API = "https://activate.imcbs.com/mobileapp/api/project/tasksas/";
 
       const response = await fetch(LICENSE_INFO_API, {
@@ -115,6 +134,36 @@ export default function DashboardScreen() {
         },
       ]
     );
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout? The license will remain active.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: logout,
+        },
+      ]
+    );
+  };
+
+  const logout = async () => {
+    try {
+      // CLEAR ONLY SESSION DATA
+      const sessionKeys = ["authToken", "user", "loginTimestamp"];
+      await AsyncStorage.multiRemove(sessionKeys);
+      router.replace("/");
+    } catch (error) {
+      console.error("Logout error", error);
+      Alert.alert("Error", "Failed to logout.");
+    }
   };
 
   const removeLicense = async () => {
@@ -323,6 +372,21 @@ export default function DashboardScreen() {
                 Removing the license will require re-activation and login.
               </Text>
             </View>
+
+            {/* Logout Button */}
+            <TouchableOpacity
+              style={[styles.logoutButton]}
+              onPress={handleLogout}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={[Colors.primary[500], Colors.primary[700]]}
+                style={styles.gradientButton}
+              >
+                <Ionicons name="log-out-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.buttonText}>Logout</Text>
+              </LinearGradient>
+            </TouchableOpacity>
 
             {/* Remove License Button */}
             <TouchableOpacity
@@ -613,5 +677,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+  },
+  logoutButton: {
+    width: '100%',
+    shadowColor: Colors.primary.main,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 6,
+    marginBottom: Spacing.md,
   },
 });

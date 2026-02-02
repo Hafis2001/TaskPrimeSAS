@@ -1,11 +1,12 @@
 // app/Order/PlaceOrder.js
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
+
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -45,6 +46,8 @@ export default function PlaceOrder() {
   const [filterStatus, setFilterStatus] = useState('pending'); // pending, uploaded, failed
   const [uploadDetailsModal, setUploadDetailsModal] = useState(false);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
+  const [currentUsername, setCurrentUsername] = useState(null);
+
 
   // Printer State
   const [printerModalVisible, setPrinterModalVisible] = useState(false);
@@ -53,9 +56,17 @@ export default function PlaceOrder() {
   const [connectionType, setConnectionType] = useState('ble'); // 'ble' | 'usb'
   const [selectedOrderToPrint, setSelectedOrderToPrint] = useState(null);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadUsername();
+    }, [])
+  );
+
   useEffect(() => {
-    loadLocalOrders();
-  }, []);
+    if (currentUsername) {
+      loadLocalOrders();
+    }
+  }, [currentUsername]);
 
   useEffect(() => {
     if (filterStatus === 'uploaded') {
@@ -63,17 +74,48 @@ export default function PlaceOrder() {
     }
   }, [filterStatus]);
 
-  // Load orders from AsyncStorage (Only Pending/Failed/Partial)
+  // Load current username
+  async function loadUsername() {
+    try {
+      const username = await AsyncStorage.getItem('username');
+      setCurrentUsername(username);
+    } catch (error) {
+      console.error('Error loading username:', error);
+    }
+  }
+
+  // Load orders from AsyncStorage (Only Pending/Failed/Partial) - Per User
   async function loadLocalOrders() {
     try {
-      const storedOrders = await AsyncStorage.getItem('placed_orders');
+      if (!currentUsername) return;
+
+      const storageKey = `placed_orders_${currentUsername}`;
+      const storedOrders = await AsyncStorage.getItem(storageKey);
       if (storedOrders) {
         let parsedOrders = JSON.parse(storedOrders);
 
-        // Filter valid orders - keeping local logic as is for pending/failed
+        // Filter out orders older than 30 hours
+        const THIRTY_HOURS_MS = 30 * 60 * 60 * 1000;
+        const now = Date.now();
+
         const validOrders = parsedOrders.filter(order => {
+          if (!order.timestamp) return true; // Keep orders without timestamp (legacy)
+
+          const orderTime = new Date(order.timestamp).getTime();
+          const age = now - orderTime;
+
+          if (age > THIRTY_HOURS_MS) {
+            console.log(`[PlaceOrder] Removing expired order (${Math.round(age / 3600000)}h old):`, order.id);
+            return false;
+          }
           return true;
         });
+
+        // Save cleaned list back to storage
+        if (validOrders.length !== parsedOrders.length) {
+          await AsyncStorage.setItem(storageKey, JSON.stringify(validOrders));
+          console.log(`[PlaceOrder] Removed ${parsedOrders.length - validOrders.length} expired orders`);
+        }
 
         // Sort by timestamp, newest first
         const sortedOrders = validOrders.sort((a, b) =>
@@ -153,6 +195,8 @@ export default function PlaceOrder() {
               price: parseFloat(item.price),
               qty: parseFloat(item.quantity),
               total: parseFloat(item.amount),
+              hsn: item.text6 || item.hsn || '',
+              gst: item.taxcode || item.gst || item.tax_code || '',
               uploadStatus: 'uploaded'
             }))
           };
@@ -202,7 +246,8 @@ export default function PlaceOrder() {
         return order;
       });
       setOrders(updatedOrders);
-      await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
+      const storageKey = `placed_orders_${currentUsername}`;
+      await AsyncStorage.setItem(storageKey, JSON.stringify(updatedOrders));
     } catch (error) {
       console.error('Error updating quantity:', error);
     }
@@ -231,7 +276,8 @@ export default function PlaceOrder() {
                 return order;
               }).filter(Boolean);
               setOrders(updatedOrders);
-              await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
+              const storageKey = `placed_orders_${currentUsername}`;
+              await AsyncStorage.setItem(storageKey, JSON.stringify(updatedOrders));
             } catch (e) {
               console.error(e);
             }
@@ -241,7 +287,7 @@ export default function PlaceOrder() {
     );
   }
 
-  // Upload Logic (Keep existing, strictly for local orders)
+  // Upload Logic with Retry Mechanism
   async function uploadOrderToAPI(order) {
     try {
       const username = await AsyncStorage.getItem('username');
@@ -249,7 +295,14 @@ export default function PlaceOrder() {
       const authToken = await AsyncStorage.getItem('authToken');
       const deviceId = (await AsyncStorage.getItem('device_hardware_id')) || (await AsyncStorage.getItem('deviceId'));
 
-      if (!username || !clientId) throw new Error('Missing credentials');
+      // ✅ CRITICAL: Validate auth token before attempting upload
+      if (!authToken) {
+        throw new Error('Authentication token missing. Please login again.');
+      }
+
+      if (!username || !clientId) {
+        throw new Error('Missing credentials. Please login again.');
+      }
 
       // VALIDATION & SANITIZATION
       const cleanString = (str) => String(str || '').trim();
@@ -287,39 +340,123 @@ export default function PlaceOrder() {
         items: validItems
       };
 
+      console.log('[Upload] Payload:', JSON.stringify(payload, null, 2));
+
       const headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'Authorization': authToken ? `Bearer ${authToken}` : undefined
+        'Authorization': `Bearer ${authToken}`
       };
 
-      const response = await fetch('https://tasksas.com/api/item-orders/create', {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(payload),
-      });
+      // ✅ RETRY LOGIC: Attempt upload with exponential backoff
+      const MAX_RETRIES = 3;
+      const RETRY_DELAYS = [1000, 2000, 4000]; // ms
+      let lastError = null;
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `HTTP ${response.status}`);
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            const delay = RETRY_DELAYS[attempt - 1];
+            console.log(`[Upload] Retry attempt ${attempt}/${MAX_RETRIES} after ${delay}ms...`);
+
+            // Show retry feedback to user
+            if (Platform.OS === 'android') {
+              const { ToastAndroid } = require('react-native');
+              ToastAndroid.show(`Retrying upload (${attempt}/${MAX_RETRIES})...`, ToastAndroid.SHORT);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+
+          const response = await fetch('https://tasksas.com/api/item-orders/create', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(payload),
+          });
+
+          console.log(`[Upload] Attempt ${attempt + 1} - Response Status:`, response.status);
+
+          // ✅ Handle different error types
+          if (!response.ok) {
+            const text = await response.text();
+            console.error(`[Upload] Attempt ${attempt + 1} - Error Response:`, text);
+
+            // Extract meaningful error message
+            let errorMessage = `Server Error (${response.status})`;
+
+            try {
+              const jsonError = JSON.parse(text);
+              errorMessage = jsonError.message || jsonError.error || errorMessage;
+            } catch {
+              // If it's HTML, try to extract the error
+              if (text.includes('<title>')) {
+                const titleMatch = text.match(/<title>(.*?)<\/title>/);
+                if (titleMatch) errorMessage = titleMatch[1];
+              }
+            }
+
+            // ✅ Only retry on 500 errors (server errors)
+            if (response.status >= 500 && attempt < MAX_RETRIES) {
+              lastError = new Error(errorMessage);
+              console.log(`[Upload] Server error ${response.status}, will retry...`);
+              continue; // Retry
+            }
+
+            // ✅ Don't retry on 4xx errors (client errors)
+            if (response.status >= 400 && response.status < 500) {
+              throw new Error(`${errorMessage}. Please check your data and try again.`);
+            }
+
+            throw new Error(errorMessage);
+          }
+
+          // ✅ SUCCESS - Parse response
+          let responseData;
+          try {
+            responseData = await response.json();
+          } catch {
+            responseData = { success: true };
+          }
+
+          console.log('[Upload] Success Response:', responseData);
+
+          return {
+            success: true,
+            partialSuccess: false,
+            results: order.items.map((item, i) => ({
+              itemIndex: i,
+              itemName: item.name,
+              success: true,
+              data: responseData
+            })),
+            successCount: order.items.length,
+            totalCount: order.items.length
+          };
+
+        } catch (fetchError) {
+          // Network errors or other fetch failures
+          lastError = fetchError;
+
+          if (attempt < MAX_RETRIES) {
+            console.log(`[Upload] Network error, will retry:`, fetchError.message);
+            continue; // Retry
+          }
+        }
       }
 
-      let responseData;
-      try { responseData = await response.json(); } catch { responseData = { success: true }; }
-
-      return {
-        success: true,
-        partialSuccess: false,
-        results: order.items.map((item, i) => ({ itemIndex: i, itemName: item.name, success: true, data: responseData })),
-        successCount: order.items.length,
-        totalCount: order.items.length
-      };
+      // ✅ All retries exhausted
+      throw lastError || new Error('Upload failed after multiple attempts');
 
     } catch (error) {
-      console.error('[Upload] Error:', error);
+      console.error('[Upload] Final Error:', error);
       return {
         success: false,
-        results: order.items.map((item, i) => ({ itemIndex: i, itemName: item.name, success: false, error: error.message })),
+        results: order.items.map((item, i) => ({
+          itemIndex: i,
+          itemName: item.name,
+          success: false,
+          error: error.message
+        })),
         error: error.message
       };
     }
@@ -358,13 +495,32 @@ export default function PlaceOrder() {
                 return o;
               });
 
-              await AsyncStorage.setItem('placed_orders', JSON.stringify(updatedOrders));
+              const storageKey = `placed_orders_${currentUsername}`;
+              await AsyncStorage.setItem(storageKey, JSON.stringify(updatedOrders));
               setOrders(updatedOrders);
 
               if (uploadResult.success) {
                 Alert.alert("Success", "Order uploaded successfully!");
               } else {
-                Alert.alert("Upload Failed", uploadResult.error || "Unknown error");
+                // Check for Server Error (500) which usually means expired token/session
+                if (uploadResult.error && uploadResult.error.includes('500')) {
+                  Alert.alert(
+                    "Session Expired",
+                    "Your login session has expired. Please login again to fix the upload.",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Login Again",
+                        onPress: async () => {
+                          await AsyncStorage.removeItem('authToken');
+                          router.replace('/');
+                        }
+                      }
+                    ]
+                  );
+                } else {
+                  Alert.alert("Upload Failed", uploadResult.error || "Unknown error");
+                }
               }
 
             } catch (error) {
@@ -385,7 +541,8 @@ export default function PlaceOrder() {
         text: 'Delete', style: 'destructive', onPress: async () => {
           const newOrders = orders.filter(o => o.id !== orderId);
           setOrders(newOrders);
-          await AsyncStorage.setItem('placed_orders', JSON.stringify(newOrders));
+          const storageKey = `placed_orders_${currentUsername}`;
+          await AsyncStorage.setItem(storageKey, JSON.stringify(newOrders));
         }
       }
     ]);
@@ -440,85 +597,56 @@ export default function PlaceOrder() {
     finally { setIsScanningPrinters(false); }
   };
 
-  // TXT Download Logic - Alternative approach without FileSystem dependency
-  const handleDownloadText = async (order) => {
+  // JSON Download Logic - FIXED (MOBILE SAFE)
+  const handleDownloadJSON = async (order) => {
     try {
-      console.log('[TXT Download] Starting download for order:', order.customer);
+      console.log('[JSON Download] Starting download for order:', order.customer);
 
-      // Validate order has items
       if (!order.items || order.items.length === 0) {
         Alert.alert("Error", "No items in this order to download");
         return;
       }
 
-      let content = "Item Name, Barcode, Qty, Rate\n";
-      order.items.forEach(item => {
-        const name = (item.name || "").replace(/,/g, " ");
-        const barcode = item.barcode || item.code || "";
-        const qty = item.qty || 0;
-        const rate = item.price || 0;
-        content += `${name}, ${barcode}, ${qty}, ${rate}\n`;
-      });
+      // Create JSON
+      const content = JSON.stringify(order, null, 2);
 
-      console.log('[TXT Download] Content generated, length:', content.length);
-
-      // Check if Sharing is available
+      // Ensure sharing exists
       const sharingAvailable = await Sharing.isAvailableAsync();
-
       if (!sharingAvailable) {
         Alert.alert("Error", "Sharing is not available on this device");
         return;
       }
 
-      // Create a temporary file using FileSystem if available, otherwise use alternative
-      try {
-        if (FileSystem && FileSystem.cacheDirectory) {
-          const fileName = `Order_${(order.customer || 'Unknown').replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.txt`;
-          const fileUri = FileSystem.cacheDirectory + fileName;
+      // ✅ USE documentDirectory DIRECTLY (DO NOT FALLBACK)
+      const fileName = `Order_${Date.now()}.json`;
+      const fileUri = FileSystem.documentDirectory + fileName;
 
-          console.log('[TXT Download] Writing to:', fileUri);
-          await FileSystem.writeAsStringAsync(fileUri, content);
+      console.log('[JSON Download] Writing file to:', fileUri);
 
-          console.log('[TXT Download] Sharing file');
-          await Sharing.shareAsync(fileUri, {
-            mimeType: 'text/plain',
-            dialogTitle: 'Share Order Details'
-          });
-        } else {
-          // Fallback: Use data URI approach
-          console.log('[TXT Download] Using data URI fallback');
-          const base64Content = btoa(unescape(encodeURIComponent(content)));
-          const dataUri = `data:text/plain;base64,${base64Content}`;
+      // Write file
+      await FileSystem.writeAsStringAsync(
+        fileUri,
+        content,
+        { encoding: 'utf8' }
+      );
 
-          await Sharing.shareAsync(dataUri, {
-            mimeType: 'text/plain',
-            dialogTitle: 'Share Order Details',
-            UTI: 'public.plain-text'
-          });
-        }
-      } catch (fsError) {
-        console.log('[TXT Download] FileSystem error, using clipboard fallback:', fsError.message);
-        // Last resort: Copy to clipboard
-        Alert.alert(
-          "Download Alternative",
-          "File sharing unavailable. The order data has been copied to your clipboard. You can paste it into any text app.",
-          [
-            {
-              text: "OK",
-              onPress: () => {
-                // Note: You'd need to import Clipboard from '@react-native-clipboard/clipboard'
-                // For now, just show the content
-                Alert.alert("Order Data", content);
-              }
-            }
-          ]
-        );
-      }
+      console.log('[JSON Download] File written successfully');
+
+      // Share / Save
+      await Sharing.shareAsync(fileUri, {
+        mimeType: 'application/json',
+        dialogTitle: 'Download Order JSON',
+        UTI: 'public.json',
+      });
+
+      console.log('[JSON Download] Share dialog opened');
+
     } catch (error) {
-      console.error('[TXT Download] Error:', error);
-      Alert.alert("Error", `Failed to generate TXT file: ${error.message}`);
+      console.error('[JSON Download] Error:', error);
+      Alert.alert("Download Failed", error.message);
     }
   };
+
 
   const connectAndPrint = async (printer) => {
     const connected = await printerService.connect(printer);
@@ -660,10 +788,10 @@ export default function PlaceOrder() {
                 </LinearGradient>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.actionButton} onPress={() => handleDownloadText(order)}>
+              <TouchableOpacity style={styles.actionButton} onPress={() => handleDownloadJSON(order)}>
                 <LinearGradient colors={[Colors.neutral[600], Colors.neutral[800]]} style={styles.actionButtonGradient}>
-                  <Ionicons name="document-text" size={18} color="#fff" />
-                  <Text style={styles.actionButtonText}>TXT</Text>
+                  <Ionicons name="code-working" size={18} color="#fff" />
+                  <Text style={styles.actionButtonText}>JSON</Text>
                 </LinearGradient>
               </TouchableOpacity>
 

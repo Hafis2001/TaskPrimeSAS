@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from "@react-native-community/netinfo";
 import { LinearGradient } from "expo-linear-gradient";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useGlobalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -168,6 +168,59 @@ export default function EntryScreen() {
     setFilteredCustomers(customers);
   }, [customerSearchQuery, debtorsData, selectedArea]);
 
+  // Auto-select Price Code based on Customer Default
+  useEffect(() => {
+    if (selectedCustomer && selectedCustomer.remarkcolumntitle) {
+      const code = selectedCustomer.remarkcolumntitle;
+      // Check if this code is in the AVAILABLE (filtered) list for this user
+      const foundInAvailable = availablePriceCodes.find(pc => pc.code === code);
+
+      if (foundInAvailable) {
+        if (selectedPriceCode !== foundInAvailable.code) {
+          console.log(`[Entry] Auto-applying default price code: ${code}`);
+          setSelectedPriceCode(foundInAvailable.code);
+          setSelectedPriceName(foundInAvailable.name);
+        }
+      } else {
+        // Customer has a specific code but it's not in the filtered available list
+        // Search in ALL price codes (including restricted ones)
+        const findCode = (list) => list && list.find(pc => String(pc.code).trim().toUpperCase() === String(code).trim().toUpperCase());
+
+        let foundPrice = null;
+        if (appSettings && appSettings.price_codes) {
+          foundPrice = findCode(appSettings.price_codes);
+        }
+        if (!foundPrice) {
+          foundPrice = findCode(DEFAULT_PRICE_CODES);
+        }
+
+        if (foundPrice) {
+          if (selectedPriceCode !== foundPrice.code) {
+            console.log(`[Entry] Auto-applying RESTRICTED price code for customer: ${foundPrice.code}`);
+            setSelectedPriceCode(foundPrice.code);
+            setSelectedPriceName(foundPrice.name);
+          }
+        } else {
+          // Force the code even if no definition found
+          if (selectedPriceCode !== code) {
+            console.log(`[Entry] Forcing unknown price code from customer: ${code}`);
+            setSelectedPriceCode(code);
+            setSelectedPriceName(code);
+          }
+        }
+      }
+    } else if (selectedCustomer && !selectedCustomer.remarkcolumntitle && availablePriceCodes.length > 0) {
+      // Customer has NO specific price code -> Revert to Default (S2 or First Available)
+      const defaultCode = availablePriceCodes.find(c => c.code === 'S2') || availablePriceCodes[0];
+
+      if (defaultCode && selectedPriceCode !== defaultCode.code) {
+        console.log(`[Entry] Customer has no default. Reverting to system default: ${defaultCode.code}`);
+        setSelectedPriceCode(defaultCode.code);
+        setSelectedPriceName(defaultCode.name);
+      }
+    }
+  }, [selectedCustomer, availablePriceCodes]);
+
   const loadFromDatabase = async () => {
     try {
       setLoading(true);
@@ -250,7 +303,8 @@ export default function EntryScreen() {
 
       setAreaList(areasFromDb);
       setFilteredAreas(areasFromDb);
-      setFilteredCustomers(filteredDebtors);
+      setFilteredCustomers(filteredDebtors); // Ensure full list is available initially
+
       setUsingCache(false);
     } catch (error) {
       console.error('[Entry] Database load error:', error);
@@ -259,6 +313,28 @@ export default function EntryScreen() {
       setLoading(false);
     }
   };
+
+  // Handle Pre-selection from Punch-In (navigation params)
+  const params = useGlobalSearchParams();
+  useEffect(() => {
+    if (params?.preselectedCustomerCode && debtorsData.length > 0 && !loading) {
+      console.log(`[Entry] Check for pre-selection: ${params.preselectedCustomerCode}`);
+      // Find customer in loaded data
+      const targetCustomer = debtorsData.find(c => c.code === params.preselectedCustomerCode);
+      if (targetCustomer) {
+        console.log(`[Entry] Auto-selecting pre-selected customer: ${targetCustomer.name}`);
+        handleSelectCustomer(targetCustomer);
+
+        // Also set area if applicable, to keep UI consistent
+        const customerArea = targetCustomer.area || targetCustomer.place;
+        if (customerArea) {
+          setSelectedArea(customerArea);
+        }
+      } else {
+        console.warn(`[Entry] Pre-selected customer code ${params.preselectedCustomerCode} not found in database.`);
+      }
+    }
+  }, [params?.preselectedCustomerCode, debtorsData, loading]);
 
   const handleRefresh = () => {
     setAreaSearchQuery("");
@@ -278,31 +354,6 @@ export default function EntryScreen() {
     setSelectedCustomer(customer);
     setShowCustomerModal(false);
     setCustomerSearchQuery("");
-
-    // Auto-select Price Code from Customer Default
-    if (customer.remarkcolumntitle) {
-      const code = customer.remarkcolumntitle;
-      // Check if this code is in the AVAILABLE (filtered) list for this user
-      // If it IS available, auto-select it.
-      // If it's RESTRICTED, typically we shouldn't select it, BUT for specific customer assignment
-      // commonly we ALLOW it (whitelist override).
-      // Let's check available list first.
-      const foundInAvailable = availablePriceCodes.find(pc => pc.code === code);
-
-      if (foundInAvailable) {
-        setSelectedPriceCode(foundInAvailable.code);
-        setSelectedPriceName(foundInAvailable.name);
-      } else {
-        // It might be restricted or just invalid.
-        // If it's a valid standard code but restricted, we *could* force it if policy allows.
-        // For now, let's stick to the available list to avoid showing restricted data unintentionally.
-        // Unless we want to support the "whitelist override" logic here too.
-        // Let's try to find it in the DEFAULT list just to get the name, even if not in available.
-        // If it's not available, we keep the current selected (usually default S2) or alert?
-        // Let's just default to S2 if the customer code is not valid for this user.
-        console.log(`[Entry] Customer default code ${code} not in available list for this user.`);
-      }
-    }
   };
 
   const handleSelectPriceCode = (priceObj) => {

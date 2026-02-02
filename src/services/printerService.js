@@ -1,6 +1,27 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert, PermissionsAndroid, Platform } from "react-native";
-import { BLEPrinter, USBPrinter } from "react-native-thermal-receipt-printer";
+// import { BLEPrinter, USBPrinter } from "react-native-thermal-receipt-printer";
+// Safe Import Pattern
+let BLEPrinter, USBPrinter;
+try {
+    const printerLib = require("react-native-thermal-receipt-printer");
+    BLEPrinter = printerLib.BLEPrinter;
+    USBPrinter = printerLib.USBPrinter;
+} catch (e) {
+    console.warn("Printer library not found or failed to load. Using mocks.", e);
+    BLEPrinter = {
+        init: async () => console.log("Mock BLE Init"),
+        getDeviceList: async () => [],
+        connectPrinter: async () => console.log("Mock BLE Connect"),
+        printBill: async () => console.log("Mock BLE Print"),
+    };
+    USBPrinter = {
+        init: async () => console.log("Mock USB Init"),
+        getDeviceList: async () => [],
+        connectPrinter: async () => console.log("Mock USB Connect"),
+        printBill: async () => console.log("Mock USB Print"),
+    };
+}
 
 class PrinterService {
     constructor() {
@@ -164,9 +185,13 @@ class PrinterService {
 
                 try {
                     await new Promise(resolve => setTimeout(resolve, 500));
-                    await BLEPrinter.init();
-                    this.isBLEInitialized = true;
-                    console.log("[Printer] BLE Init Success");
+                    if (BLEPrinter && BLEPrinter.init) {
+                        await BLEPrinter.init();
+                        this.isBLEInitialized = true;
+                        console.log("[Printer] BLE Init Success");
+                    } else {
+                        console.warn("[Printer] BLEPrinter module undefined");
+                    }
                 } catch (err) {
                     console.warn("[Printer] BLE Init Failed:", err);
                 }
@@ -174,9 +199,13 @@ class PrinterService {
                 if (this.isUSBInitialized) return;
 
                 try {
-                    await USBPrinter.init();
-                    this.isUSBInitialized = true;
-                    console.log("[Printer] USB Init Success");
+                    if (USBPrinter && USBPrinter.init) {
+                        await USBPrinter.init();
+                        this.isUSBInitialized = true;
+                        console.log("[Printer] USB Init Success");
+                    } else {
+                        console.warn("[Printer] USBPrinter module undefined");
+                    }
                 } catch (err) {
                     console.warn("[Printer] USB Init Failed:", err);
                 }
@@ -196,7 +225,7 @@ class PrinterService {
                 if (!hasPerm) return [];
 
                 try {
-                    const devices = await BLEPrinter.getDeviceList();
+                    const devices = BLEPrinter ? await BLEPrinter.getDeviceList() : [];
                     console.log("[Printer] BLE Devices found:", devices);
                     return devices || [];
                 } catch (e) {
@@ -205,7 +234,7 @@ class PrinterService {
                 }
             } else {
                 try {
-                    const devices = await USBPrinter.getDeviceList();
+                    const devices = USBPrinter ? await USBPrinter.getDeviceList() : [];
                     console.log("[Printer] USB Devices found:", devices);
                     return devices || [];
                 } catch (e) {
@@ -225,9 +254,9 @@ class PrinterService {
             console.log(`[Printer] Connecting to ${this.connectionType}:`, printerMac);
 
             if (this.connectionType === 'ble') {
-                await BLEPrinter.connectPrinter(printerMac);
+                if (BLEPrinter) await BLEPrinter.connectPrinter(printerMac);
             } else {
-                await USBPrinter.connectPrinter(device.vendor_id, device.product_id);
+                if (USBPrinter) await USBPrinter.connectPrinter(device.vendor_id, device.product_id);
             }
 
             this.connected = true;
@@ -261,6 +290,10 @@ class PrinterService {
             await this.loadCompanyInfo();
 
             const PrinterInterface = this.connectionType === 'ble' ? BLEPrinter : USBPrinter;
+            if (!PrinterInterface) {
+                Alert.alert("Error", "Printer module not available");
+                return false;
+            }
 
             // Use dynamic width
             const PRINTER_WIDTH = this.printerCharsPerLine || 32;
@@ -380,6 +413,14 @@ class PrinterService {
                     const priceStr = itemTotal.toFixed(2).padStart(priceLen, " ");
 
                     receipt += `${name} ${qtyStr} ${priceStr}\n`;
+
+                    // Extra Line for HSN/GST
+                    if (item.hsn || item.gst || item.taxcode || item.text6) {
+                        const hsnVal = item.hsn || item.text6 || '-';
+                        const gstVal = item.gst || item.taxcode || '-';
+                        // Indent slightly
+                        receipt += `  HSN:${hsnVal} GST:${gstVal}%\n`;
+                    }
                 });
             }
 
@@ -433,6 +474,11 @@ class PrinterService {
             await this.loadCompanyInfo();
 
             const PrinterInterface = this.connectionType === 'ble' ? BLEPrinter : USBPrinter;
+            if (!PrinterInterface) {
+                Alert.alert("Error", "Printer module failing to load");
+                return false;
+            }
+
             const PRINTER_WIDTH = this.printerCharsPerLine || 32;
 
             const centerText = (text) => {
