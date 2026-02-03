@@ -27,6 +27,7 @@ class DatabaseService {
 
             await this.checkAndMigrate();
             await this.createTables();
+            await this.cleanupCollections();
 
             this.isInitialized = true;
             console.log('[DB] ✅ Database initialized successfully');
@@ -503,35 +504,66 @@ class DatabaseService {
         try {
             console.log('[DB] Searching for barcode:', barcode);
 
-            // First, try to find product by barcode in products table
-            let result = await this.db.getFirstAsync('SELECT * FROM products WHERE barcode = ?', [barcode]);
+            // 1. First, try searching in batches table (more detailed info)
+            let batchResult = await this.db.getFirstAsync(
+                'SELECT p.*, b.*, b.barcode as batch_barcode, b.mrp as batch_mrp, b.quantity as batch_quantity ' +
+                'FROM batches b ' +
+                'JOIN products p ON b.product_code = p.code ' +
+                'WHERE b.barcode = ? LIMIT 1',
+                [barcode]
+            );
 
-            // If not found in products table, search in batches table
-            if (!result) {
-                console.log('[DB] Not found in products table, searching batches...');
-                const batchResult = await this.db.getFirstAsync(
-                    'SELECT p.*, b.barcode as batch_barcode, b.mrp, b.retail, b.dp, b.cb, b.cost, b.quantity as batch_quantity, b.batch_id, b.expiry_date, b.sales, b.fourth_price, b.nlc1, b.bmrp FROM batches b JOIN products p ON b.product_code = p.code WHERE b.barcode = ? LIMIT 1',
-                    [barcode]
-                );
-
-                if (batchResult) {
-                    console.log('[DB] Found product via batch barcode:', batchResult.name);
-                    // Merge batch info into product
-                    result = {
-                        ...batchResult,
-                        barcode: batchResult.batch_barcode || batchResult.barcode,
-                        price: batchResult.retail || batchResult.price || 0,
-                        mrp: batchResult.mrp || 0,
-                        stock: batchResult.batch_quantity || batchResult.stock || 0,
-                        batchId: batchResult.batch_id,
-                        expiryDate: batchResult.expiry_date
-                    };
-                }
-            } else {
-                console.log('[DB] Found product in products table:', result.name);
+            if (batchResult) {
+                console.log('[DB] Found via batch barcode:', batchResult.name);
+                return {
+                    ...batchResult,
+                    barcode: batchResult.batch_barcode || batchResult.barcode,
+                    mrp: batchResult.batch_mrp || batchResult.mrp || 0,
+                    stock: batchResult.batch_quantity || batchResult.stock || 0,
+                    price: batchResult.retail || batchResult.price || 0,
+                    batchId: batchResult.batch_id,
+                    expiryDate: batchResult.expiry_date,
+                    // Map common prices to camelCase for UI consistency with batchService
+                    netRate: batchResult.net_rate || 0,
+                    pkShop: batchResult.pk_shop || 0,
+                    secondPrice: batchResult.second_price || 0,
+                    thirdPrice: batchResult.third_price || 0,
+                    fourthPrice: batchResult.fourth_price || 0,
+                };
             }
 
-            return result;
+            // 2. If not found in batches, check products table
+            let productResult = await this.db.getFirstAsync('SELECT * FROM products WHERE barcode = ? OR code = ?', [barcode, barcode]);
+            if (productResult) {
+                console.log('[DB] Found via product barcode/code:', productResult.name);
+
+                // Try to get ANY batch for this product to get pricing levels
+                const firstBatch = await this.db.getFirstAsync(
+                    'SELECT * FROM batches WHERE product_code = ? LIMIT 1',
+                    [productResult.code]
+                );
+
+                if (firstBatch) {
+                    return {
+                        ...productResult,
+                        ...firstBatch,
+                        barcode: firstBatch.barcode || productResult.barcode,
+                        price: firstBatch.retail || productResult.price || 0,
+                        stock: firstBatch.quantity || productResult.stock || 0,
+                        mrp: firstBatch.mrp || productResult.mrp || 0,
+                        batchId: firstBatch.batch_id,
+                        // Map common prices to camelCase for UI consistency
+                        netRate: firstBatch.net_rate || 0,
+                        pkShop: firstBatch.pk_shop || 0,
+                        secondPrice: firstBatch.second_price || 0,
+                        thirdPrice: firstBatch.third_price || 0,
+                        fourthPrice: firstBatch.fourth_price || 0,
+                    };
+                }
+                return productResult;
+            }
+
+            return null;
         } catch (error) {
             console.error('[DB] Error getting product by barcode:', error);
             return null;
@@ -1156,6 +1188,24 @@ class DatabaseService {
         } catch (error) {
             console.error('[DB] Error deleting collection:', error);
             return false;
+        }
+    }
+
+    async cleanupCollections() {
+        try {
+            if (!this.db) return;
+            // Delete all collections older than 3 days
+            // We use 'now', '-3 days' to catch everything older than 3 days
+            // The date field is stored in ISO format (YYYY-MM-DDTHH:MM:SS)
+            console.log('[DB] Running collections cleanup (3 day policy)...');
+            const result = await this.db.runAsync(
+                "DELETE FROM offline_collections WHERE date < datetime('now', '-3 days')"
+            );
+            if (result.changes > 0) {
+                console.log(`[DB] Cleaned up ${result.changes} old collections`);
+            }
+        } catch (error) {
+            console.error('[DB] Error cleaning up collections:', error);
         }
     }
 

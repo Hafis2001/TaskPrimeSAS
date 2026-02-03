@@ -12,7 +12,6 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 
 export default function CollectionScreen() {
@@ -84,7 +83,7 @@ export default function CollectionScreen() {
           contentContainerStyle={styles.scrollContent}
         >
           {/* Banner */}
-          <Animated.View entering={FadeInDown.delay(100)} style={styles.bannerContainer}>
+          <View style={styles.bannerContainer}>
             <LinearGradient
               colors={Gradients.primary}
               start={{ x: 0, y: 0 }}
@@ -101,17 +100,16 @@ export default function CollectionScreen() {
                 </View>
               </View>
             </LinearGradient>
-          </Animated.View>
+          </View>
 
           {/* Quick Actions Section */}
-          <Animated.View entering={FadeInUp.delay(300)} style={styles.sectionContainer}>
+          <View style={styles.sectionContainer}>
             <Text style={styles.sectionTitle}>Quick Actions</Text>
 
             <View style={styles.cardsContainer}>
               {sections.map((section, index) => (
-                <Animated.View
+                <View
                   key={section.id}
-                  entering={FadeInUp.delay(400 + index * 100)}
                 >
                   <TouchableOpacity
                     style={styles.actionCard}
@@ -131,13 +129,13 @@ export default function CollectionScreen() {
                       <Ionicons name="chevron-forward" size={20} color={Colors.neutral[400]} />
                     </View>
                   </TouchableOpacity>
-                </Animated.View>
+                </View>
               ))}
             </View>
-          </Animated.View>
+          </View>
 
           {/* Recent Activity Placeholder */}
-          <Animated.View entering={FadeInUp.delay(600)} style={styles.recentSection}>
+          <View style={styles.recentSection}>
             <Text style={styles.sectionTitle}>Overview</Text>
             <View style={styles.infoCard}>
               <Ionicons name="information-circle-outline" size={20} color={Colors.text.secondary} />
@@ -145,7 +143,7 @@ export default function CollectionScreen() {
                 Ensure you upload local collections when you have internet access to keep data synced.
               </Text>
             </View>
-          </Animated.View>
+          </View>
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>

@@ -409,7 +409,7 @@ class PrinterService {
                     totalAmount += itemTotal;
 
                     const name = String(item.name || "Item").substring(0, itemLen).padEnd(itemLen, " ");
-                    const qtyStr = String(qty).padStart(qtyLen, " ");
+                    const qtyStr = qty.toFixed(2).padStart(qtyLen, " ");
                     const priceStr = itemTotal.toFixed(2).padStart(priceLen, " ");
 
                     receipt += `${name} ${qtyStr} ${priceStr}\n`;

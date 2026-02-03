@@ -748,7 +748,7 @@ export default function PlaceOrder() {
               <View key={index} style={styles.itemRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{item.name}</Text>
-                  <Text style={styles.itemPrice}>{item.price.toFixed(2)} x {item.qty}</Text>
+                  <Text style={styles.itemPrice}>{item.price.toFixed(2)} x {parseFloat(item.qty).toFixed(2)}</Text>
                 </View>
                 <Text style={styles.itemTotal}>{item.total.toFixed(2)}</Text>
               </View>

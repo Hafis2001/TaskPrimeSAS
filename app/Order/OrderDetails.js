@@ -124,20 +124,28 @@ const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) =>
   const [localQty, setLocalQty] = useState(String(item.qty));
 
   useEffect(() => {
-    setLocalQty(String(item.qty));
+    setLocalQty(item.qty % 1 === 0 ? String(item.qty) : parseFloat(item.qty).toFixed(2));
   }, [item.qty]);
 
   const handleTextChange = (text) => {
     setLocalQty(text);
-    const val = parseInt(text, 10);
+    // Allow empty or partial decimal input while typing
+    if (text === '' || text === '.') return;
+
+    const val = parseFloat(text);
     if (!isNaN(val) && val > 0) {
+      // Only update check if it ends with a valid number format to avoid jumpiness
+      // But for responsive cart updates we probably want to update
       changeQty(item.product.id, val);
     }
   };
 
   const handleBlur = () => {
-    if (!localQty || isNaN(parseInt(localQty, 10)) || parseInt(localQty, 10) <= 0) {
-      setLocalQty(String(item.qty));
+    const val = parseFloat(localQty);
+    if (!localQty || isNaN(val) || val <= 0) {
+      setLocalQty(item.qty % 1 === 0 ? String(item.qty) : parseFloat(item.qty).toFixed(2));
+    } else {
+      setLocalQty(val % 1 === 0 ? String(val) : val.toFixed(2));
     }
   };
 
@@ -208,7 +216,7 @@ const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) =>
               color: Colors.text.primary,
               backgroundColor: '#FFF'
             }}
-            keyboardType="number-pad"
+            keyboardType="numeric"
             selectTextOnFocus={true}
             value={localQty}
             onChangeText={handleTextChange}
@@ -477,14 +485,14 @@ export default function OrderDetails() {
       const fieldName = PRICE_FIELD_MAP[effectivePriceCode] || 'retail';
       let dynamicPrice = p[fieldName];
 
-      // Fallback if price is 0 or missing
-      if (!dynamicPrice && dynamicPrice !== 0 && fieldName !== 'retail') {
+      // Fallback if price is missing or 0
+      if (!dynamicPrice && fieldName !== 'retail') {
         dynamicPrice = p.retail || p.price;
       }
 
-      // Ensure we have a valid price
-      if (dynamicPrice === undefined || dynamicPrice === null) {
-        dynamicPrice = p.price || 0;
+      // Final safety check
+      if (dynamicPrice === undefined || dynamicPrice === null || dynamicPrice === 0) {
+        dynamicPrice = p.price || p.retail || 0;
       }
 
       // 2. Attach Restricted Codes
@@ -750,19 +758,21 @@ export default function OrderDetails() {
       console.log('[OrderDetails] Product found:', product.name);
 
       return {
+        ...product, // Preserve all fields (retail, dp, etc.)
         id: product.id || product.code,
         code: product.code,
         name: product.name,
         barcode: product.barcode || product.code,
-        price: product.price || 0,
-        mrp: product.mrp || 0,
         stock: product.stock || 0,
         brand: product.brand || '',
         unit: product.unit || '',
         photos: product.photos || [],
         taxcode: product.taxcode || '',
-        text6: product.text6 || '', // HSN Code (mapped from text6)
+        text6: product.text6 || '',
         productCategory: product.category || '',
+        // Don't overwrite product.price if it exists and is > 0
+        price: product.price || product.retail || 0,
+        mrp: product.mrp || 0,
       };
 
     } catch (error) {
@@ -895,6 +905,12 @@ export default function OrderDetails() {
     }
 
     if (productToShow) {
+      // Re-apply pricing rules to ensure current effective price is used
+      const [pricedProduct] = applyPricingToProducts([productToShow]);
+      if (pricedProduct) {
+        productToShow = pricedProduct;
+      }
+
       // Ensure it's in the filtered list (might be filtered out)
       setFilteredProducts(prev => {
         const exists = prev.find(p => p.id === productToShow.id);
@@ -957,9 +973,9 @@ export default function OrderDetails() {
           ...fetchedProduct,
           id: generatedId,
           photos: fetchedProduct.photos || [],
-          // Ensure all required fields are present
+          // Preserve fields
           mrp: fetchedProduct.mrp || 0,
-          price: fetchedProduct.price || 0,
+          price: fetchedProduct.price || fetchedProduct.retail || 0,
           stock: fetchedProduct.stock || 0,
           brand: fetchedProduct.brand || '',
           unit: fetchedProduct.unit || '',
@@ -1034,11 +1050,17 @@ export default function OrderDetails() {
   }
 
   function openQuantityModal(product) {
-    console.log('[OrderDetails] Opening quantity modal for:', product.name);
+    console.log('[OrderDetails] Opening quantity modal for:', product.name, 'Price:', product.price);
     setSelectedProduct(product);
-    setTempQuantity("1");
-    // Initialize temp price
-    setTempPrice(product.price ? String(product.price) : "0");
+
+    // Check if item is already in cart to provide better initial quantity
+    const existing = cartRef.current?.find(it => it.product.id === product.id);
+    const initialQty = existing ? existing.qty + 1 : 1;
+
+    setTempQuantity(String(initialQty));
+    // Initialize temp price (ensure it's a valid string)
+    const initialPrice = product.price || product.retail || product.mrp || 0;
+    setTempPrice(String(initialPrice));
     setQuantityModalVisible(true);
   }
 
@@ -1050,7 +1072,7 @@ export default function OrderDetails() {
 
   function handleConfirmQuantity() {
     if (selectedProduct) {
-      const qty = parseInt(tempQuantity, 10);
+      const qty = parseFloat(tempQuantity);
       if (isNaN(qty) || qty <= 0) {
         Alert.alert("Invalid Quantity", "Please enter a valid quantity");
         return;
@@ -1065,7 +1087,7 @@ export default function OrderDetails() {
         }
       }
 
-      addToCart(productToAdd, qty);
+      addToCart(productToAdd, qty, null, true); // Use overwrite=true for modal
       closeQuantityModal();
     }
   }
@@ -1152,7 +1174,7 @@ export default function OrderDetails() {
     ]).start();
   }, []);
 
-  const addToCart = useCallback((product, quantity = 1, startCoords = null) => {
+  const addToCart = useCallback((product, quantity = 1, startCoords = null, overwrite = false) => {
     console.log('═══════════════════════════════════════════════════════');
     console.log('[OrderDetails] ➕ ADD TO CART CALLED');
     console.log('[OrderDetails] Product:', product.name, 'ID:', product.id);
@@ -1179,7 +1201,7 @@ export default function OrderDetails() {
       newCart = [...currentCart];
       newCart[idx] = {
         ...newCart[idx],
-        qty: newCart[idx].qty + quantity
+        qty: overwrite ? quantity : newCart[idx].qty + quantity
       };
     } else {
       // New item - add to beginning
@@ -1351,7 +1373,7 @@ export default function OrderDetails() {
           batchId: item.product.batchId || null,
           mrp: item.product.mrp || 0,
           price: item.product.price,
-          qty: item.qty,
+          qty: parseFloat(item.qty).toFixed(2),
           total: item.qty * item.product.price,
           hsn: item.product.text6 || '', // Save HSN
           gst: item.product.taxcode || '' // Save GST
@@ -1733,7 +1755,7 @@ export default function OrderDetails() {
               renderItem={({ item }) => {
                 const cartItem = cart.find(c => c.product.id === item.id);
                 const currentQty = cartItem?.qty || 0;
-                const displayValue = editingQty[item.id] !== undefined ? editingQty[item.id] : String(currentQty);
+                const displayValue = editingQty[item.id] !== undefined ? editingQty[item.id] : (currentQty % 1 === 0 ? String(currentQty) : currentQty.toFixed(2));
                 const inStock = true;
                 const stockQty = item.stock || 0;
                 const isInCart = currentQty > 0;
@@ -2058,7 +2080,7 @@ export default function OrderDetails() {
                       </View>
                     ) : (
                       <Text style={styles.quantityProductPrice}>
-                        {selectedProduct.price.toFixed(2)} per unit
+                        {(selectedProduct.price || selectedProduct.retail || 0).toFixed(2)} per unit
                       </Text>
                     )}
                   </View>
@@ -2067,7 +2089,7 @@ export default function OrderDetails() {
                     <TouchableOpacity
                       style={styles.quantityButton}
                       onPress={() => {
-                        const current = parseInt(tempQuantity, 10) || 1;
+                        const current = parseFloat(tempQuantity) || 1;
                         setTempQuantity(String(Math.max(1, current - 1)));
                       }}
                     >
@@ -2076,10 +2098,15 @@ export default function OrderDetails() {
 
                     <TextInput
                       style={styles.quantityInput}
-                      value={tempQuantity}
+                      value={String(tempQuantity)}
                       keyboardType="numeric"
+                      autoFocus={true}
                       onChangeText={(text) => {
-                        const cleaned = text.replace(/[^0-9]/g, '');
+                        // Allow decimals
+                        const cleaned = text.replace(/[^0-9.]/g, '');
+                        // Prevent multiple dots
+                        const parts = cleaned.split('.');
+                        if (parts.length > 2) return;
                         setTempQuantity(cleaned);
                       }}
                       selectTextOnFocus={true}
@@ -2088,7 +2115,7 @@ export default function OrderDetails() {
                     <TouchableOpacity
                       style={styles.quantityButton}
                       onPress={() => {
-                        const current = parseInt(tempQuantity, 10) || 1;
+                        const current = parseFloat(tempQuantity) || 1;
                         setTempQuantity(String(current + 1));
                       }}
                     >
@@ -2099,7 +2126,7 @@ export default function OrderDetails() {
                   <View style={styles.quantityTotalContainer}>
                     <Text style={styles.quantityTotalLabel}>Total:</Text>
                     <Text style={styles.quantityTotalValue}>
-                      {((parseInt(tempQuantity, 10) || 0) * (appSettings?.order_rate_editable ? (parseFloat(tempPrice) || 0) : selectedProduct.price)).toFixed(2)}
+                      {((parseFloat(tempQuantity) || 0) * (appSettings?.order_rate_editable ? (parseFloat(tempPrice) || 0) : selectedProduct.price)).toFixed(2)}
                     </Text>
                   </View>
 
@@ -2441,10 +2468,14 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
                 if (currentQty === 0) changeQty(item.id, 1);
               }}
               onChangeText={(text) => {
-                const cleaned = text.replace(/[^0-9]/g, '');
+                const cleaned = text.replace(/[^0-9.]/g, '');
+                // Prevent multiple dots
+                const parts = cleaned.split('.');
+                if (parts.length > 2) return;
+
                 setEditingQty(prev => ({ ...prev, [item.id]: cleaned }));
-                if (cleaned !== "") {
-                  const num = parseInt(cleaned, 10);
+                if (cleaned !== "" && cleaned !== ".") {
+                  const num = parseFloat(cleaned);
                   if (!isNaN(num)) changeQty(item.id, num);
                 }
               }}

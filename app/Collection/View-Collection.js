@@ -17,10 +17,10 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
-import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated";
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
+import dbService from "../../src/services/database";
 import pdfService from "../../src/services/pdfService";
 import printerService from "../../src/services/printerService";
 
@@ -40,6 +40,7 @@ export default function ViewCollectionScreen() {
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [filteredTotal, setFilteredTotal] = useState(0);
 
   // Printer State
   const [printerModalVisible, setPrinterModalVisible] = useState(false);
@@ -138,10 +139,35 @@ export default function ViewCollectionScreen() {
           return new Date(b.date) - new Date(a.date);
         });
 
-        setCollections(sortedCollections);
-        calculateStats(sortedCollections);
+        // 3. Fetch local PENDING collections
+        await dbService.init();
+        const pendingLocal = await dbService.getOfflineCollections(0); // 0 means unsynced
+        console.log("[View-Collection] Found local pending:", pendingLocal.length);
+
+        const mappedPending = pendingLocal.map(item => ({
+          ...item,
+          synced: 0,
+          id: item.local_id || item.id,
+          date: item.date || new Date().toISOString()
+        }));
+
+        // Merge both
+        const allCollections = [...mappedPending, ...sortedCollections];
+
+        setCollections(allCollections);
+        calculateStats(allCollections);
       } else {
         console.log("API response not success or no data", json);
+        // Still try to show local pending if API fails
+        await dbService.init();
+        const pendingLocal = await dbService.getOfflineCollections(0);
+        const mappedPending = pendingLocal.map(item => ({
+          ...item,
+          synced: 0,
+          id: item.local_id || item.id
+        }));
+        setCollections(mappedPending);
+        calculateStats(mappedPending);
       }
     } catch (error) {
       console.error("[View-Collection] Error loading collections:", error);
@@ -158,13 +184,12 @@ export default function ViewCollectionScreen() {
   }, []);
 
   const calculateStats = (data) => {
-    // API data implies everything is synced
-    const syncedItems = data;
-    const pendingItems = [];
+    const syncedItems = data.filter(item => item.synced === 1);
+    const pendingItems = data.filter(item => item.synced === 0);
 
     const totalAmount = data.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
-    const syncedAmount = totalAmount;
-    const pendingAmount = 0;
+    const syncedAmount = syncedItems.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+    const pendingAmount = pendingItems.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
 
     setStats({
       total: data.length,
@@ -179,11 +204,11 @@ export default function ViewCollectionScreen() {
   const applyFilters = () => {
     let filtered = [...collections];
 
-    // Filter by sync status (everything is synced from API)
+    // Filter by sync status
     if (filterStatus === "synced") {
-      // No-op
+      filtered = filtered.filter(item => item.synced === 1);
     } else if (filterStatus === "pending") {
-      filtered = []; // No pending items in API view
+      filtered = filtered.filter(item => item.synced === 0);
     }
 
     // Filter by payment type
@@ -209,6 +234,8 @@ export default function ViewCollectionScreen() {
     }
 
     setFilteredCollections(filtered);
+    const total = filtered.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+    setFilteredTotal(total);
   };
 
   const handleDelete = (collection) => {
@@ -303,7 +330,7 @@ export default function ViewCollectionScreen() {
   };
 
   const renderStatCard = (title, value, subtitle, colorStart, colorEnd, icon) => (
-    <Animated.View entering={FadeInUp.delay(100)} style={styles.statCardContainer}>
+    <View style={styles.statCardContainer}>
       <LinearGradient
         colors={[colorStart, colorEnd]}
         start={{ x: 0, y: 0 }}
@@ -319,11 +346,11 @@ export default function ViewCollectionScreen() {
           <Text style={styles.statSubtitle}>{subtitle}</Text>
         </View>
       </LinearGradient>
-    </Animated.View>
+    </View>
   );
 
   const renderCollectionItem = ({ item, index }) => (
-    <Animated.View entering={FadeInUp.delay(index * 30)} style={styles.collectionCard}>
+    <View style={styles.collectionCard}>
       <TouchableOpacity
         style={styles.cardContent}
         onPress={() => handleViewDetails(item)}
@@ -375,7 +402,7 @@ export default function ViewCollectionScreen() {
           </View>
         </View>
       </TouchableOpacity>
-    </Animated.View>
+    </View>
   );
 
   if (loading && !refreshing) {
@@ -404,11 +431,11 @@ export default function ViewCollectionScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsScroll}>
             {renderStatCard("Total", stats.total, formatCurrency(stats.totalAmount), Colors.primary.main, Colors.primary[600], "layers")}
             {renderStatCard("Synced", stats.synced, formatCurrency(stats.syncedAmount), Colors.success.main, Colors.success[600], "cloud-done")}
-            {/* stats.pending will be 0 */}
+            {renderStatCard("Pending", stats.pending, formatCurrency(stats.pendingAmount), Colors.warning.main, Colors.warning[600], "time-outline")}
           </ScrollView>
         </View>
 
-        <Animated.View entering={FadeInDown} style={styles.searchContainer}>
+        <View style={styles.searchContainer}>
           <Ionicons name="search" size={20} color={Colors.text.tertiary} style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
@@ -422,7 +449,7 @@ export default function ViewCollectionScreen() {
               <Ionicons name="close-circle" size={20} color={Colors.text.tertiary} />
             </TouchableOpacity>
           )}
-        </Animated.View>
+        </View>
 
         <FlatList
           data={filteredCollections}
@@ -438,6 +465,31 @@ export default function ViewCollectionScreen() {
             </View>
           }
         />
+
+        {/* Collection Total Footer */}
+        <View style={styles.footerContainer}>
+          <LinearGradient
+            colors={[Colors.primary.main, Colors.primary[700]]}
+            style={styles.footerGradient}
+          >
+            <View style={styles.footerLeft}>
+              <Ionicons name="calculator" size={24} color="#FFF" style={{ marginRight: 12 }} />
+              <View>
+                <Text style={styles.footerLabel}>
+                  {filterPaymentType === 'cash' ? 'Cash Total' :
+                    filterPaymentType === 'check' ? 'Cheque Total' :
+                      'Total Collection'}
+                </Text>
+                <Text style={styles.footerCount}>{filteredCollections.length} entries</Text>
+              </View>
+            </View>
+            <View style={styles.footerRight}>
+              <Text style={styles.footerTotalAmount}>
+                {formatCurrency(filteredTotal)}
+              </Text>
+            </View>
+          </LinearGradient>
+        </View>
 
         {/* Filter Modal */}
         <Modal visible={showFilterModal} animationType="fade" transparent onRequestClose={() => setShowFilterModal(false)}>
@@ -455,7 +507,15 @@ export default function ViewCollectionScreen() {
                 {filterStatus === "all" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
               </TouchableOpacity>
 
-              {/* Removed Pending option since API only has synced */}
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("synced"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterStatus === "synced" && styles.activeFilterText]}>Synced Only</Text>
+                {filterStatus === "synced" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.filterOption} onPress={() => { setFilterStatus("pending"); setShowFilterModal(false); }}>
+                <Text style={[styles.filterOptionText, filterStatus === "pending" && styles.activeFilterText]}>Pending Only</Text>
+                {filterStatus === "pending" && <Ionicons name="checkmark" size={20} color={Colors.primary.main} />}
+              </TouchableOpacity>
 
               <View style={styles.filterDivider} />
               <Text style={styles.filterSectionTitle}>Payment Type</Text>
@@ -749,7 +809,7 @@ const styles = StyleSheet.create({
   },
   searchIcon: { marginRight: Spacing.sm },
   searchInput: { flex: 1, fontSize: Typography.sizes.base, color: Colors.text.primary },
-  listContent: { paddingHorizontal: Spacing.lg, paddingBottom: 100 },
+  listContent: { paddingHorizontal: Spacing.lg, paddingBottom: 260 },
   collectionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: BorderRadius.lg,
@@ -920,5 +980,44 @@ const styles = StyleSheet.create({
     color: Colors.text.secondary,
     textTransform: 'uppercase',
     marginBottom: Spacing.sm,
+  },
+  footerContainer: {
+    position: 'absolute',
+    bottom: 45,
+    left: 20,
+    right: 20,
+    borderRadius: BorderRadius.xl,
+    ...Shadows.md,
+    overflow: 'hidden',
+  },
+  footerGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+  },
+  footerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  footerLabel: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: Typography.sizes.xs,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  footerCount: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  footerRight: {
+    alignItems: 'flex-end',
+  },
+  footerTotalAmount: {
+    color: '#FFFFFF',
+    fontSize: Typography.sizes.xl,
+    fontWeight: '700',
   },
 });
