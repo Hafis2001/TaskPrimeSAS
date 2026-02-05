@@ -88,11 +88,11 @@ export default function LoginScreen() {
         const loginTimestamp = await AsyncStorage.getItem("loginTimestamp");
 
         if (token) {
-          // Check if session is expired (24 hours = 86400000 ms)
+          // Check if session is expired (20 hours = 72000000 ms)
           const now = Date.now();
-          const twentyFourHours = 24 * 60 * 60 * 1000;
+          const twentyHours = 20 * 60 * 60 * 1000;
 
-          if (!loginTimestamp || (now - parseInt(loginTimestamp, 10) > twentyFourHours)) {
+          if (!loginTimestamp || (now - parseInt(loginTimestamp, 10) > twentyHours)) {
             console.log('[LoginScreen] Session expired or invalid timestamp');
             await AsyncStorage.multiRemove(["authToken", "user", "loginTimestamp"]);
             return; // Stay on login screen

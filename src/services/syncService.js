@@ -475,6 +475,7 @@ class SyncService {
             // Store entire JSON object
             await AsyncStorage.setItem('app_settings', JSON.stringify(data));
             console.log('[Sync] Settings downloaded and saved');
+            console.log('[Sync] barcode_based_list:', data.barcode_based_list);
             return true;
         } catch (error) {
             console.error('[Sync] Error downloading settings:', error);

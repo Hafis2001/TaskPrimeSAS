@@ -99,10 +99,29 @@ export default function PunchInScreen() {
   }, [punchStatus?.is_punched_in]);
 
   // Sort customers alphabetically
+  // Filter and Sort customers based on Area
+  // Filter and Sort customers based on Area
   useEffect(() => {
-    const sorted = [...allCustomers].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    let filtered = [...allCustomers];
+
+    // Filter by Area if not "All"
+    if (selectedArea && selectedArea !== "All") {
+      filtered = filtered.filter(c => {
+        // Logic from Entry.js: Check area OR place
+        const customerArea = c.area && c.area.trim() !== "" ? c.area : c.place;
+        return customerArea === selectedArea;
+      });
+    }
+
+    const sorted = filtered.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     setFilteredCustomers(sorted);
-  }, [allCustomers]);
+  }, [allCustomers, selectedArea]);
+
+  // Reset selection when Area changes
+  useEffect(() => {
+    setSelectedCustomerCode("");
+    setCustomerSearchQuery("");
+  }, [selectedArea]);
 
   // Filter customers for Picker Search
   useEffect(() => {
@@ -216,6 +235,22 @@ export default function PunchInScreen() {
       console.log(`[PunchIn] Fetched ${firms.length} shop locations for log`);
       setRawLocations(firms);
 
+      // Create a Set of Verified Firm Codes (Status != 'pending')
+      // User requirement: "show only the verified customers only from [API]"
+      // and "status verified no need to show the customers pending"
+      const verifiedFirmCodes = new Set();
+      firms.forEach(firm => {
+        // normalizing code to string and trimming
+        const code = String(firm.firm_code || '').trim();
+        const status = String(firm.status || '').toLowerCase();
+
+        if (code && status !== 'pending') {
+          verifiedFirmCodes.add(code);
+        }
+      });
+
+      console.log(`[PunchIn] Found ${verifiedFirmCodes.size} verified firm codes`);
+
       // Fetch Debtors for Selection List
       console.log("[PunchIn] Fetching debtors for selection...");
       const debtorsResp = await fetch('https://tasksas.com/api/debtors/get-debtors/', {
@@ -244,15 +279,25 @@ export default function PunchInScreen() {
 
       // MAPPING Debtors: code, name, place, balance, client_id
       const mappedCustomers = debtors.map(debtor => ({
+        ...debtor, // Spread all properties (includes latitude, longitude if present)
         code: debtor.code || debtor.id?.toString(),
         name: debtor.name || "Unknown Debtor",
         place: debtor.place || debtor.area || '',
+        area: debtor.area || '', // Ensure area is explicitly mapped
         balance: debtor.balance || 0,
         client_id: debtor.client_id
       }));
 
-      setAllCustomers(mappedCustomers);
-      setFilteredCustomers(mappedCustomers);
+      // APPLY FILTER: Only show verified customers
+      const verifiedCustomers = mappedCustomers.filter(c => {
+        const code = String(c.code || '').trim();
+        return verifiedFirmCodes.has(code);
+      });
+
+      console.log(`[PunchIn] Filtered ${mappedCustomers.length} -> ${verifiedCustomers.length} verified customers`);
+
+      setAllCustomers(verifiedCustomers);
+      setFilteredCustomers(verifiedCustomers);
     } catch (error) {
       console.error("[PunchIn] Error loading data:", error);
       Alert.alert("Error", `Failed to load shop locations: ${error.message}`);

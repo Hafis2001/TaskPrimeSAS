@@ -170,6 +170,7 @@ class BatchService {
      * OPTIMIZED: Uses bulk queries to avoid N+1 query problem
      * @param {number} limit - Optional limit for pagination (null = all)
      * @param {number} offset - Optional offset for pagination (default 0)
+     * @param {object} filters - Filter options including sortBy
      */
     async getProductBatchesOffline(limit = null, offset = 0, filters = {}) {
         try {
@@ -205,7 +206,14 @@ class BatchService {
                 query += ' AND stock > 0';
             }
 
-            query += ' ORDER BY name ASC';
+            // Apply sorting based on sortBy parameter
+            if (filters.sortBy === 'barcode') {
+                // Sort by barcode (CAST to INTEGER for numeric sorting if possible, fallback to text)
+                // SQLite will handle numeric strings correctly with CAST
+                query += ' ORDER BY CAST(barcode AS INTEGER) ASC, barcode ASC';
+            } else {
+                query += ' ORDER BY name ASC';
+            }
 
             if (limit !== null) {
                 query += ' LIMIT ? OFFSET ?';
@@ -278,8 +286,10 @@ class BatchService {
     /**
      * Transform products with batches into flat batch card list
      * Each batch becomes a separate card
+     * @param {Array} productsWithBatches - Products with their batches
+     * @param {string} sortBy - Sort method: 'barcode' or 'name' (default)
      */
-    transformBatchesToCards(productsWithBatches) {
+    transformBatchesToCards(productsWithBatches, sortBy = 'name') {
         try {
             console.log(`[BatchService] Transforming ${productsWithBatches.length} products to batch cards...`);
 
@@ -353,6 +363,7 @@ class BatchService {
                         if (batchCards.length <= 3) {
                             console.log(`[BatchService] Sample card ${batchCards.length}:`, {
                                 name: product.name,
+                                barcode: batch.barcode,
                                 mrp: mrp,
                                 retail: retail,
                                 price: retail > 0 ? retail : mrp,
@@ -398,8 +409,43 @@ class BatchService {
                     });
                 }
             }
+            // Sort the batch cards based on sortBy parameter
+            if (sortBy === 'barcode') {
+                console.log('[BatchService] Sorting batch cards by barcode...');
+                batchCards.sort((a, b) => {
+                    const barcodeA = a.barcode || '';
+                    const barcodeB = b.barcode || '';
 
-            console.log(`[BatchService] ✅ Created ${batchCards.length} batch cards`);
+                    // Check if barcodes are purely numeric
+                    const isNumericA = /^\d+$/.test(barcodeA);
+                    const isNumericB = /^\d+$/.test(barcodeB);
+
+                    // If both are numeric, sort numerically
+                    if (isNumericA && isNumericB) {
+                        return parseInt(barcodeA) - parseInt(barcodeB);
+                    }
+
+                    // If only A is numeric, A comes first
+                    if (isNumericA && !isNumericB) {
+                        return -1;
+                    }
+
+                    // If only B is numeric, B comes first
+                    if (!isNumericA && isNumericB) {
+                        return 1;
+                    }
+
+                    // If both are alphanumeric, sort alphabetically
+                    return barcodeA.localeCompare(barcodeB);
+                });
+            } else {
+                // Default: sort by name
+                batchCards.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            }
+
+            console.log(`[BatchService] ✅ Created ${batchCards.length} batch cards (sorted by ${sortBy})`);
+
+            return batchCards;
 
             return batchCards;
         } catch (error) {

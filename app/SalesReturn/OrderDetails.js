@@ -74,7 +74,7 @@ const FlyingItem = ({ startX, startY, endX, endY, onComplete }) => {
         width: 30,
         height: 30,
         borderRadius: 15,
-        backgroundColor: Colors.primary.main,
+        backgroundColor: Colors.accent.main,
         zIndex: 9999, // Ensure it's on top of everything
         transform: [
           { translateX },
@@ -170,7 +170,7 @@ const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) =>
               <TextInput
                 style={[styles.cartItemPrice, {
                   borderBottomWidth: 1,
-                  borderBottomColor: Colors.primary.light,
+                  borderBottomColor: Colors.accent[200],
                   minWidth: 50,
                   padding: 0,
                   fontSize: 15,
@@ -199,7 +199,7 @@ const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) =>
         {/* Quantity Section (Centered & Big) */}
         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.neutral[50], borderRadius: 8, padding: 2 }}>
           <TouchableOpacity onPress={() => changeQty(item.product.id, item.qty - 1)} style={{ padding: 8 }}>
-            <Ionicons name="remove-circle" size={32} color={Colors.primary.main} />
+            <Ionicons name="remove-circle" size={32} color={Colors.accent.main} />
           </TouchableOpacity>
 
           <TextInput
@@ -224,7 +224,7 @@ const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) =>
           />
 
           <TouchableOpacity onPress={(e) => changeQty(item.product.id, item.qty + 1, e)} style={{ padding: 8 }}>
-            <Ionicons name="add-circle" size={32} color={Colors.primary.main} />
+            <Ionicons name="add-circle" size={32} color={Colors.accent.main} />
           </TouchableOpacity>
         </View>
 
@@ -1126,7 +1126,7 @@ export default function OrderDetails() {
   }
 
   // Key for persisting temporary cart - dynamic based on username
-  const getCartKey = (user) => `temp_active_cart_${user}`;
+  const getCartKey = (user) => `temp_return_cart_${user}`;
 
   // Load cart from storage when username changes
   useEffect(() => {
@@ -1458,7 +1458,7 @@ export default function OrderDetails() {
     return (
       <View style={styles.emptyState}>
         <View style={styles.emptyIconContainer}>
-          <Ionicons name="cube-outline" size={60} color={Colors.primary.light} />
+          <Ionicons name="cube-outline" size={60} color={Colors.accent[200]} />
         </View>
         <Text style={styles.emptyStateTitle}>
           {allProducts.length === 0 ? "No Products Available" : "No Search Results"}
@@ -1471,12 +1471,12 @@ export default function OrderDetails() {
         <TouchableOpacity
           style={styles.scanActionBtn}
           onPress={() => router.push({
-            pathname: "/Order/Scanner",
+            pathname: "/SalesReturn/Scanner",
             params: { area, customer, customerCode, type, payment }
           })}
         >
           <LinearGradient
-            colors={Gradients.primary}
+            colors={Gradients.accent}
             style={styles.scanActionGradient}
           >
             <Ionicons name="qr-code" size={20} color="#fff" />
@@ -1489,7 +1489,7 @@ export default function OrderDetails() {
             style={styles.refreshActionBtn}
             onPress={onRefresh}
           >
-            <Ionicons name="refresh" size={20} color={Colors.primary.main} />
+            <Ionicons name="refresh" size={20} color={Colors.accent.main} />
             <Text style={styles.refreshActionText}>Refresh Products</Text>
           </TouchableOpacity>
         )}
@@ -1518,9 +1518,9 @@ export default function OrderDetails() {
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => handleBackPress()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
+            <Ionicons name="arrow-back" size={24} color={Colors.accent.main} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Order Details</Text>
+          <Text style={styles.headerTitle}>Sales Return Details</Text>
           <View style={{ width: 32 }} />
         </View>
 
@@ -1528,7 +1528,7 @@ export default function OrderDetails() {
           {/* Customer Card */}
           <View style={styles.customerCard}>
             <LinearGradient
-              colors={Gradients.primary}
+              colors={Gradients.accent}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.customerGradient}
@@ -1556,19 +1556,19 @@ export default function OrderDetails() {
               style={styles.actionIconButton}
               onPress={() => handleBackPress("/(tabs)/Home")}
             >
-              <Ionicons name="home" size={20} color={Colors.primary.main} />
+              <Ionicons name="home" size={20} color={Colors.accent.main} />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.actionIconButton}
               onPress={() => {
                 console.log('[OrderDetails] Scanner button pressed');
                 router.push({
-                  pathname: "/Order/Scanner",
+                  pathname: "/SalesReturn/Scanner",
                   params: { area, customer, customerCode, type, payment }
                 });
               }}
             >
-              <Ionicons name="qr-code" size={20} color={Colors.primary.main} />
+              <Ionicons name="qr-code" size={20} color={Colors.accent.main} />
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionIconButton, activeFiltersCount > 0 && styles.actionIconButtonActive]}
@@ -1577,7 +1577,7 @@ export default function OrderDetails() {
                 setFilterModalVisible(true);
               }}
             >
-              <Ionicons name="filter" size={20} color={activeFiltersCount > 0 ? "#FFF" : Colors.primary.main} />
+              <Ionicons name="filter" size={20} color={activeFiltersCount > 0 ? "#FFF" : Colors.accent.main} />
               {activeFiltersCount > 0 && (
                 <View style={styles.filterBadge}>
                   <Text style={styles.filterBadgeText}>{activeFiltersCount}</Text>
@@ -1591,16 +1591,16 @@ export default function OrderDetails() {
                 onRefresh();
               }}
             >
-              <Ionicons name="refresh" size={20} color={Colors.primary.main} />
+              <Ionicons name="refresh" size={20} color={Colors.accent.main} />
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionIconButton, pendingOrderCount > 0 && styles.actionIconButtonActive]}
               onPress={() => {
                 console.log('[OrderDetails] View Orders button pressed');
-                router.push("/Order/PlaceOrder");
+                router.push("/SalesReturn/PlaceOrder");
               }}
             >
-              <Ionicons name="receipt-outline" size={20} color={pendingOrderCount > 0 ? "#FFF" : Colors.primary.main} />
+              <Ionicons name="receipt-outline" size={20} color={pendingOrderCount > 0 ? "#FFF" : Colors.accent.main} />
               {pendingOrderCount > 0 && (
                 <View style={styles.cartBadge}>
                   <Text style={styles.cartBadgeText}>{pendingOrderCount}</Text>
@@ -1617,7 +1617,7 @@ export default function OrderDetails() {
               }}
             >
               <Animated.View style={{ transform: [{ scale: cartScale }] }}>
-                <Ionicons name="cart-outline" size={22} color={itemCount > 0 ? "#FFF" : Colors.primary.main} />
+                <Ionicons name="cart-outline" size={22} color={itemCount > 0 ? "#FFF" : Colors.accent.main} />
               </Animated.View>
               {itemCount > 0 && (
                 <View style={styles.cartBadge}>
@@ -1672,7 +1672,7 @@ export default function OrderDetails() {
                       toggleBrandSelection(brand);
                       setTimeout(() => applyFilters(), 100);
                     }}>
-                      <Ionicons name="close-circle" size={16} color={Colors.primary.main} />
+                      <Ionicons name="close-circle" size={16} color={Colors.accent.main} />
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -1683,7 +1683,7 @@ export default function OrderDetails() {
                       toggleCategorySelection(product);
                       setTimeout(() => applyFilters(), 100);
                     }}>
-                      <Ionicons name="close-circle" size={16} color={Colors.primary.main} />
+                      <Ionicons name="close-circle" size={16} color={Colors.accent.main} />
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -1694,7 +1694,7 @@ export default function OrderDetails() {
                       setFilterInStock(false);
                       setTimeout(() => applyFilters(), 100);
                     }}>
-                      <Ionicons name="close-circle" size={16} color={Colors.primary.main} />
+                      <Ionicons name="close-circle" size={16} color={Colors.accent.main} />
                     </TouchableOpacity>
                   </View>
                 )}
@@ -1708,7 +1708,7 @@ export default function OrderDetails() {
           {/* Loading States */}
           {(loading || searchLoading) && (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={Colors.primary.main} />
+              <ActivityIndicator size="large" color={Colors.accent.main} />
               <Text style={styles.loadingText}>
                 {searchLoading ? 'Searching product...' : 'Loading products...'}
               </Text>
@@ -1728,8 +1728,8 @@ export default function OrderDetails() {
                 <RefreshControl
                   refreshing={refreshing}
                   onRefresh={onRefresh}
-                  colors={[Colors.primary.main]}
-                  tintColor={Colors.primary.main}
+                  colors={[Colors.accent.main]}
+                  tintColor={Colors.accent.main}
                 />
               }
               ListEmptyComponent={renderEmptyState}
@@ -1755,7 +1755,7 @@ export default function OrderDetails() {
                 if (loadingMore) {
                   return (
                     <View style={{ padding: 20, alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color={Colors.primary.main} />
+                      <ActivityIndicator size="small" color={Colors.accent.main} />
                       <Text style={{ marginTop: 8, color: Colors.text.secondary, fontSize: 12 }}>
                         Loading more products...
                       </Text>
@@ -1777,7 +1777,7 @@ export default function OrderDetails() {
                       style={{ padding: 20, alignItems: 'center' }}
                       onPress={loadMoreProducts}
                     >
-                      <Text style={{ color: Colors.primary.main, fontSize: 14, fontWeight: '600' }}>
+                      <Text style={{ color: Colors.accent.main, fontSize: 14, fontWeight: '600' }}>
                         Load More Products
                       </Text>
                     </TouchableOpacity>
@@ -1985,7 +1985,7 @@ export default function OrderDetails() {
                   onPress={applyFilters}
                 >
                   <LinearGradient
-                    colors={Gradients.primary}
+                    colors={Gradients.accent}
                     style={styles.filterApplyGradient}
                   >
                     <Text style={styles.filterApplyButtonText}>
@@ -2103,7 +2103,7 @@ export default function OrderDetails() {
                           keyboardType="numeric"
                           style={{
                             borderBottomWidth: 1,
-                            borderBottomColor: Colors.primary.main,
+                            borderBottomColor: Colors.accent.main,
                             minWidth: 80,
                             textAlign: 'center',
                             fontWeight: '700',
@@ -2126,7 +2126,7 @@ export default function OrderDetails() {
                         setTempQuantity(String(Math.max(1, current - 1)));
                       }}
                     >
-                      <Ionicons name="remove" size={24} color={Colors.primary.main} />
+                      <Ionicons name="remove" size={24} color={Colors.accent.main} />
                     </TouchableOpacity>
 
                     <TextInput
@@ -2152,7 +2152,7 @@ export default function OrderDetails() {
                         setTempQuantity(String(current + 1));
                       }}
                     >
-                      <Ionicons name="add" size={24} color={Colors.primary.main} />
+                      <Ionicons name="add" size={24} color={Colors.accent.main} />
                     </TouchableOpacity>
                   </View>
 
@@ -2317,10 +2317,10 @@ export default function OrderDetails() {
 
                             return (
                               <View key={index} style={[styles.priceItem, isEffective && styles.priceItemHighlight]}>
-                                <Text style={[styles.priceLabel, isEffective && { color: Colors.primary.main }]}>
+                                <Text style={[styles.priceLabel, isEffective && { color: Colors.accent.main }]}>
                                   {priceObj.price_name} ({priceObj.price_code})
                                 </Text>
-                                <Text style={[styles.priceValue, isEffective && { color: Colors.primary.main }]}>
+                                <Text style={[styles.priceValue, isEffective && { color: Colors.accent.main }]}>
                                   {parseFloat(priceObj.value || 0).toFixed(2)}
                                 </Text>
                               </View>
@@ -2337,8 +2337,8 @@ export default function OrderDetails() {
                             )}
                             {selectedBatchDetails.price > 0 && !selectedBatchDetails.restrictedCodes?.includes(selectedBatchDetails.priceCodeUsed || 'S2') && (
                               <View style={[styles.priceItem, styles.priceItemHighlight]}>
-                                <Text style={[styles.priceLabel, { color: Colors.primary.main }]}>Rate ({selectedBatchDetails.priceCodeUsed || 'S2'})</Text>
-                                <Text style={[styles.priceValue, { color: Colors.primary.main }]}>{selectedBatchDetails.price?.toFixed(2)}</Text>
+                                <Text style={[styles.priceLabel, { color: Colors.accent.main }]}>Rate ({selectedBatchDetails.priceCodeUsed || 'S2'})</Text>
+                                <Text style={[styles.priceValue, { color: Colors.accent.main }]}>{selectedBatchDetails.price?.toFixed(2)}</Text>
                               </View>
                             )}
                             {selectedBatchDetails.retail > 0 && !selectedBatchDetails.restrictedCodes?.includes('S2') && (
@@ -2469,7 +2469,7 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
           style={styles.detailsLinkButton}
         >
           <Text style={styles.detailsLinkText}>View Details</Text>
-          <Ionicons name="chevron-forward" size={14} color={Colors.primary.main} />
+          <Ionicons name="chevron-forward" size={14} color={Colors.accent.main} />
         </TouchableOpacity>
       </View>
 
@@ -2537,7 +2537,7 @@ const CodeItem = ({ item, inStock, stockQty, currentQty, displayValue, isInCart,
             disabled={!inStock}
           >
             <LinearGradient
-              colors={inStock ? Gradients.primary : [Colors.neutral[200], Colors.neutral[200]]}
+              colors={inStock ? Gradients.accent : [Colors.neutral[200], Colors.neutral[200]]}
               style={styles.addButtonGradient}
             >
               <Ionicons name="cart-outline" size={20} color={inStock ? '#FFF' : Colors.text.tertiary} />
@@ -2614,8 +2614,8 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   actionIconButtonActive: {
-    backgroundColor: Colors.primary.main,
-    borderColor: Colors.primary.main,
+    backgroundColor: Colors.accent.main,
+    borderColor: Colors.accent.main,
   },
   filterBadge: {
     position: 'absolute',
@@ -2696,7 +2696,7 @@ const styles = StyleSheet.create({
   activeFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary[50],
+    backgroundColor: Colors.accent[50],
     paddingHorizontal: Spacing.sm,
     paddingVertical: 4,
     borderRadius: BorderRadius.full,
@@ -2706,7 +2706,7 @@ const styles = StyleSheet.create({
   },
   activeFilterChipText: {
     fontSize: Typography.sizes.xs,
-    color: Colors.primary.main,
+    color: Colors.accent.main,
     fontWeight: '600',
   },
   clearFiltersBtn: {
@@ -2767,24 +2767,24 @@ const styles = StyleSheet.create({
   mrpLabel: {
     fontSize: Typography.sizes.sm,
     fontWeight: '700',
-    color: Colors.primary.main,
+    color: Colors.accent.main,
     marginBottom: 0,
   },
   price: {
     fontSize: Typography.sizes.sm,
     fontWeight: '700',
-    color: Colors.primary.main,
+    color: Colors.accent.main,
   },
 
   productActions: { marginTop: 4, flexDirection: 'row', justifyContent: 'flex-end' },
   addButton: {
-    backgroundColor: Colors.primary[50],
+    backgroundColor: Colors.accent[50],
     paddingHorizontal: Spacing.sm,
     paddingVertical: 4,
     borderRadius: BorderRadius.full,
   },
   disabledAddButton: { backgroundColor: Colors.neutral[100] },
-  addButtonText: { color: Colors.primary.main, fontWeight: '600', fontSize: 10 },
+  addButtonText: { color: Colors.accent.main, fontWeight: '600', fontSize: 10 },
 
   qtyControl: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.neutral[50], borderRadius: BorderRadius.md },
   qtyBtn: { width: 28, height: 28, justifyContent: 'center', alignItems: 'center' },
@@ -2804,7 +2804,7 @@ const styles = StyleSheet.create({
   },
   detailsLinkText: {
     fontSize: 10,
-    color: Colors.primary.main,
+    color: Colors.accent.main,
     fontWeight: '600',
   },
   actionsContainer: {
@@ -2890,7 +2890,7 @@ const styles = StyleSheet.create({
   scanActionGradient: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, gap: 8 },
   scanActionText: { color: '#FFF', fontWeight: '700' },
   refreshActionBtn: { marginTop: Spacing.lg, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  refreshActionText: { color: Colors.primary.main, fontWeight: '600' },
+  refreshActionText: { color: Colors.accent.main, fontWeight: '600' },
 
   // Filter Modal
   filterModalOverlay: {
@@ -2940,7 +2940,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   filterTabActive: {
-    backgroundColor: Colors.primary.main,
+    backgroundColor: Colors.accent.main,
   },
   filterTabText: {
     fontSize: Typography.sizes.base,
@@ -3002,8 +3002,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   checkboxChecked: {
-    backgroundColor: Colors.primary.main,
-    borderColor: Colors.primary.main,
+    backgroundColor: Colors.accent.main,
+    borderColor: Colors.accent.main,
   },
   filterItemText: {
     fontSize: Typography.sizes.base,
@@ -3033,13 +3033,13 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.full,
     borderWidth: 1,
-    borderColor: Colors.primary.main,
+    borderColor: Colors.accent.main,
     alignItems: 'center',
   },
   filterClearButtonText: {
     fontSize: Typography.sizes.base,
     fontWeight: '600',
-    color: Colors.primary.main,
+    color: Colors.accent.main,
   },
   filterApplyButton: {
     flex: 1,
@@ -3096,7 +3096,7 @@ const styles = StyleSheet.create({
   cartItemInfo: { flex: 1 },
   cartItemName: { fontSize: Typography.sizes.base, fontWeight: '700', color: Colors.text.primary, flex: 1, marginRight: 10 },
   cartItemPrice: { fontSize: Typography.sizes.sm, color: Colors.text.secondary },
-  cartItemTotal: { fontSize: Typography.sizes.base, fontWeight: '600', color: Colors.primary.main, marginHorizontal: Spacing.md },
+  cartItemTotal: { fontSize: Typography.sizes.base, fontWeight: '600', color: Colors.accent.main, marginHorizontal: Spacing.md },
   removeCartItem: { padding: 4 },
 
   sheetFooter: { padding: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.border.light },
@@ -3168,7 +3168,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primary[50],
+    backgroundColor: Colors.accent[50],
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -3176,7 +3176,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 60,
     borderWidth: 2,
-    borderColor: Colors.primary.main,
+    borderColor: Colors.accent.main,
     borderRadius: BorderRadius.lg,
     textAlign: 'center',
     fontSize: Typography.sizes['2xl'],
@@ -3201,7 +3201,7 @@ const styles = StyleSheet.create({
   quantityTotalValue: {
     fontSize: Typography.sizes['2xl'],
     fontWeight: '700',
-    color: Colors.primary.main,
+    color: Colors.accent.main,
   },
   quantityConfirmButton: {
     borderRadius: BorderRadius.full,
@@ -3404,7 +3404,7 @@ const styles = StyleSheet.create({
     ...Shadows.sm,
   },
   priceItemHighlight: {
-    backgroundColor: Colors.primary[50],
+    backgroundColor: Colors.accent[50],
     borderColor: Colors.primary[200],
   },
   priceLabel: {
@@ -3491,7 +3491,7 @@ const styles = StyleSheet.create({
   },
   goddownQty: {
     fontSize: 13,
-    color: Colors.primary.main,
+    color: Colors.accent.main,
     fontWeight: '700',
   },
 });

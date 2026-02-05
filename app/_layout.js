@@ -5,9 +5,11 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { SafeAreaView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import ErrorBoundary from "./components/ErrorBoundary"; // Import ErrorBoundary
 
 export default function RootLayout() {
   const pathname = usePathname();
+  // const router = useRouter(); 
   const [isDemo, setIsDemo] = useState(false);
   const [expiresAt, setExpiresAt] = useState("");
   const [daysRemaining, setDaysRemaining] = useState(0);
@@ -42,37 +44,57 @@ export default function RootLayout() {
       } catch (e) {
         console.log("Demo check error", e);
       }
+
+      // AUTO-LOGOUT CHECK (20 Hours)
+      try {
+        const loginTimestamp = await AsyncStorage.getItem("loginTimestamp");
+        if (loginTimestamp) {
+          const now = Date.now();
+          const twentyHours = 20 * 60 * 60 * 1000;
+
+          if (now - parseInt(loginTimestamp, 10) > twentyHours) {
+            console.log("Auto-logout: Session expired 20h limit");
+            await AsyncStorage.multiRemove(["authToken", "user", "loginTimestamp", "isDemo", "demoExpiresAt", "licenseActivated", "licenseKey", "clientId", "allowedMenuIds", "role", "accountcode"]);
+            router.replace("/");
+            return;
+          }
+        }
+      } catch (logoutErr) {
+        console.log("Auto-logout check error", logoutErr);
+      }
     };
 
     checkDemoStatus();
-    // Poll every 2 seconds to check status (Robust way for root layout to know about login changes)
-    const interval = setInterval(checkDemoStatus, 2000);
+    // Poll every 10 seconds instead of 2 seconds (Optimization)
+    const interval = setInterval(checkDemoStatus, 10000);
     return () => clearInterval(interval);
   }, [pathname]);
 
   return (
     <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: "#fff" }}>
-        <StatusBar style="light" backgroundColor="#191e41ff" />
-        {isDemo && (
-          <View style={styles.demoBannerWrapper}>
-            <SafeAreaView edges={['top']} style={{ backgroundColor: '#FF9800' }}>
-              <View style={styles.demoBanner}>
-                <Text style={styles.demoText}>DEMO MODE - Expires {expiresAt} ({daysRemaining} days remaining)</Text>
-              </View>
-            </SafeAreaView>
-          </View>
-        )}
-        {isDemo && <View style={{ height: 60 }} />}
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="Bank-Book" />
-          <Stack.Screen name="bank-ledger" />
-          <Stack.Screen name="Cash-Book" />
-          <Stack.Screen name="cash-ledger" />
-        </Stack>
-      </View>
+      <ErrorBoundary>
+        <View style={{ flex: 1, backgroundColor: "#fff" }}>
+          <StatusBar style="light" backgroundColor="#191e41ff" />
+          {isDemo && (
+            <View style={styles.demoBannerWrapper}>
+              <SafeAreaView edges={['top']} style={{ backgroundColor: '#FF9800' }}>
+                <View style={styles.demoBanner}>
+                  <Text style={styles.demoText}>DEMO MODE - Expires {expiresAt} ({daysRemaining} days remaining)</Text>
+                </View>
+              </SafeAreaView>
+            </View>
+          )}
+          {isDemo && <View style={{ height: 60 }} />}
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="Bank-Book" />
+            <Stack.Screen name="bank-ledger" />
+            <Stack.Screen name="Cash-Book" />
+            <Stack.Screen name="cash-ledger" />
+          </Stack>
+        </View>
+      </ErrorBoundary>
     </SafeAreaProvider>
   );
 }

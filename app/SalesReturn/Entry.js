@@ -382,13 +382,14 @@ export default function EntryScreen() {
     }
 
     router.push({
-      pathname: "/Order/OrderDetails",
+      pathname: "/SalesReturn/OrderDetails",
       params: {
         area: selectedArea,
         customer: selectedCustomer.name,
         customerCode: selectedCustomer.code,
         payment: selectedPayment,
-        priceCode: selectedPriceCode // Pass selected price code
+        priceCode: selectedPriceCode, // Pass selected price code
+        type: 'Return'
       },
     });
   };
@@ -397,7 +398,7 @@ export default function EntryScreen() {
     return (
       <LinearGradient colors={Gradients.background} style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={Colors.primary.main} />
+          <ActivityIndicator size="large" color={Colors.accent.main} />
           <Text style={styles.loadingText}>Loading...</Text>
         </View>
       </LinearGradient>
@@ -410,11 +411,11 @@ export default function EntryScreen() {
         <StatusBar barStyle="dark-content" />
         <View style={styles.header}>
           <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color={Colors.primary.main} />
+            <Ionicons name="arrow-back" size={24} color={Colors.accent.main} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>New Order</Text>
+          <Text style={styles.headerTitle}>Sales Return Entry</Text>
           <TouchableOpacity onPress={handleRefresh} style={styles.refreshButton}>
-            <Ionicons name="refresh" size={22} color={Colors.primary.main} />
+            <Ionicons name="refresh" size={22} color={Colors.accent.main} />
           </TouchableOpacity>
         </View>
 
@@ -436,7 +437,7 @@ export default function EntryScreen() {
                 style={styles.inputBox}
                 onPress={() => setShowAreaModal(true)}
               >
-                <Ionicons name="location" size={20} color={selectedArea ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
+                <Ionicons name="location" size={20} color={selectedArea ? Colors.accent.main : Colors.text.tertiary} style={styles.inputIcon} />
                 <Text style={[styles.inputText, !selectedArea && styles.placeholderText]}>
                   {selectedArea || "Select Area"}
                 </Text>
@@ -448,7 +449,7 @@ export default function EntryScreen() {
           {/* Customer Selection */}
           <View style={styles.formSection}>
             <Text style={styles.label}>
-              {isCustomerLocked ? "Ordering For" : <>Select Customer <Text style={styles.required}>*</Text></>}
+              {isCustomerLocked ? "Returning For" : <>Select Customer <Text style={styles.required}>*</Text></>}
             </Text>
 
             {/* Show dropdown ONLY if NOT locked */}
@@ -457,7 +458,7 @@ export default function EntryScreen() {
                 style={styles.inputBox}
                 onPress={() => setShowCustomerModal(true)}
               >
-                <Ionicons name="person" size={20} color={selectedCustomer ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
+                <Ionicons name="person" size={20} color={selectedCustomer ? Colors.accent.main : Colors.text.tertiary} style={styles.inputIcon} />
                 <Text style={[styles.inputText, !selectedCustomer && styles.placeholderText]}>
                   {selectedCustomer ? selectedCustomer.name : "Select Customer"}
                 </Text>
@@ -496,7 +497,7 @@ export default function EntryScreen() {
                 style={styles.inputBox}
                 onPress={() => setShowPriceCodeModal(true)}
               >
-                <Ionicons name="pricetag" size={20} color={Colors.primary.main} style={styles.inputIcon} />
+                <Ionicons name="pricetag" size={20} color={Colors.accent.main} style={styles.inputIcon} />
                 <Text style={styles.inputText}>
                   {selectedPriceName} ({selectedPriceCode})
                 </Text>
@@ -523,7 +524,7 @@ export default function EntryScreen() {
                 >
                   {selectedPayment === payment && (
                     <LinearGradient
-                      colors={Gradients.primary}
+                      colors={Gradients.accent}
                       style={styles.activeGradient}
                     />
                   )}
@@ -551,7 +552,7 @@ export default function EntryScreen() {
             onPress={handleProceed}
             activeOpacity={0.8}
           >
-            <LinearGradient colors={Gradients.primary} style={styles.proceedGradient}>
+            <LinearGradient colors={Gradients.accent} style={styles.proceedGradient}>
               <Text style={styles.proceedText}>Proceed to Products</Text>
               <Ionicons name="arrow-forward" size={20} color="#FFF" />
             </LinearGradient>
@@ -559,13 +560,13 @@ export default function EntryScreen() {
 
           {/* View Orders Button */}
           <TouchableOpacity
-            style={[styles.proceedButton, { marginTop: Spacing.md, backgroundColor: '#ffffff', borderWidth: 1, borderColor: Colors.primary.main }]}
-            onPress={() => router.push("/Order/PlaceOrder")}
+            style={[styles.proceedButton, { marginTop: Spacing.md, backgroundColor: '#ffffff', borderWidth: 1, borderColor: Colors.accent.main }]}
+            onPress={() => router.push("/SalesReturn/PlaceOrder")}
             activeOpacity={0.8}
           >
             <View style={[styles.proceedGradient, { backgroundColor: 'transparent' }]}>
-              <Text style={[styles.proceedText, { color: Colors.primary.main }]}>View Placed Orders</Text>
-              <Ionicons name="list" size={20} color={Colors.primary.main} />
+              <Text style={[styles.proceedText, { color: Colors.accent.main }]}>View Placed Orders</Text>
+              <Ionicons name="list" size={20} color={Colors.accent.main} />
             </View>
           </TouchableOpacity>
         </View>
@@ -607,7 +608,7 @@ export default function EntryScreen() {
                     onPress={() => handleSelectArea(item)}
                   >
                     <View style={styles.listItemIcon}>
-                      <Ionicons name="location" size={20} color={Colors.primary.main} />
+                      <Ionicons name="location" size={20} color={Colors.accent.main} />
                     </View>
                     <Text style={styles.listItemText}>{item}</Text>
                     {selectedArea === item && (
@@ -710,7 +711,7 @@ export default function EntryScreen() {
                     onPress={() => handleSelectPriceCode(item)}
                   >
                     <View style={styles.listItemIcon}>
-                      <Ionicons name="pricetag" size={20} color={Colors.primary.main} />
+                      <Ionicons name="pricetag" size={20} color={Colors.accent.main} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.listItemText}>{item.name}</Text>
@@ -803,7 +804,7 @@ const styles = StyleSheet.create({
   selectedCustomerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.primary[50],
+    backgroundColor: Colors.accent[50],
     padding: Spacing.md,
     borderRadius: BorderRadius.lg,
     marginTop: Spacing.sm,

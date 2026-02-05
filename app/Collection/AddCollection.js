@@ -18,7 +18,6 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import Animated, { FadeInUp } from "react-native-reanimated";
 import { BorderRadius, Colors, Gradients, Shadows, Spacing, Typography } from "../../constants/theme";
 import dbService from "../../src/services/database";
 
@@ -39,7 +38,7 @@ export default function AddCollectionScreen() {
 
   // Area Selection Logic
   const [areaList, setAreaList] = useState([]);
-  const [selectedArea, setSelectedArea] = useState(null);
+  const [selectedArea, setSelectedArea] = useState("All");
   const [showAreaModal, setShowAreaModal] = useState(false);
   const [areaSearchQuery, setAreaSearchQuery] = useState("");
   const [filteredAreas, setFilteredAreas] = useState([]);
@@ -73,7 +72,7 @@ export default function AddCollectionScreen() {
       );
 
       // Apply area filter if selected
-      if (selectedArea) {
+      if (selectedArea && selectedArea !== "All") {
         setFilteredCustomers(filtered.filter(c => {
           const cArea = c.area && c.area.trim() !== "" ? c.area : c.place;
           return cArea === selectedArea;
@@ -82,6 +81,15 @@ export default function AddCollectionScreen() {
         setFilteredCustomers(filtered);
       }
     }
+
+    // Check outside of search query too (if search is empty but area is selected)
+    if (searchQuery.trim() === "" && selectedArea && selectedArea !== "All") {
+      setFilteredCustomers(customers.filter(c => {
+        const cArea = c.area && c.area.trim() !== "" ? c.area : c.place;
+        return cArea === selectedArea;
+      }));
+    }
+
   }, [searchQuery, customers, selectedArea]);
 
   // Filter areas
@@ -105,7 +113,10 @@ export default function AddCollectionScreen() {
 
       if (localCustomers.length > 0) {
         setCustomers(localCustomers);
-        setFilteredCustomers(localCustomers);
+        // Initial filter run will handle the rest
+        if (!selectedArea || selectedArea === "All") {
+          setFilteredCustomers(localCustomers);
+        }
         setLoading(false);
 
         if (isOnline) {
@@ -139,6 +150,29 @@ export default function AddCollectionScreen() {
         return;
       }
 
+      // 1. Fetch Areas (Like Punch-In.js)
+      try {
+        const areaResponse = await fetch('https://tasksas.com/api/area/list/', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (areaResponse.ok) {
+          const areaData = await areaResponse.json();
+          if (areaData.success && Array.isArray(areaData.areas)) {
+            const fetchedAreas = ["All", ...areaData.areas.sort()];
+            setAreaList(fetchedAreas);
+            setFilteredAreas(fetchedAreas);
+          }
+        }
+      } catch (areaErr) {
+        console.error("Area fetch error:", areaErr);
+      }
+
+      // 2. Fetch Customers
       const response = await fetch(API_CUSTOMERS, {
         method: "GET",
         headers: {
@@ -165,6 +199,13 @@ export default function AddCollectionScreen() {
 
       const filteredCustomers = customersArray
         .filter((customer) => customer.super_code === "DEBTO")
+        .map(debtor => ({
+          ...debtor,
+          code: debtor.code || debtor.id?.toString(),
+          name: debtor.name || "Unknown Debtor",
+          place: debtor.place || debtor.area || '',
+          area: debtor.area || '', // Explicitly map area
+        }))
         .sort((a, b) => {
           const nameA = (a.name || "").toLowerCase();
           const nameB = (b.name || "").toLowerCase();
@@ -172,7 +213,10 @@ export default function AddCollectionScreen() {
         });
 
       setCustomers(filteredCustomers);
-      setFilteredCustomers(filteredCustomers);
+      // Don't overwrite filteredCustomers immediately if query exists, but usually we do:
+      if (searchQuery.trim() === "") {
+        setFilteredCustomers(filteredCustomers);
+      }
 
     } catch (error) {
       console.error("API fetch error:", error);
@@ -198,17 +242,25 @@ export default function AddCollectionScreen() {
         }))].filter(Boolean).sort();
         areasFromDb = uniqueAreas;
       }
-      setAreaList(areasFromDb);
-      setFilteredAreas(areasFromDb);
 
+      // Ensure "All" is present
+      const finalAreas = ["All", ...areasFromDb.filter(a => a !== "All")];
+      setAreaList(finalAreas);
+      setFilteredAreas(finalAreas);
 
-      const sortedCustomers = allCustomers.sort((a, b) => {
+      const mappedCustomers = allCustomers.map(debtor => ({
+        ...debtor,
+        code: debtor.code || debtor.id?.toString(),
+        name: debtor.name || "Unknown Debtor",
+        place: debtor.place || debtor.area || '',
+        area: debtor.area || '', // Explicitly map area
+      })).sort((a, b) => {
         const nameA = (a.name || "").toLowerCase();
         const nameB = (b.name || "").toLowerCase();
         return nameA.localeCompare(nameB);
       });
 
-      return sortedCustomers;
+      return mappedCustomers;
     } catch (error) {
       console.error("[AddCollection] Error loading customers from database:", error);
       return [];
@@ -359,13 +411,13 @@ export default function AddCollectionScreen() {
             >
               <Ionicons name="location" size={20} color={selectedArea ? Colors.primary.main : Colors.text.tertiary} style={styles.inputIcon} />
               <Text style={[styles.inputText, !selectedArea && styles.placeholderText]}>
-                {selectedArea || "Select Area (Optional)"}
+                {selectedArea || "All"}
               </Text>
               <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
             </TouchableOpacity>
           </View>
 
-          <Animated.View entering={FadeInUp.delay(100)} style={styles.formSection}>
+          <View style={styles.formSection}>
             <Text style={styles.label}>
               Select Customer <Text style={styles.required}>*</Text>
             </Text>
@@ -380,9 +432,9 @@ export default function AddCollectionScreen() {
               </Text>
               <Ionicons name="chevron-down" size={20} color={Colors.text.tertiary} />
             </TouchableOpacity>
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.delay(200)} style={styles.formSection}>
+          <View style={styles.formSection}>
             <Text style={styles.label}>
               Amount <Text style={styles.required}>*</Text>
             </Text>
@@ -397,9 +449,9 @@ export default function AddCollectionScreen() {
                 keyboardType="numeric"
               />
             </View>
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.delay(300)} style={styles.formSection}>
+          <View style={styles.formSection}>
             <Text style={styles.label}>
               Payment Type <Text style={styles.required}>*</Text>
             </Text>
@@ -465,10 +517,10 @@ export default function AddCollectionScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </Animated.View>
+          </View>
 
           {paymentType === "Cheque" && (
-            <Animated.View entering={FadeInUp.delay(400)} style={styles.formSection}>
+            <View style={styles.formSection}>
               <Text style={styles.label}>
                 Cheque Number <Text style={styles.required}>*</Text>
               </Text>
@@ -482,10 +534,10 @@ export default function AddCollectionScreen() {
                   onChangeText={setChequeNumber}
                 />
               </View>
-            </Animated.View>
+            </View>
           )}
 
-          <Animated.View entering={FadeInUp.delay(500)} style={styles.formSection}>
+          <View style={styles.formSection}>
             <Text style={styles.label}>Remarks (Optional)</Text>
             <TextInput
               style={[styles.inputBox, styles.textArea]}
@@ -497,9 +549,9 @@ export default function AddCollectionScreen() {
               numberOfLines={4}
               textAlignVertical="top"
             />
-          </Animated.View>
+          </View>
 
-          <Animated.View entering={FadeInUp.delay(600)} style={styles.buttonContainer}>
+          <View style={styles.buttonContainer}>
             <TouchableOpacity
               style={styles.saveButton}
               onPress={handleSave}
@@ -520,7 +572,7 @@ export default function AddCollectionScreen() {
                 )}
               </LinearGradient>
             </TouchableOpacity>
-          </Animated.View>
+          </View>
         </ScrollView>
 
         {/* Area Selection Modal */}
