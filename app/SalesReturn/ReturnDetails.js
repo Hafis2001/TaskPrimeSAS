@@ -234,8 +234,13 @@ const CartItem = ({ item, changeQty, removeItem, isEditable, onPriceChange }) =>
             {(item.qty * item.product.price).toFixed(2)}
           </Text>
         </View>
-
       </View>
+      {item.remark ? (
+        <View style={styles.cartItemRemark}>
+          <Ionicons name="chatbubble-outline" size={12} color={Colors.text.tertiary} />
+          <Text style={styles.cartItemRemarkText}>{item.remark}</Text>
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -250,6 +255,9 @@ const PRICE_FIELD_MAP = {
   'S5': 'netRate',
   'CO': 'cost'
 };
+
+const REMARK_OPTIONS = ["NONE", "EXPIRED", "SHORT EXPIRY", "DAMAGE", "EXCHANGE"];
+
 
 export default function OrderDetails() {
   const router = useRouter();
@@ -302,15 +310,17 @@ export default function OrderDetails() {
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [selectedBrands, setSelectedBrands] = useState([]);
   const [selectedProducts, setSelectedProducts] = useState([]); // This is categories
+  const [selectedDepartments, setSelectedDepartments] = useState([]);
   const [filterQuery, setFilterQuery] = useState('');
   const [filterInStock, setFilterInStock] = useState(false);
   const [activeFilterTab, setActiveFilterTab] = useState("brand");
-  const [filterOptions, setFilterOptions] = useState({ brands: [], products: [] });
+  const [filterOptions, setFilterOptions] = useState({ brands: [], products: [], departments: [] });
 
   // State to hold the currently applied filters (triggers product fetch)
   const [filters, setFilters] = useState({
     brands: [],
     categories: [],
+    departments: [],
     search: '',
     inStock: false
   });
@@ -364,6 +374,10 @@ export default function OrderDetails() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [tempQuantity, setTempQuantity] = useState("1");
   const [tempPrice, setTempPrice] = useState("");
+  const [tempRemark, setTempRemark] = useState("");
+  const [selectedRemarkOption, setSelectedRemarkOption] = useState("");
+  const [remarkDropdownVisible, setRemarkDropdownVisible] = useState(false);
+
 
   // Details modal state
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
@@ -578,6 +592,7 @@ export default function OrderDetails() {
       const currentFilters = {
         brands: filters.brands,
         categories: filters.categories,
+        departments: filters.departments,
         search: filters.search,
         sortBy: appSettings?.barcode_based_list ? 'barcode' : 'name'
       };
@@ -633,6 +648,7 @@ export default function OrderDetails() {
       const currentFilters = {
         brands: filters.brands,
         categories: filters.categories,
+        departments: filters.departments,
         search: filters.search,
         sortBy: appSettings?.barcode_based_list ? 'barcode' : 'name'
       };
@@ -684,9 +700,10 @@ export default function OrderDetails() {
       await dbService.init();
       const brands = await dbService.getDistinctBrands();
       const categories = await dbService.getDistinctCategories();
+      const departments = await dbService.getDistinctDepartments();
 
-      console.log(`[OrderDetails] Loaded ${brands.length} brands and ${categories.length} categories`);
-      setFilterOptions({ brands, products: categories }); // Stores categories
+      console.log(`[OrderDetails] Loaded ${brands.length} brands, ${categories.length} categories, and ${departments.length} departments`);
+      setFilterOptions({ brands, products: categories, departments }); // Stores categories
     } catch (error) {
       console.error('[OrderDetails] Error loading filter options:', error);
     }
@@ -703,6 +720,7 @@ export default function OrderDetails() {
     setFilters({
       brands: selectedBrands,
       categories: selectedProducts, // categories
+      departments: selectedDepartments,
       search: query,
       inStock: filterInStock
     });
@@ -714,6 +732,7 @@ export default function OrderDetails() {
     console.log('[OrderDetails] Clearing all filters');
     setSelectedBrands([]);
     setSelectedProducts([]);
+    setSelectedDepartments([]);
     setFilterQuery('');
     setFilterInStock(false);
     setQuery(''); // Clear main search query as well
@@ -721,6 +740,7 @@ export default function OrderDetails() {
     setFilters({
       brands: [],
       categories: [], // categories
+      departments: [],
       search: '',
       inStock: false
     });
@@ -747,6 +767,18 @@ export default function OrderDetails() {
         return prev.filter(p => p !== category);
       } else {
         return [...prev, category];
+      }
+    });
+  }
+
+  // Toggle department selection
+  function toggleDepartmentSelection(dept) {
+    setSelectedDepartments(prev => {
+      const isSelected = prev.includes(dept);
+      if (isSelected) {
+        return prev.filter(d => d !== dept);
+      } else {
+        return [...prev, dept];
       }
     });
   }
@@ -1094,13 +1126,18 @@ export default function OrderDetails() {
     // Initialize temp price (ensure it's a valid string)
     const initialPrice = product.price || product.retail || product.mrp || 0;
     setTempPrice(String(initialPrice));
+    setTempRemark(existing?.remark || "");
+    setSelectedRemarkOption("NONE"); // Default to NONE
+    setRemarkDropdownVisible(false);
     setQuantityModalVisible(true);
+
   }
 
   function closeQuantityModal() {
     setQuantityModalVisible(false);
     setSelectedProduct(null);
     setTempQuantity("1");
+    setRemarkDropdownVisible(false);
   }
 
   function handleConfirmQuantity() {
@@ -1120,7 +1157,14 @@ export default function OrderDetails() {
         }
       }
 
-      addToCart(productToAdd, qty, null, true); // Use overwrite=true for modal
+      // Merge selected option and manual text
+      const finalRemark = [
+        selectedRemarkOption !== "NONE" ? selectedRemarkOption : "",
+        tempRemark
+      ].filter(Boolean).join(" - ");
+
+      addToCart(productToAdd, qty, null, true, finalRemark); // Use overwrite=true for modal
+
       closeQuantityModal();
     }
   }
@@ -1207,7 +1251,8 @@ export default function OrderDetails() {
     ]).start();
   }, []);
 
-  const addToCart = useCallback((product, quantity = 1, startCoords = null, overwrite = false) => {
+  const addToCart = useCallback((product, quantity = 1, startCoords = null, overwrite = false, remark = "") => {
+
     console.log('═══════════════════════════════════════════════════════');
     console.log('[OrderDetails] ➕ ADD TO CART CALLED');
     console.log('[OrderDetails] Product:', product.name, 'ID:', product.id);
@@ -1234,13 +1279,15 @@ export default function OrderDetails() {
       newCart = [...currentCart];
       newCart[idx] = {
         ...newCart[idx],
-        qty: overwrite ? quantity : newCart[idx].qty + quantity
+        qty: overwrite ? quantity : newCart[idx].qty + quantity,
+        remark: remark || (overwrite ? "" : newCart[idx].remark)
       };
     } else {
       // New item - add to beginning
       console.log('[OrderDetails] ➕ Adding NEW item to cart');
-      newCart = [{ product, qty: quantity }, ...currentCart];
+      newCart = [{ product, qty: quantity, remark }, ...currentCart];
     }
+
 
     console.log('[OrderDetails] New cart length:', newCart.length);
     console.log('[OrderDetails] New cart contents:', newCart.map(i => ({ name: i.product.name, id: i.product.id, qty: i.qty })));
@@ -1330,7 +1377,7 @@ export default function OrderDetails() {
     setCurrentPhotoIndex(0);
   }
 
-  function handleBackPress(targetRoute = "/Order/Entry") {
+  function handleBackPress(targetRoute = "/SalesReturn/ReturnEntry") {
     // 1. Close Modals if open
     if (imageModalVisible) {
       closeImageModal();
@@ -1409,7 +1456,8 @@ export default function OrderDetails() {
           qty: parseFloat(item.qty).toFixed(2),
           total: item.qty * item.product.price,
           hsn: item.product.text6 || '', // Save HSN
-          gst: item.product.taxcode || '' // Save GST
+          gst: item.product.taxcode || '', // Save GST
+          remark: item.remark || "" // Save Remark
         })),
         total: cart.reduce((s, it) => s + it.qty * it.product.price, 0),
         timestamp: new Date().toISOString(),
@@ -1417,7 +1465,7 @@ export default function OrderDetails() {
       };
 
       const username = await AsyncStorage.getItem('username');
-      const storageKey = `placed_orders_${username}`;
+      const storageKey = `return_orders_${username}`;
       const existingOrders = await AsyncStorage.getItem(storageKey);
       const orders = existingOrders ? JSON.parse(existingOrders) : [];
       orders.push(order);
@@ -1437,7 +1485,7 @@ export default function OrderDetails() {
         [
           {
             text: "View Orders",
-            onPress: () => router.push("/Order/PlaceOrder")
+            onPress: () => router.push("/SalesReturn/PlaceReturn")
           },
           {
             text: "Continue Shopping",
@@ -1471,7 +1519,7 @@ export default function OrderDetails() {
         <TouchableOpacity
           style={styles.scanActionBtn}
           onPress={() => router.push({
-            pathname: "/SalesReturn/Scanner",
+            pathname: "/SalesReturn/ReturnScanner",
             params: { area, customer, customerCode, type, payment }
           })}
         >
@@ -1499,7 +1547,7 @@ export default function OrderDetails() {
 
   const itemCount = cart.length;
   const total = cart.reduce((s, it) => s + it.qty * it.product.price, 0);
-  const activeFiltersCount = selectedBrands.length + selectedProducts.length + (filterInStock ? 1 : 0);
+  const activeFiltersCount = selectedBrands.length + selectedProducts.length + selectedDepartments.length + (filterInStock ? 1 : 0);
 
   // Get filtered lists for filter modal
   const getFilteredOptions = (options, currentFilterQuery) => {
@@ -1563,7 +1611,7 @@ export default function OrderDetails() {
               onPress={() => {
                 console.log('[OrderDetails] Scanner button pressed');
                 router.push({
-                  pathname: "/SalesReturn/Scanner",
+                  pathname: "/SalesReturn/ReturnScanner",
                   params: { area, customer, customerCode, type, payment }
                 });
               }}
@@ -1597,7 +1645,7 @@ export default function OrderDetails() {
               style={[styles.actionIconButton, pendingOrderCount > 0 && styles.actionIconButtonActive]}
               onPress={() => {
                 console.log('[OrderDetails] View Orders button pressed');
-                router.push("/SalesReturn/PlaceOrder");
+                router.push("/SalesReturn/PlaceReturn");
               }}
             >
               <Ionicons name="receipt-outline" size={20} color={pendingOrderCount > 0 ? "#FFF" : Colors.accent.main} />
@@ -1681,6 +1729,17 @@ export default function OrderDetails() {
                     <Text style={styles.activeFilterChipText} numberOfLines={1}>{product}</Text>
                     <TouchableOpacity onPress={() => {
                       toggleCategorySelection(product);
+                      setTimeout(() => applyFilters(), 100);
+                    }}>
+                      <Ionicons name="close-circle" size={16} color={Colors.accent.main} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {selectedDepartments.map(dept => (
+                  <View key={dept} style={styles.activeFilterChip}>
+                    <Text style={styles.activeFilterChipText} numberOfLines={1}>{dept}</Text>
+                    <TouchableOpacity onPress={() => {
+                      toggleDepartmentSelection(dept);
                       setTimeout(() => applyFilters(), 100);
                     }}>
                       <Ionicons name="close-circle" size={16} color={Colors.accent.main} />
@@ -1841,7 +1900,7 @@ export default function OrderDetails() {
               {/* Filter Info */}
               <View style={styles.filterInfo}>
                 <Text style={styles.filterInfoText}>
-                  {filterOptions.brands.length} Brands • {filterOptions.products.length} Categories
+                  {filterOptions.brands.length} Brands • {filterOptions.products.length} Categories • {filterOptions.departments?.length || 0} Depts
                 </Text>
               </View>
 
@@ -1861,6 +1920,14 @@ export default function OrderDetails() {
                 >
                   <Text style={[styles.filterTabText, activeFilterTab === "category" && styles.filterTabTextActive]}>
                     Category {selectedProducts.length > 0 && `(${selectedProducts.length})`}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterTab, activeFilterTab === "department" && styles.filterTabActive]}
+                  onPress={() => setActiveFilterTab("department")}
+                >
+                  <Text style={[styles.filterTabText, activeFilterTab === "department" && styles.filterTabTextActive]}>
+                    Dept {selectedDepartments.length > 0 && `(${selectedDepartments.length})`}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1949,6 +2016,35 @@ export default function OrderDetails() {
                                 {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
                               </View>
                               <Text style={styles.filterItemText}>{category}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </>
+                )}
+
+                {activeFilterTab === 'department' && (
+                  <>
+                    {getFilteredOptions(filterOptions.departments || [], filterQuery).length === 0 ? (
+                      <View style={styles.noResultsContainer}>
+                        <Text style={styles.noResultsText}>No departments found</Text>
+                      </View>
+                    ) : (
+                      getFilteredOptions(filterOptions.departments, filterQuery).map((dept, index) => {
+                        const isSelected = selectedDepartments.includes(dept);
+                        return (
+                          <TouchableOpacity
+                            key={index}
+                            style={styles.filterItem}
+                            onPress={() => toggleDepartmentSelection(dept)}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.filterItemLeft}>
+                              <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
+                                {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
+                              </View>
+                              <Text style={styles.filterItemText}>{dept}</Text>
                             </View>
                           </TouchableOpacity>
                         );
@@ -2162,6 +2258,69 @@ export default function OrderDetails() {
                       {((parseFloat(tempQuantity) || 0) * (appSettings?.order_rate_editable ? (parseFloat(tempPrice) || 0) : selectedProduct.price)).toFixed(2)}
                     </Text>
                   </View>
+
+                  {/* Remarks Section */}
+                  <View style={styles.remarksContainer}>
+                    <Text style={styles.remarksLabel}>Remark (Optional)</Text>
+
+                    {/* Dropdown Trigger */}
+                    <TouchableOpacity
+                      style={styles.dropdownTrigger}
+                      onPress={() => setRemarkDropdownVisible(!remarkDropdownVisible)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[
+                        styles.dropdownTriggerText,
+                        selectedRemarkOption === "NONE" && { color: Colors.text.tertiary }
+                      ]}>
+                        {selectedRemarkOption}
+                      </Text>
+                      <Ionicons
+                        name={remarkDropdownVisible ? "chevron-up" : "chevron-down"}
+                        size={20}
+                        color={Colors.text.secondary}
+                      />
+                    </TouchableOpacity>
+
+                    {/* Dropdown Options List */}
+                    {remarkDropdownVisible && (
+                      <View style={styles.dropdownList}>
+                        {REMARK_OPTIONS.map((option) => (
+                          <TouchableOpacity
+                            key={option}
+                            style={[
+                              styles.dropdownItem,
+                              selectedRemarkOption === option && styles.dropdownItemActive
+                            ]}
+                            onPress={() => {
+                              setSelectedRemarkOption(option);
+                              setRemarkDropdownVisible(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.dropdownItemText,
+                              selectedRemarkOption === option && styles.dropdownItemTextActive
+                            ]}>
+                              {option}
+                            </Text>
+                            {selectedRemarkOption === option && (
+                              <Ionicons name="checkmark" size={18} color={Colors.accent.main} />
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
+                    <TextInput
+                      style={[styles.remarkInput, { marginTop: 12 }]}
+                      placeholder="Add manual remark..."
+                      placeholderTextColor={Colors.text.tertiary}
+                      value={tempRemark}
+                      onChangeText={setTempRemark}
+                      multiline={false}
+                    />
+                  </View>
+
 
                   <TouchableOpacity
                     style={styles.quantityConfirmButton}
@@ -2406,7 +2565,7 @@ export default function OrderDetails() {
           </View>
         </Modal>
 
-      </SafeAreaView>
+      </SafeAreaView >
     </LinearGradient >
   );
 }
@@ -3493,5 +3652,118 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.accent.main,
     fontWeight: '700',
+  },
+  cartItemRemark: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
+    backgroundColor: Colors.neutral[50],
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  cartItemRemarkText: {
+    fontSize: 11,
+    color: Colors.text.secondary,
+    fontStyle: 'italic',
+  },
+  remarksContainer: {
+    marginBottom: Spacing.xl,
+    width: '100%',
+  },
+  remarksLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+    marginBottom: 8,
+  },
+  remarkOptionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  remarkOptionChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: Colors.neutral[100],
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+  },
+  remarkOptionChipActive: {
+    backgroundColor: Colors.accent.main,
+    borderColor: Colors.accent.main,
+  },
+  remarkOptionText: {
+    fontSize: 12,
+    color: Colors.text.primary,
+    fontWeight: '600',
+  },
+  remarkOptionTextActive: {
+    color: '#FFF',
+  },
+  remarkInput: {
+    width: '100%',
+    height: 45,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md,
+    fontSize: 14,
+    color: Colors.text.primary,
+    backgroundColor: Colors.neutral[50],
+  },
+  dropdownTrigger: {
+    width: '100%',
+    height: 48,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.neutral[50],
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+  },
+  dropdownTriggerText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+  },
+  dropdownList: {
+    width: '100%',
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+    borderRadius: BorderRadius.lg,
+    marginTop: 4,
+    overflow: 'hidden',
+    ...Shadows.md,
+    position: 'absolute',
+    top: 75, // Below label and trigger
+    zIndex: 1000,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.neutral[50],
+  },
+  dropdownItemActive: {
+    backgroundColor: Colors.accent[50],
+  },
+  dropdownItemText: {
+    fontSize: 14,
+    color: Colors.text.primary,
+  },
+  dropdownItemTextActive: {
+    fontWeight: '700',
+    color: Colors.accent.main,
   },
 });

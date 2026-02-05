@@ -145,6 +145,13 @@ class BatchService {
                     processedCount++;
                 }
 
+                // CRITICAL FIX: Save the actual product definitions (with department_name)
+                // batchService was previously only saving batches/photos/goddowns but relying on syncService for products?
+                // We MUST save products here to ensure department_name is captured from this API response.
+                if (chunk.length > 0) {
+                    await dbService.saveProducts(chunk);
+                }
+
                 // Log progress every 500 products
                 if (processedCount % 500 === 0 || processedCount === productsData.length) {
                     console.log(`[BatchService] Progress: ${processedCount}/${productsData.length} products (${totalBatches} batches)`);
@@ -196,6 +203,12 @@ class BatchService {
                 params.push(...filters.categories);
             }
 
+            if (filters.departments && filters.departments.length > 0) {
+                const placeholders = filters.departments.map(() => '?').join(',');
+                query += ` AND department_name IN (${placeholders})`;
+                params.push(...filters.departments);
+            }
+
             if (filters.search) {
                 const term = `%${filters.search}%`;
                 query += ` AND (name LIKE ? OR code LIKE ? OR barcode LIKE ? OR brand LIKE ? OR category LIKE ?)`;
@@ -209,8 +222,9 @@ class BatchService {
             // Apply sorting based on sortBy parameter
             if (filters.sortBy === 'barcode') {
                 // Sort by barcode (CAST to INTEGER for numeric sorting if possible, fallback to text)
-                // SQLite will handle numeric strings correctly with CAST
-                query += ' ORDER BY CAST(barcode AS INTEGER) ASC, barcode ASC';
+                // USER REQUEST: Sort by Code (not barcode) when barcode_based_list is true
+                // "list by the code in teh product"
+                query += ' ORDER BY CAST(code AS INTEGER) ASC, code ASC';
             } else {
                 query += ' ORDER BY name ASC';
             }
@@ -411,32 +425,29 @@ class BatchService {
             }
             // Sort the batch cards based on sortBy parameter
             if (sortBy === 'barcode') {
-                console.log('[BatchService] Sorting batch cards by barcode...');
+                console.log('[BatchService] Sorting batch cards by CODE (numeric safe)...');
                 batchCards.sort((a, b) => {
-                    const barcodeA = a.barcode || '';
-                    const barcodeB = b.barcode || '';
+                    const strA = String(a.code || '').trim();
+                    const strB = String(b.code || '').trim();
 
-                    // Check if barcodes are purely numeric
-                    const isNumericA = /^\d+$/.test(barcodeA);
-                    const isNumericB = /^\d+$/.test(barcodeB);
+                    // Try to parse as numbers
+                    const numA = parseFloat(strA);
+                    const numB = parseFloat(strB);
 
-                    // If both are numeric, sort numerically
-                    if (isNumericA && isNumericB) {
-                        return parseInt(barcodeA) - parseInt(barcodeB);
+                    const isNumA = !isNaN(numA) && isFinite(numA);
+                    const isNumB = !isNaN(numB) && isFinite(numB);
+
+                    // If both are valid numbers, sort numerically
+                    if (isNumA && isNumB) {
+                        return numA - numB;
                     }
 
-                    // If only A is numeric, A comes first
-                    if (isNumericA && !isNumericB) {
-                        return -1;
-                    }
+                    // If only A is number, put it first (or last depending on preference, usually numbers first)
+                    if (isNumA && !isNumB) return -1;
+                    if (!isNumA && isNumB) return 1;
 
-                    // If only B is numeric, B comes first
-                    if (!isNumericA && isNumericB) {
-                        return 1;
-                    }
-
-                    // If both are alphanumeric, sort alphabetically
-                    return barcodeA.localeCompare(barcodeB);
+                    // Fallback to string comparison
+                    return strA.localeCompare(strB);
                 });
             } else {
                 // Default: sort by name
@@ -450,7 +461,6 @@ class BatchService {
             return batchCards;
         } catch (error) {
             console.error('[BatchService] Error transforming batches to cards:', error);
-            return [];
         }
     }
 

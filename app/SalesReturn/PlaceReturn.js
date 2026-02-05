@@ -94,8 +94,8 @@ export default function PlaceOrder() {
       if (storedOrders) {
         let parsedOrders = JSON.parse(storedOrders);
 
-        // Filter out orders older than 30 hours
-        const THIRTY_HOURS_MS = 30 * 60 * 60 * 1000;
+        // Filter out orders older than 48 hours (2 days)
+        const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
         const now = Date.now();
 
         const validOrders = parsedOrders.filter(order => {
@@ -104,7 +104,7 @@ export default function PlaceOrder() {
           const orderTime = new Date(order.timestamp).getTime();
           const age = now - orderTime;
 
-          if (age > THIRTY_HOURS_MS) {
+          if (age > FORTY_EIGHT_HOURS_MS) {
             console.log(`[PlaceOrder] Removing expired order (${Math.round(age / 3600000)}h old):`, order.id);
             return false;
           }
@@ -147,7 +147,7 @@ export default function PlaceOrder() {
         'Authorization': `Bearer ${authToken}`
       };
 
-      const response = await fetch(`https://tasksas.com/api/item-orders/list?client_id=${clientId}`, {
+      const response = await fetch(`https://tasksas.com/api/sales-return/list?client_id=${clientId}`, {
         method: 'GET',
         headers: headers
       });
@@ -157,7 +157,7 @@ export default function PlaceOrder() {
       }
 
       const json = await response.json();
-      const apiData = Array.isArray(json) ? json : (json.orders || json.data || []);
+      const apiData = Array.isArray(json) ? json : (json.returns || json.orders || json.data || []);
 
       console.log('Current User:', username);
 
@@ -167,7 +167,8 @@ export default function PlaceOrder() {
           if (!username) return false; // If no user is logged in, show nothing
           const apiUser = apiOrder.username ? String(apiOrder.username).trim() : '';
           const currentUser = String(username).trim();
-          // Case insensitive comparison
+
+          // Case insensitive comparison for user
           return apiUser.toLowerCase() === currentUser.toLowerCase();
         })
         .map(apiOrder => {
@@ -197,6 +198,7 @@ export default function PlaceOrder() {
               total: parseFloat(item.amount),
               hsn: item.text6 || item.hsn || '',
               gst: item.taxcode || item.gst || item.tax_code || '',
+              remark: item.remark || '',
               uploadStatus: 'uploaded'
             }))
           };
@@ -321,7 +323,8 @@ export default function PlaceOrder() {
         barcode: cleanString(item.barcode || item.code),
         price: cleanNumber(item.price),
         quantity: cleanNumber(item.qty),
-        amount: cleanNumber(item.total)
+        amount: cleanNumber(item.total),
+        remark: cleanString(item.remark)
       }));
 
       if (validItems.length === 0) {
@@ -329,13 +332,10 @@ export default function PlaceOrder() {
       }
 
       const payload = {
-        client_id: cleanString(clientId),
         customer_name: cleanString(order.customer),
         customer_code: cleanString(order.customerCode),
         area: cleanString(order.area),
-        payment_type: cleanString(order.payment),
         username: cleanString(username),
-        remark: cleanString(order.remark),
         device_id: cleanString(deviceId || 'unknown'),
         items: validItems
       };
@@ -368,7 +368,7 @@ export default function PlaceOrder() {
             await new Promise(resolve => setTimeout(resolve, delay));
           }
 
-          const response = await fetch('https://tasksas.com/api/item-orders/create', {
+          const response = await fetch('https://tasksas.com/api/sales-return/create', {
             method: 'POST',
             headers: headers,
             body: JSON.stringify(payload),
@@ -463,6 +463,8 @@ export default function PlaceOrder() {
   }
 
   async function confirmOrder(orderId) {
+    if (uploadingOrder) return; // Prevent multiple simultaneous uploads
+
     Alert.alert(
       'Confirm & Upload Order',
       'This will upload the order to the server. Continue?',
@@ -478,30 +480,34 @@ export default function PlaceOrder() {
 
               const uploadResult = await uploadOrderToAPI(order);
 
-              const updatedOrders = orders.map(o => {
-                if (o.id === orderId) {
-                  const itemsWithStatus = o.items.map(item => ({
-                    ...item,
-                    uploadStatus: uploadResult.success ? 'uploaded to server' : 'failed'
-                  }));
-                  return {
-                    ...o,
-                    status: uploadResult.success ? 'uploaded to server' : 'failed',
-                    uploadStatus: uploadResult.success ? 'uploaded to server' : 'failed',
-                    items: itemsWithStatus,
-                    uploadedAt: new Date().toISOString()
-                  };
-                }
-                return o;
-              });
-
-              const storageKey = `return_orders_${currentUsername}`;
-              await AsyncStorage.setItem(storageKey, JSON.stringify(updatedOrders));
-              setOrders(updatedOrders);
-
               if (uploadResult.success) {
-                Alert.alert("Success", "Order uploaded successfully!");
+                // ✅ Remove from pending/local storage after successful upload
+                const newOrders = orders.filter(o => o.id !== orderId);
+                const storageKey = `return_orders_${currentUsername}`;
+                await AsyncStorage.setItem(storageKey, JSON.stringify(newOrders));
+                setOrders(newOrders);
+                Alert.alert("Success", "Order uploaded and removed from pending list!");
               } else {
+                const updatedOrders = orders.map(o => {
+                  if (o.id === orderId) {
+                    const itemsWithStatus = o.items.map(item => ({
+                      ...item,
+                      uploadStatus: 'failed'
+                    }));
+                    return {
+                      ...o,
+                      status: 'failed',
+                      uploadStatus: 'failed',
+                      items: itemsWithStatus
+                    };
+                  }
+                  return o;
+                });
+
+                const storageKey = `return_orders_${currentUsername}`;
+                await AsyncStorage.setItem(storageKey, JSON.stringify(updatedOrders));
+                setOrders(updatedOrders);
+
                 // Check for Server Error (500) which usually means expired token/session
                 if (uploadResult.error && uploadResult.error.includes('500')) {
                   Alert.alert(
@@ -748,6 +754,11 @@ export default function PlaceOrder() {
               <View key={index} style={styles.itemRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{item.name}</Text>
+                  {item.remark ? (
+                    <Text style={{ fontSize: 11, color: Colors.text.tertiary, fontStyle: 'italic', marginBottom: 2 }}>
+                      Note: {item.remark}
+                    </Text>
+                  ) : null}
                   <Text style={styles.itemPrice}>{item.price.toFixed(2)} x {parseFloat(item.qty).toFixed(2)}</Text>
                 </View>
                 <Text style={styles.itemTotal}>{item.total.toFixed(2)}</Text>
@@ -797,10 +808,20 @@ export default function PlaceOrder() {
 
 
               {!isApi && (filterStatus === 'pending' || filterStatus === 'failed') && (
-                <TouchableOpacity style={styles.actionButton} onPress={() => confirmOrder(order.id)}>
-                  <LinearGradient colors={Gradients.success} style={styles.actionButtonGradient}>
-                    <Ionicons name="cloud-upload" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Sync</Text>
+                <TouchableOpacity
+                  style={[styles.actionButton, uploadingOrder && styles.disabledButton]}
+                  onPress={() => confirmOrder(order.id)}
+                  disabled={!!uploadingOrder}
+                >
+                  <LinearGradient colors={uploadingOrder ? [Colors.neutral[300], Colors.neutral[300]] : Gradients.success} style={styles.actionButtonGradient}>
+                    {uploadingOrder === order.id ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Ionicons name="cloud-upload" size={18} color="#fff" />
+                    )}
+                    <Text style={styles.actionButtonText}>
+                      {uploadingOrder === order.id ? 'Syncing...' : 'Sync'}
+                    </Text>
                   </LinearGradient>
                 </TouchableOpacity>
               )}
@@ -1091,6 +1112,9 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     overflow: 'hidden',
     ...Shadows.sm,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
   actionButtonGradient: {
     flexDirection: 'row',

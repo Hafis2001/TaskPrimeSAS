@@ -2,7 +2,7 @@
 import * as SQLite from 'expo-sqlite';
 
 const DB_NAME = 'taskprime_v2.db';
-const DB_VERSION = 10; // Bumped to 10 for remarkcolumntitle
+const DB_VERSION = 11; // Bumped to 11 for department_name
 const CURRENT_VERSION = DB_VERSION;
 class DatabaseService {
     constructor() {
@@ -163,6 +163,25 @@ class DatabaseService {
                     }
                 }
 
+                // Migration for v11 (Add department_name to products)
+                if (currentVersion < 11) {
+                    try {
+                        console.log('[DB] Migrating to v11 - Adding department_name to products...');
+                        try {
+                            await this.db.runAsync(`ALTER TABLE products ADD COLUMN department_name TEXT DEFAULT ''`);
+                            console.log('[DB] Added department_name to products table');
+                        } catch (e) {
+                            if (e.message && e.message.includes("duplicate column")) {
+                                console.log('[DB] department_name column already exists');
+                            } else {
+                                console.log('[DB] Note: ' + e.message);
+                            }
+                        }
+                    } catch (e) {
+                        console.log('[DB] Migration v11 minor error:', e);
+                    }
+                }
+
                 // Update version after ALL migrations
                 await this.db.runAsync('INSERT OR REPLACE INTO db_version (id, version) VALUES (1, ?)', [DB_VERSION]);
                 console.log('[DB] ✅ Migration complete to version ' + DB_VERSION);
@@ -186,7 +205,7 @@ class DatabaseService {
             );
 
             await this.db.runAsync(
-                "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, name TEXT NOT NULL, barcode TEXT, price REAL DEFAULT 0, stock REAL DEFAULT 0, unit TEXT, brand TEXT, category TEXT, description TEXT, mrp REAL DEFAULT 0, taxcode TEXT DEFAULT '', text6 TEXT DEFAULT '', created_at TEXT, updated_at TEXT);"
+                "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, name TEXT NOT NULL, barcode TEXT, price REAL DEFAULT 0, stock REAL DEFAULT 0, unit TEXT, brand TEXT, category TEXT, description TEXT, mrp REAL DEFAULT 0, taxcode TEXT DEFAULT '', text6 TEXT DEFAULT '', department_name TEXT DEFAULT '', created_at TEXT, updated_at TEXT);"
             );
 
             // Migration: Add brand column if it doesn't exist (for existing databases)
@@ -431,6 +450,16 @@ class DatabaseService {
         }
     }
 
+    async getDistinctDepartments() {
+        try {
+            const result = await this.db.getAllAsync('SELECT DISTINCT department_name FROM products WHERE department_name IS NOT NULL AND department_name != "" ORDER BY department_name ASC');
+            return (result || []).map(row => row.department_name);
+        } catch (error) {
+            console.error('[DB] Error getting distinct departments:', error);
+            return [];
+        }
+    }
+
     async saveProducts(products) {
         try {
             if (!products || products.length === 0) return true;
@@ -446,7 +475,7 @@ class DatabaseService {
                 for (let i = 0; i < products.length; i += chunkSize) {
                     const chunk = products.slice(i, i + chunkSize);
 
-                    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                    const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
                     const values = [];
 
                     for (const product of chunk) {
@@ -458,17 +487,18 @@ class DatabaseService {
                             product.stock || 0,
                             product.unit || '',
                             product.brand || '',
-                            product.category || '',
+                            product.category || product.catagory || '', // Handle API typo
                             product.description || '',
                             product.mrp || 0,
                             product.taxcode || '',
                             product.text6 || '',
+                            product.department_name || product.DEPARTMENT || product.department || product.DEPT || product.dept || '',
                             new Date().toISOString()
                         );
                     }
 
                     await this.db.runAsync(
-                        'INSERT OR REPLACE INTO products (code, name, barcode, price, stock, unit, brand, category, description, mrp, taxcode, text6, updated_at) VALUES ' + placeholders,
+                        'INSERT OR REPLACE INTO products (code, name, barcode, price, stock, unit, brand, category, description, mrp, taxcode, text6, department_name, updated_at) VALUES ' + placeholders,
                         values
                     );
 

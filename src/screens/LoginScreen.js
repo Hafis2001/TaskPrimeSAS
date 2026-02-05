@@ -41,6 +41,9 @@ export default function LoginScreen() {
   const [isDemo, setIsDemo] = useState(false);
   const [demoExpiresAt, setDemoExpiresAt] = useState("");
   const [demoDaysRemaining, setDemoDaysRemaining] = useState(0);
+  const [licenseKey, setLicenseKey] = useState("");
+  const [companyName, setCompanyName] = useState("");
+
 
   // Glow animation
   const glow = useSharedValue(0);
@@ -63,7 +66,14 @@ export default function LoginScreen() {
         const stored = await AsyncStorage.getItem("clientId");
         if (stored) setClientId(stored.trim().toUpperCase());
 
+        const storedKey = await AsyncStorage.getItem("licenseKey");
+        if (storedKey) setLicenseKey(storedKey);
+
+        const storedCompany = await AsyncStorage.getItem("customerName");
+        if (storedCompany) setCompanyName(storedCompany);
+
         const demoStatus = await AsyncStorage.getItem("isDemo");
+
         if (demoStatus === "true") {
           const expiry = await AsyncStorage.getItem("demoExpiresAt");
           setIsDemo(true);
@@ -196,24 +206,33 @@ export default function LoginScreen() {
           })
         );
 
+        // Update individual keys for the display UI
+        if (matched.license_key) {
+          await AsyncStorage.setItem("licenseKey", matched.license_key);
+          setLicenseKey(matched.license_key);
+        }
+
+        // Ensure customer_name is used for Company display
+        const nameToSave = matched.customer_name;
+        if (nameToSave) {
+          await AsyncStorage.setItem("customerName", nameToSave);
+          setCompanyName(nameToSave);
+        }
+
         if (isDemo) {
           await AsyncStorage.setItem("isDemo", "true");
           await AsyncStorage.setItem("demoExpiresAt", matched.expires_at || "");
         } else {
-          // CHECK EXISTING: If we are already in Demo mode locally, don't wipe it
-          // unless we are absolutely sure this is a different license that is NOT demo.
-          // But since we are validating against the server, and server said "Not found in demo_licenses" (if isDemo is false here),
-          // it means this specific client_id is not a demo.
-          // However, the user might be using a demo license key that the API put in 'customers' list?
-          // OR simply, likely, we should just preserve it if it exists.
-
           const existingDemo = await AsyncStorage.getItem("isDemo");
           if (existingDemo !== "true") {
             await AsyncStorage.removeItem("isDemo");
             await AsyncStorage.removeItem("demoExpiresAt");
           }
         }
-      } catch { }
+      } catch (err) {
+        console.error("Storage error in validateLicense:", err);
+      }
+
 
       return { ok: true, customer: matched };
     } catch {
@@ -505,9 +524,28 @@ export default function LoginScreen() {
             <Text style={styles.forgotText}>Forgot Password?</Text>
           </TouchableOpacity>
 
+          {/* License Info Display */}
+          {(licenseKey || clientId || companyName) && (
+            <View style={styles.licenseInfoContainer}>
+              <View style={styles.licenseInfoRow}>
+                <Text style={styles.licenseInfoLabel}>License Key:</Text>
+                <Text style={styles.licenseInfoValue}>{licenseKey || "N/A"}</Text>
+              </View>
+              <View style={styles.licenseInfoRow}>
+                <Text style={styles.licenseInfoLabel}>Client ID:</Text>
+                <Text style={styles.licenseInfoValue}>{clientId || "N/A"}</Text>
+              </View>
+              <View style={styles.licenseInfoRow}>
+                <Text style={styles.licenseInfoLabel}>Company:</Text>
+                <Text style={styles.licenseInfoValue} numberOfLines={1}>{companyName || "N/A"}</Text>
+              </View>
+            </View>
+          )}
+
           <TouchableOpacity style={styles.removeLicenseButton} onPress={handleRemoveLicense}>
             <Text style={styles.removeLicenseText}>Remove License (Temporary)</Text>
           </TouchableOpacity>
+
         </Animated.View>
 
         {/* Social Media Icons */}
@@ -611,8 +649,35 @@ const styles = StyleSheet.create({
 
   buttonText: { color: "#fff", fontSize: Typography.sizes.lg, fontWeight: "700" },
 
-  removeLicenseButton: { marginTop: Spacing.md, padding: Spacing.sm },
-  removeLicenseText: { color: Colors.error.main, fontSize: Typography.sizes.xs, fontWeight: "600" },
+  removeLicenseButton: { marginTop: Spacing.sm, padding: Spacing.xs },
+  removeLicenseText: { color: Colors.error.main, fontSize: Typography.sizes.xs, fontWeight: "600", opacity: 0.7 },
+
+  licenseInfoContainer: {
+    width: '100%',
+    backgroundColor: Colors.neutral[50],
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginTop: Spacing.xl,
+    borderWidth: 1,
+    borderColor: Colors.border.light,
+  },
+  licenseInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  licenseInfoLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.text.tertiary,
+    textTransform: 'uppercase',
+  },
+  licenseInfoValue: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+  },
+
 
   forgotButton: { marginTop: Spacing.lg, padding: Spacing.sm },
   forgotText: { color: Colors.primary.main, fontSize: Typography.sizes.sm, fontWeight: "600" },

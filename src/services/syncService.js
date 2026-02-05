@@ -258,6 +258,7 @@ class SyncService {
                     taxcode: p.taxcode || p.TAXCODE || '',
                     text6: p.text6 || p.TEXT6 || '', // HSN Code
                     description: p.description || '',
+                    department_name: p.department_name || p.DEPARTMENT || p.department || p.DEPT || p.dept || '',
                 }))
                 .filter(p => p.code && p.name); // Only valid products
 

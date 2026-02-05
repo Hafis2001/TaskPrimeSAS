@@ -42,7 +42,7 @@ export default function Scanner() {
     Vibration.vibrate(100);
 
     router.replace({
-      pathname: "/SalesReturn/OrderDetails",
+      pathname: "/SalesReturn/ReturnDetails",
       params: { ...params, scanned: String(data) },
     });
   };

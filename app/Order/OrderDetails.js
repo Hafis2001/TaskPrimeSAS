@@ -302,15 +302,17 @@ export default function OrderDetails() {
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [selectedBrands, setSelectedBrands] = useState([]);
   const [selectedProducts, setSelectedProducts] = useState([]); // This is categories
+  const [selectedDepartments, setSelectedDepartments] = useState([]);
   const [filterQuery, setFilterQuery] = useState('');
   const [filterInStock, setFilterInStock] = useState(false);
   const [activeFilterTab, setActiveFilterTab] = useState("brand");
-  const [filterOptions, setFilterOptions] = useState({ brands: [], products: [] });
+  const [filterOptions, setFilterOptions] = useState({ brands: [], products: [], departments: [] });
 
   // State to hold the currently applied filters (triggers product fetch)
   const [filters, setFilters] = useState({
     brands: [],
     categories: [],
+    departments: [],
     search: '',
     inStock: false
   });
@@ -578,6 +580,7 @@ export default function OrderDetails() {
       const currentFilters = {
         brands: filters.brands,
         categories: filters.categories,
+        departments: filters.departments,
         search: filters.search,
         sortBy: appSettings?.barcode_based_list ? 'barcode' : 'name'
       };
@@ -633,6 +636,7 @@ export default function OrderDetails() {
       const currentFilters = {
         brands: filters.brands,
         categories: filters.categories,
+        departments: filters.departments,
         search: filters.search,
         sortBy: appSettings?.barcode_based_list ? 'barcode' : 'name'
       };
@@ -684,9 +688,10 @@ export default function OrderDetails() {
       await dbService.init();
       const brands = await dbService.getDistinctBrands();
       const categories = await dbService.getDistinctCategories();
+      const departments = await dbService.getDistinctDepartments();
 
-      console.log(`[OrderDetails] Loaded ${brands.length} brands and ${categories.length} categories`);
-      setFilterOptions({ brands, products: categories }); // Stores categories
+      console.log(`[OrderDetails] Loaded ${brands.length} brands, ${categories.length} categories, and ${departments.length} departments`);
+      setFilterOptions({ brands, products: categories, departments }); // Stores categories
     } catch (error) {
       console.error('[OrderDetails] Error loading filter options:', error);
     }
@@ -703,6 +708,7 @@ export default function OrderDetails() {
     setFilters({
       brands: selectedBrands,
       categories: selectedProducts, // categories
+      departments: selectedDepartments,
       search: query,
       inStock: filterInStock
     });
@@ -714,6 +720,7 @@ export default function OrderDetails() {
     console.log('[OrderDetails] Clearing all filters');
     setSelectedBrands([]);
     setSelectedProducts([]);
+    setSelectedDepartments([]);
     setFilterQuery('');
     setFilterInStock(false);
     setQuery(''); // Clear main search query as well
@@ -721,6 +728,7 @@ export default function OrderDetails() {
     setFilters({
       brands: [],
       categories: [], // categories
+      departments: [],
       search: '',
       inStock: false
     });
@@ -747,6 +755,18 @@ export default function OrderDetails() {
         return prev.filter(p => p !== category);
       } else {
         return [...prev, category];
+      }
+    });
+  }
+
+  // Toggle department selection
+  function toggleDepartmentSelection(dept) {
+    setSelectedDepartments(prev => {
+      const isSelected = prev.includes(dept);
+      if (isSelected) {
+        return prev.filter(d => d !== dept);
+      } else {
+        return [...prev, dept];
       }
     });
   }
@@ -1499,7 +1519,7 @@ export default function OrderDetails() {
 
   const itemCount = cart.length;
   const total = cart.reduce((s, it) => s + it.qty * it.product.price, 0);
-  const activeFiltersCount = selectedBrands.length + selectedProducts.length + (filterInStock ? 1 : 0);
+  const activeFiltersCount = selectedBrands.length + selectedProducts.length + selectedDepartments.length + (filterInStock ? 1 : 0);
 
   // Get filtered lists for filter modal
   const getFilteredOptions = (options, currentFilterQuery) => {
@@ -1687,6 +1707,17 @@ export default function OrderDetails() {
                     </TouchableOpacity>
                   </View>
                 ))}
+                {selectedDepartments.map(dept => (
+                  <View key={dept} style={styles.activeFilterChip}>
+                    <Text style={styles.activeFilterChipText} numberOfLines={1}>{dept}</Text>
+                    <TouchableOpacity onPress={() => {
+                      toggleDepartmentSelection(dept);
+                      setTimeout(() => applyFilters(), 100);
+                    }}>
+                      <Ionicons name="close-circle" size={16} color={Colors.primary.main} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
                 {filterInStock && (
                   <View key="inStock" style={styles.activeFilterChip}>
                     <Text style={styles.activeFilterChipText}>In Stock</Text>
@@ -1841,7 +1872,7 @@ export default function OrderDetails() {
               {/* Filter Info */}
               <View style={styles.filterInfo}>
                 <Text style={styles.filterInfoText}>
-                  {filterOptions.brands.length} Brands • {filterOptions.products.length} Categories
+                  {filterOptions.brands.length} Brands • {filterOptions.products.length} Categories • {filterOptions.departments?.length || 0} Depts
                 </Text>
               </View>
 
@@ -1861,6 +1892,14 @@ export default function OrderDetails() {
                 >
                   <Text style={[styles.filterTabText, activeFilterTab === "category" && styles.filterTabTextActive]}>
                     Category {selectedProducts.length > 0 && `(${selectedProducts.length})`}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterTab, activeFilterTab === "department" && styles.filterTabActive]}
+                  onPress={() => setActiveFilterTab("department")}
+                >
+                  <Text style={[styles.filterTabText, activeFilterTab === "department" && styles.filterTabTextActive]}>
+                    Dept {selectedDepartments.length > 0 && `(${selectedDepartments.length})`}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1949,6 +1988,35 @@ export default function OrderDetails() {
                                 {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
                               </View>
                               <Text style={styles.filterItemText}>{category}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </>
+                )}
+
+                {activeFilterTab === 'department' && (
+                  <>
+                    {getFilteredOptions(filterOptions.departments || [], filterQuery).length === 0 ? (
+                      <View style={styles.noResultsContainer}>
+                        <Text style={styles.noResultsText}>No departments found</Text>
+                      </View>
+                    ) : (
+                      getFilteredOptions(filterOptions.departments, filterQuery).map((dept, index) => {
+                        const isSelected = selectedDepartments.includes(dept);
+                        return (
+                          <TouchableOpacity
+                            key={index}
+                            style={styles.filterItem}
+                            onPress={() => toggleDepartmentSelection(dept)}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.filterItemLeft}>
+                              <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
+                                {isSelected && <Ionicons name="checkmark" size={16} color="#FFF" />}
+                              </View>
+                              <Text style={styles.filterItemText}>{dept}</Text>
                             </View>
                           </TouchableOpacity>
                         );

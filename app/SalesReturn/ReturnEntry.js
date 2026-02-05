@@ -24,7 +24,7 @@ import dbService from "../../src/services/database";
 
 export default function EntryScreen() {
   const router = useRouter();
-  const paymentList = ["Cash/Bank", "Credit"];
+
 
   const [debtorsData, setDebtorsData] = useState([]);
   const [areaList, setAreaList] = useState([]);
@@ -35,7 +35,7 @@ export default function EntryScreen() {
   // Selection states - DEFAULT PAYMENT SET TO "Cash/Bank"
   const [selectedArea, setSelectedArea] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [selectedPayment, setSelectedPayment] = useState("Cash/Bank");
+  const [selectedPayment] = useState("Return"); // Default for returns
   const [selectedPriceCode, setSelectedPriceCode] = useState(null); // Code 'S1', 'MR' etc.
   const [selectedPriceName, setSelectedPriceName] = useState(null); // Name 'Sales', 'MRP'
   const [isCustomerLocked, setIsCustomerLocked] = useState(false); // NEW: Lock selection if account matched
@@ -376,13 +376,10 @@ export default function EntryScreen() {
       return;
     }
 
-    if (!selectedPayment) {
-      Alert.alert("Validation Error", "Please select a payment method");
-      return;
-    }
+
 
     router.push({
-      pathname: "/SalesReturn/OrderDetails",
+      pathname: "/SalesReturn/ReturnDetails",
       params: {
         area: selectedArea,
         customer: selectedCustomer.name,
@@ -506,45 +503,7 @@ export default function EntryScreen() {
             </View>
           )}
 
-          {/* Payment Method */}
-          <View style={styles.formSection}>
-            <Text style={styles.label}>
-              Payment Method <Text style={styles.required}>*</Text>
-            </Text>
-            <View style={styles.paymentContainer}>
-              {paymentList.map((payment) => (
-                <TouchableOpacity
-                  key={payment}
-                  style={[
-                    styles.paymentButton,
-                    selectedPayment === payment && styles.paymentButtonActive,
-                  ]}
-                  onPress={() => setSelectedPayment(payment)}
-                  activeOpacity={0.8}
-                >
-                  {selectedPayment === payment && (
-                    <LinearGradient
-                      colors={Gradients.accent}
-                      style={styles.activeGradient}
-                    />
-                  )}
-                  <Ionicons
-                    name={payment === "Cash/Bank" ? "wallet" : "card"}
-                    size={24}
-                    color={selectedPayment === payment ? "#ffffff" : Colors.text.secondary}
-                  />
-                  <Text
-                    style={[
-                      styles.paymentText,
-                      selectedPayment === payment && styles.paymentTextActive,
-                    ]}
-                  >
-                    {payment}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
+
 
           {/* Proceed Button */}
           <TouchableOpacity
@@ -561,7 +520,7 @@ export default function EntryScreen() {
           {/* View Orders Button */}
           <TouchableOpacity
             style={[styles.proceedButton, { marginTop: Spacing.md, backgroundColor: '#ffffff', borderWidth: 1, borderColor: Colors.accent.main }]}
-            onPress={() => router.push("/SalesReturn/PlaceOrder")}
+            onPress={() => router.push("/SalesReturn/PlaceReturn")}
             activeOpacity={0.8}
           >
             <View style={[styles.proceedGradient, { backgroundColor: 'transparent' }]}>

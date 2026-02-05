@@ -167,7 +167,12 @@ export default function PlaceOrder() {
           if (!username) return false; // If no user is logged in, show nothing
           const apiUser = apiOrder.username ? String(apiOrder.username).trim() : '';
           const currentUser = String(username).trim();
-          // Case insensitive comparison
+
+          // Separate Orders from Returns based on payment_type
+          const isReturn = apiOrder.payment_type === 'Return';
+          if (isReturn) return false;
+
+          // Case insensitive comparison for user
           return apiUser.toLowerCase() === currentUser.toLowerCase();
         })
         .map(apiOrder => {
@@ -463,6 +468,8 @@ export default function PlaceOrder() {
   }
 
   async function confirmOrder(orderId) {
+    if (uploadingOrder) return; // Prevent multiple simultaneous uploads
+
     Alert.alert(
       'Confirm & Upload Order',
       'This will upload the order to the server. Continue?',
@@ -797,10 +804,20 @@ export default function PlaceOrder() {
 
 
               {!isApi && (filterStatus === 'pending' || filterStatus === 'failed') && (
-                <TouchableOpacity style={styles.actionButton} onPress={() => confirmOrder(order.id)}>
-                  <LinearGradient colors={Gradients.success} style={styles.actionButtonGradient}>
-                    <Ionicons name="cloud-upload" size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Sync</Text>
+                <TouchableOpacity
+                  style={[styles.actionButton, uploadingOrder && styles.disabledButton]}
+                  onPress={() => confirmOrder(order.id)}
+                  disabled={!!uploadingOrder}
+                >
+                  <LinearGradient colors={uploadingOrder ? [Colors.neutral[300], Colors.neutral[300]] : Gradients.success} style={styles.actionButtonGradient}>
+                    {uploadingOrder === order.id ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Ionicons name="cloud-upload" size={18} color="#fff" />
+                    )}
+                    <Text style={styles.actionButtonText}>
+                      {uploadingOrder === order.id ? 'Syncing...' : 'Sync'}
+                    </Text>
                   </LinearGradient>
                 </TouchableOpacity>
               )}
@@ -1091,6 +1108,9 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     overflow: 'hidden',
     ...Shadows.sm,
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
   actionButtonGradient: {
     flexDirection: 'row',
